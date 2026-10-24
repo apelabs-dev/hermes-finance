@@ -179,3 +179,5 @@ uv run python scripts/check.py full --part 2 --kinds full,nocaps   # the gates o
    run the gates on copies of one read-only backup (see *Audits only read*).
 5. For a UI change, look at every changed state (390 and 1440 px, both themes where it applies).
 6. In the pull request, say what changed and why, with the literal test and gate counts and anything still unproven.
+
+Releases follow the squashed public export loop in [docs/releasing.md](docs/releasing.md); sync public release versions before the next export.

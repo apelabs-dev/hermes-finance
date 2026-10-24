@@ -16,8 +16,8 @@ def test_beta_release_versions_agree(tmp_path, release_identity):
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     package = next(p for p in lock["package"] if p["name"] == project["name"])
     manifest = (ROOT / "hermes_plugin" / "plugin.yaml").read_text()
-    version = re.search(r"^version: (.+)$", manifest, re.M).group(1)
-    assert project["version"] == package["version"] == version == "0.2.0"
+    version = re.search(r"^version: ([^\s]+)", manifest, re.M).group(1)
+    assert project["version"] == package["version"] == version
     if release_identity == "package":
         import hermes_finance
 

@@ -470,7 +470,7 @@ wheels = [
 
 [[package]]
 name = "hermes-finance"
-version = "0.2.0"
+version = "0.2.0" # x-release-please-version
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },

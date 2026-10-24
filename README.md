@@ -10,6 +10,11 @@ Full documentation: [`docs/`](docs/index.md), a MkDocs site (`uvx --python 3.12 
 
 Try the [read-only static demo](docs/demo.md) with synthetic data; it builds without an account or API key.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/overview-dark.png">
+  <img src="docs/assets/screenshots/overview-light.png" alt="hermes-finance Overview: monthly spending, net worth, Where it went and Budgets with synthetic demo data" width="1440" height="1500">
+</picture>
+
 ## Quickstart
 
 You need Python 3.12 and [uv](https://docs.astral.sh/uv/).

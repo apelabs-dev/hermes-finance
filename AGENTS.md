@@ -83,3 +83,5 @@ uv run python scripts/check.py full --part 2   # then tests/test_gates.py (the l
   anything you try by hand, so your own install, its `data/` and its server are never touched.
 - Write failing tests first, then the fix; run `check.py full` (or its two parts) before you call a change done, and
   report the literal counts and anything you couldn't verify.
+
+Releases follow the squashed public export loop in [docs/releasing.md](docs/releasing.md); sync public release versions before the next export.
