@@ -1,0 +1,14 @@
+/* Bills (TASK-21): the transaction sheet's Bill section, Track as a bill / Edit schedule, and a bill's own sheet. Built
+   from the sheets' own pieces (.tsec, .tsh, .flds, .fld, .inp, .seg, .li, .pend); only these few rules are new. */
+.billsheet .bseg { display: flex; width: 100%; }                 /* the Amount choice spans its field, like Goals' templates */
+.billsheet .bseg button { flex: 1 1 0; white-space: nowrap; }
+.bprev { display: flex; align-items: center; gap: 8px; min-height: 20px; margin: 16px 0 0; font-size: 14px; color: var(--mut); }
+.bprev:empty { display: none; }
+.bprev svg.i { width: 16px; height: 16px; flex: none; color: var(--acc); }
+.bline { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 0; font-size: 15px; }
+.bline b { font-weight: 600; }
+.billsec .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.billsec .btn svg.i, .billsheet .row .btn svg.i { width: 15px; height: 15px; }
+.billsheet .tsec .li .grow > b { display: flex; align-items: center; flex-wrap: wrap; }
+.billsheet .tsec .li .grow > span { display: flex; min-width: 0; font-size: 13px; color: var(--mut); }
+.pend[data-outlier] { display: inline-block; white-space: nowrap; }  /* "higher than usual" stays one tag */

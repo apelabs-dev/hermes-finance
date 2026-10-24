@@ -1,0 +1,98 @@
+/* Hermes Finances: the Ask panel (TASK-23), as approved in MOCK-017 (item 3 + addendum): the Ask button bottom-right on
+   every page (a phone: above the tab bar), the panel on the right (a phone: the whole screen), the brain chip in its
+   header, answers with their source line, and the "Suggested change" approval card. */
+
+/* room at the end of every page, so the Ask button never sits on the last card */
+body[data-ask] main { padding-bottom: 104px; }
+@media (max-width: 1023.98px) { body[data-ask] main { padding-bottom: 150px; } }
+body.board .askb, body.board .chat { display: none; }
+
+.askb { position: fixed; right: 24px; bottom: 24px; z-index: 40; display: inline-flex; align-items: center; gap: 9px;
+  padding: 12px 20px 12px 16px; border-radius: 999px; background: var(--card2); border: 1px solid var(--line2); color: var(--fg);
+  font-weight: 650; font-size: 15px; box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.askb svg.i { color: var(--acc); width: 19px; height: 19px; }
+.askb:hover { border-color: #4a5470; }
+
+.chat { position: fixed; top: 0; right: 0; bottom: 0; width: 430px; max-width: 100vw; z-index: 88; background: #10131a;
+  border-left: 1px solid var(--line2); display: flex; flex-direction: column; box-shadow: -24px 0 60px rgba(0, 0, 0, .45); }
+.chat[hidden] { display: none; }
+.chh { flex: none; display: flex; align-items: flex-start; gap: 12px; padding: 20px 22px 16px; border-bottom: 1px solid var(--line); }
+.chh .hi { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; flex: none;
+  background: rgba(var(--rgb), .14); color: rgb(var(--rgb)); }
+.chh .hi > svg { width: 56%; height: 56%; }
+.chh .grow { flex: 1; min-width: 0; }
+.chh h2 { font-size: 19px; font-weight: 700; letter-spacing: -.02em; line-height: 1.25; }
+.chh .grow > span { font-size: 13px; color: var(--mut); display: block; margin-top: 2px; white-space: normal; }
+.chtl { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
+.brain { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; line-height: 22px; padding: 0 9px 0 7px;
+  border-radius: 999px; background: rgba(199, 146, 234, .14); color: #dcbcf2; white-space: nowrap; max-width: 100%; }
+.brain svg.i { width: 14px; height: 14px; }
+
+.chmsgs { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; }
+.msg { max-width: 92%; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.msg p + p, .msg p + .chstat, .msg .chstat + p, .msg .chstat + .chstat { margin-top: 9px; }
+.msg.me { align-self: flex-end; background: rgba(142, 168, 255, .16); border-radius: 16px 16px 4px 16px; padding: 10px 14px; }
+.msg.bot { align-self: flex-start; background: var(--card); border: 1px solid var(--line); border-radius: 16px 16px 16px 4px; padding: 12px 14px; }
+.msg.bot.card-msg { background: none; border: 0; padding: 0; width: 92%; }
+.msg.bot.busy { color: var(--mut); }
+.msg.bot.err { border-color: rgba(255, 123, 123, .45); color: #ffb3b3; }
+.msg.bot.err p { display: flex; gap: 8px; align-items: flex-start; }
+.msg.bot.err svg.i { margin-top: 3px; width: 16px; height: 16px; }
+.chstat { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--card2); }
+.chstat .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chstat .grow > b { font-size: 15px; }
+.chstat .grow > span { font-size: 13.5px; color: var(--mut); white-space: normal; overflow: visible; text-overflow: clip; }   /* wraps on a narrow phone, never "13 payme…" */
+.msg .src { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); margin-top: 10px; padding-top: 9px;
+  border-top: 1px solid var(--line); }
+.msg .src + .src { margin-top: 4px; padding-top: 0; border-top: 0; }
+.msg .src svg.i { width: 14px; height: 14px; }
+
+.appr { border: 1px solid rgba(245, 180, 84, .42); background: rgba(245, 180, 84, .06); border-radius: 16px; padding: 13px 15px 12px; }
+.aph { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #ffc977; }
+.apt { display: block; font-size: 16px; font-weight: 650; margin: 8px 0 4px; }
+.appr p { font-size: 14px; color: var(--mut); }
+.appr .row { display: flex; gap: 8px; margin-top: 12px; }
+.appr .hint { margin-top: 9px; }
+.appr .apres { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; font-weight: 600; color: var(--fg); }
+.appr .apres svg.i { width: 16px; height: 16px; }
+.appr .apres.ok { color: var(--ok); }
+.appr .apres.bad { color: var(--bad); }
+.appr[data-status=applied] { border-color: rgba(79, 209, 165, .4); background: rgba(79, 209, 165, .05); }
+.appr[data-status=rejected], .appr[data-status=failed] { border-color: var(--line2); background: transparent; }
+
+.chfoot { flex: none; border-top: 1px solid var(--line); padding: 14px 22px 20px; }
+.chchips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+.chchips .fchip { font-size: 13.5px; padding: 6px 12px; text-align: left; }
+.chrow { display: flex; gap: 8px; align-items: flex-end; }
+.chin { flex: 1; min-width: 0; resize: none; background: #0e1118; border: 1px solid var(--line2); border-radius: 12px; padding: 11px 13px;
+  font: inherit; font-size: 15px; line-height: 22px; color: var(--fg); outline: 0; min-height: 46px; max-height: 140px; }
+.chin::placeholder { color: #8a92a8; }
+.chin:focus { border-color: var(--acc); }
+.chrow .btn { height: 46px; }
+
+@media (max-width: 1023.98px) {
+  .askb { right: 14px; bottom: calc(80px + env(safe-area-inset-bottom)); padding: 11px 18px 11px 14px; }
+  .chat { width: 100%; z-index: 91; border-left: 0; box-shadow: none; }
+  .chh { padding: 16px 16px 12px; }
+  .chmsgs { padding: 16px; }
+  .chfoot { padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .msg { max-width: 96%; }
+  .msg.bot.card-msg { width: 96%; }
+  .chchips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px 2px; scrollbar-width: none; }
+  .chchips .fchip { flex: none; white-space: nowrap; }
+  .chrow .btn { height: 46px; min-width: 88px; }
+}
+
+/* the light theme */
+:root[data-theme=light] .askb { background: #fff; box-shadow: 0 8px 24px rgba(15, 20, 30, .16); }
+:root[data-theme=light] .askb:hover { border-color: #aeb5c4; }
+:root[data-theme=light] .chat { background: #fff; box-shadow: -24px 0 60px rgba(15, 20, 30, .14); }
+:root[data-theme=light] .chin { background: #fff; }
+:root[data-theme=light] .chin::placeholder { color: #6b7385; }
+:root[data-theme=light] .msg.me { background: rgba(53, 82, 212, .1); }
+:root[data-theme=light] .brain { background: rgba(145, 80, 190, .1); color: #6d3a94; }
+:root[data-theme=light] .aph { color: #7d4a00; }
+:root[data-theme=light] .appr { border-color: rgba(148, 87, 0, .4); background: rgba(245, 180, 84, .08); }
+:root[data-theme=light] .appr .apres.ok { color: #08653f; }
+:root[data-theme=light] .appr .apres.bad, :root[data-theme=light] .msg.bot.err { color: #a82424; }
+:root[data-theme=light] .appr[data-status=applied] { border-color: rgba(11, 122, 85, .35); background: rgba(11, 122, 85, .05); }

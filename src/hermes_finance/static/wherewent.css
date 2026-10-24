@@ -1,0 +1,9 @@
+.wherewent .wwhint { color: var(--dim); font-size: 13px; margin: 0 0 8px; }
+.wherewent .wwnav { display: flex; align-items: center; justify-content: space-between; min-height: 32px; gap: 12px; }
+.wherewent .wwnav .lnk { display: flex; align-items: center; gap: 4px; min-height: 44px; }
+.wherewent button.crowl { border: 0; padding: 0; background: none; text-align: left; font: inherit; cursor: pointer; min-height: 44px; }
+.wherewent .crow { gap: 10px; }
+.wherewent .grow > span { white-space: normal; }
+.wherewent .wwpayments { display: grid; place-items: center; flex: none; width: 44px; height: 44px; color: var(--mut); border-radius: 8px; }
+.wherewent .wwpayments svg { width: 16px; height: 16px; }
+.wherewent :is(button, a):focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }

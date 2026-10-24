@@ -1,0 +1,33 @@
+# Every push and pull request: scripts/check.py ci (the release scan of every tracked file, then every test that needs
+# no browser), and a compile check of the Hermes plugin on Python 3.11, the runtime Hermes loads it with.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Extra private words for the privacy scanner (comma-separated; empty on forks). The scanner never prints them,
+      # and tests/redact.py keeps them out of every test report.
+      HERMES_FINANCE_TEST_PRIVATE: ${{ secrets.HERMES_FINANCE_TEST_PRIVATE }}
+      HERMES_PLAID: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the locked dependencies
+        run: uv sync --frozen
+      - name: Hermes plugin compiles on Python 3.11
+        run: uv run --no-project --python 3.11 python -m compileall -q hermes_plugin
+      - name: scripts/check.py ci
+        run: uv run python scripts/check.py ci

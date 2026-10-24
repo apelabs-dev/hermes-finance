@@ -1,0 +1,133 @@
+/* Goals (TASK-19): the Goals page, its sheets, and the Overview's fourth tile. No glow, no animation; body 15px,
+   secondary 13px or more; every colour pair 4.5:1 or more. */
+
+/* ---- Overview: four tiles (net worth, investments, loans & debt, goals) ----
+   Every tile is title row -> hero number -> bar -> detail lines, each at the same y across the row. The All / Custom chip
+   stays in the Net worth title row (it needs ~255px), so: four tiles from 1360px with Net worth a little wider, two by
+   two below that, one column on a phone. */
+.tiles:has(> .gtile) { grid-template-columns: 1.35fr repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1359.98px) { .tiles:has(> .gtile) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 599.98px) { .tiles:has(> .gtile) { grid-template-columns: minmax(0, 1fr); } }
+.tiles:has(> .gtile) .tile h3 { flex-wrap: nowrap; gap: 0 9px; }
+.tiles:has(> .gtile) .nwtile h3 .nwseg { order: 0; margin-left: auto; }
+.tiles:has(> .gtile) .nwtile h3 .lnk.end { margin-left: 4px; }
+.tiles:has(> .gtile) .tile .big { display: block; }
+.tiles:has(> .gtile) .tile .split, .tiles:has(> .gtile) .tile .stk,
+.tiles:has(> .gtile) .tile .track { height: 8px !important; margin: 14px 0 0 !important; }
+.tiles:has(> .gtile) .tile .tl2 { margin-top: 12px; }
+
+/* ---- the page ---- */
+.pgnote { color: var(--mut); font-size: 14px; margin: -6px 0 16px; text-wrap: pretty; }
+.sech2 { font-size: 17px; font-weight: 650; letter-spacing: -.01em; margin: 26px 0 12px; }
+.garch { margin-top: 18px; font-size: 14px; color: var(--mut); }
+.goal { cursor: pointer; }
+.goal .hd { display: flex; align-items: center; gap: 12px; }
+.goal .hd .grow { min-width: 0; }
+.goal .hd .grow > b { font-size: 16px; font-weight: 650; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.goal .hd .grow > span { display: block; font-size: 13px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the approved launch polish (MOCK-017): no line ends with one short word ("29)", "ago", "APR") */
+body { text-wrap: pretty; }
+.gfig { display: flex; align-items: flex-start; gap: 18px; margin: 18px 0 6px; }
+.gfig > .grow { padding-top: 13px; min-width: 0; }
+.gfig .big.s { font-size: 28px; }
+.gfig .mut { font-size: 14px; margin-top: 2px; }
+.gpace { font-size: 14px; color: var(--mut); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); line-height: 1.5;
+  text-wrap: pretty; }
+.gpace b { font-weight: 650; color: var(--fg); }
+.gpace b.pos { color: #72e3bb; }
+.gpace b.bad { color: #ffa3a3; }
+.gdone .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.gshort { margin-top: 10px; }
+.gshort p { font-size: 13px; color: #ffa3a3; margin-top: 6px; text-wrap: pretty; }
+.goal.short { border-color: rgba(255, 123, 123, .45); }
+.gempty, .gtpl { border-style: dashed; border-color: var(--line2); background: transparent; }
+/* hotfix 2026-09-29: plain grids (not packed): every card the same size, rows the same height, a short last row
+   simply ends (user feedback: the cards should all be the same size) */
+.grid.gsugs, .grid.gtpls { align-items: stretch; }
+.grid.gsugs > .gempty { display: flex; flex-direction: column; }
+.grid.gsugs > .gempty > .row { margin-top: auto; padding-top: 14px; }
+.gtpl { text-align: left; color: inherit; font: inherit; width: 100%; }
+/* (TASK-20) a button centres what's in it: in a row of equal heights the shorter templates' titles sat lower */
+.gtpl { display: flex; flex-direction: column; justify-content: flex-start; }
+.gtpl .lnk { display: inline-flex; align-items: center; gap: 4px; margin-top: 12px; font-size: 14px; font-weight: 600; align-self: flex-start; }
+.gnow { display: flex; justify-content: space-between; align-items: baseline; margin: 18px 0 2px; font-size: 14px; }
+.gnow b { font-size: 22px; font-weight: 700; }
+.gempty .row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.gempty { cursor: default; }
+.gsum .row { display: flex; margin-top: 16px; }
+.gsum .stk { height: 10px; margin: 14px 0 4px; }
+.gsum .ghost-row { margin-top: 14px; width: 100%; }
+/* "Save up, pay off, or monthly" wraps instead of ellipsizing in the narrow 3-column card (2026-10-21) */
+.gsum .ghost-row[data-add=goal] .grow > span { white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* Monthly savings: the ring and six months of bars, the target dashed */
+.goalm { cursor: pointer; }
+.msrow { display: flex; align-items: flex-start; gap: 22px; }
+.msrow > .grow { min-width: 0; }
+.msb { margin-top: 20px; }
+.msplot { position: relative; display: flex; gap: 10px; }
+.mszero { position: absolute; left: 0; right: 0; height: 1px; background: var(--line2); }
+.mstgt { position: absolute; left: 0; right: 0; border-top: 2px dashed rgba(238, 240, 246, .55); }
+.mstl { position: absolute; right: 0; font-size: 13px; color: var(--mut); background: var(--card); padding: 0 0 0 6px; line-height: 18px; }
+.msc { position: relative; flex: 1; }
+.msc > i { position: absolute; left: 22%; right: 22%; border-radius: 5px; background: #4fd1a5; }
+.msc > i.pos { background: rgba(79, 209, 165, .75); }
+.msc > i.neg { background: rgba(255, 123, 123, .8); }
+.msc.part > i { opacity: .42; }
+.mslbl { display: flex; gap: 10px; margin-top: 8px; }
+.mslbl > span { flex: 1; min-width: 0; text-align: center; font-size: 13px; color: var(--mut); display: flex; flex-direction: column; line-height: 1.35; }
+.mslbl b { font-weight: 600; color: var(--fg); }
+.mslbl .part b { color: var(--mut); }
+.mslbl .bad { color: #ffa3a3; }
+@media (max-width: 1023.98px) { .mslbl .sofar { display: none; } .msrow { gap: 16px; } }
+
+/* ---- the New goal / goal sheets ---- */
+.gsheet .tseg { display: flex; width: 100%; margin: 4px 0 2px; }
+.gsheet .tseg button { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap; }
+.gsheet .tseg button svg.i { width: 16px; height: 16px; }
+@media (max-width: 1023.98px) { .gsheet .tseg button { padding: 6px 4px; font-size: 13px; } .gsheet .tseg button svg.i { display: none; } }
+.gsheet .gh { margin-top: 16px; }
+.gsheet .inp input[type=month] { color-scheme: dark; }
+.choices { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.choices.sm { gap: 8px; margin-top: 10px; }
+.choice { display: flex; align-items: center; gap: 12px; text-align: left; border: 1px solid var(--line2); background: #0e1118;
+  border-radius: 14px; padding: 10px 12px; color: inherit; font: inherit; width: 100%; }
+.choice:disabled { opacity: .6; }
+.choice.on { border-color: var(--acc); background: rgba(142, 168, 255, .08); }
+.choice .grow { min-width: 0; }
+.choice .grow > b { display: block; font-size: 15px; }
+.choice .grow > span { display: block; white-space: normal; font-size: 13.5px; color: var(--mut); }
+.choice .rad { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line2); flex: none; }
+.choice.on .rad { border: 5px solid var(--acc); }
+.trkd { margin: 2px 0 4px 44px; padding: 2px 0 6px; }
+.trkd .flds { margin-top: 0; }
+.trkd .fld { margin-top: 8px; }
+.unas { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 10px; padding: 9px 12px; border-radius: 12px;
+  background: var(--card2); font-size: 14px; color: var(--mut); }
+.unas b { color: var(--fg); font-size: 15px; font-weight: 650; }
+.trkd .hint, .trkd .ferr { margin-top: 6px; }
+.gsheet .row { margin-top: 16px; }
+.gsheet .row.gentry { margin-top: 10px; }
+.gents { margin-top: 10px; }
+.gents .li .grow > span { font-size: 13px; }
+.savenote { display: flex; align-items: center; gap: 7px; margin-top: 20px; font-size: 13px; color: var(--dim); }
+.savenote svg.i { width: 15px; height: 15px; color: var(--ok); }
+@media (max-width: 1023.98px) { .trkd { margin-left: 0; } }
+/* (TASK-20) a goal's account line: the name shortens, the ••last-4 stays (app.js nameMask) */
+.goal .hd .grow > span.nmrow { display: flex; overflow: visible; }
+
+/* Goal appearance controls: six generous icon targets and eight named swatches on every width. */
+.gappearance { margin-top: 18px; }
+.gappearance-preview { display: flex; align-items: center; gap: 10px; color: var(--mut); font-size: 14px; }
+.gicons { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.gicons .gicon { width: 100%; height: 44px; cursor: pointer; border: 1px solid var(--line2); }
+.gicons .gicon[aria-pressed=true] { outline: 2px solid var(--fg); outline-offset: 1px; }
+.gcolours { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 2px; margin-top: 8px; }
+.gcolour { position: relative; display: grid; place-items: center; min-width: 0; height: 44px;
+  border: 0; border-radius: 8px; background: transparent; cursor: pointer; color: #10141d; }
+.gcolour::before { content: ''; position: absolute; width: 27px; height: 27px; background: var(--swatch); border-radius: 50%; }
+.gcolour[aria-pressed=true]::before { outline: 2px solid var(--fg); outline-offset: 3px; }
+.gcolour .i { position: relative; width: 18px; height: 18px; }
+.gicon:focus-visible, .gcolour:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.gtop-goal { display: inline-flex; align-items: center; gap: 6px; }
+.goalm .msc > i:not(.neg) { background: var(--goal-colour, #4fd1a5); }

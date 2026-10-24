@@ -1,0 +1,174 @@
+/* Hermes Finances: the light theme (TASK-18, Settings > Appearance: Dark / Light / System), from the approved MOCK-017
+   screens. Same layout as the dark theme; every text colour re-picked for 4.5:1 or more on white / #f3f4f7. The app
+   icon keeps its dark tile. theme.js sets <html data-theme> before the first paint; charts take their ink from the
+   variables below (app.js). */
+:root[data-theme=light] {
+  --bg: #f3f4f7; --side: #ffffff; --card: #ffffff; --card2: #f3f5f9; --card3: #e7eaf0; --line: #e2e5ec; --line2: #cfd4de;
+  --fg: #151922; --mut: #434b5e; --dim: #5a6275; --acc: #3552d4; --ok: #0b7a55; --warn: #945700; --bad: #c42c2c; --grid: #e3e6ee;
+  color-scheme: light;
+}
+:root[data-theme=light] aside#side { border-right-color: var(--line); }
+:root[data-theme=light] .snav a { color: #394152; }
+:root[data-theme=light] .snav a svg { color: #5a6275; }
+:root[data-theme=light] .snav a:hover,
+:root[data-theme=light] .bank .row:hover { background: #eef0f5; }
+:root[data-theme=light] .snav a[aria-current=page] { background: linear-gradient(90deg, rgba(53, 82, 212, .12), rgba(53, 82, 212, .03)); color: var(--fg); }
+:root[data-theme=light] .snav .n.rv { background: #f5b454; color: #1b1400; }
+:root[data-theme=light] .snav .n.ov { color: #a82424; background: rgba(196, 44, 44, .1); }
+:root[data-theme=light] .snav .n.wn { color: #7d4a00; background: rgba(245, 180, 84, .22); }
+:root[data-theme=light] .snav.sfoot,
+:root[data-theme=light] .foot { border-top-color: var(--line); }
+:root[data-theme=light] .split,
+:root[data-theme=light] .meter { background: #e6e9f0; }
+:root[data-theme=light] .rc,
+:root[data-theme=light] .bank .relogin { color: #a82424; }
+:root[data-theme=light] .cbtn,
+:root[data-theme=light] .btn { background: #151922; color: #fff; }
+:root[data-theme=light] .cbtn:hover:not(:disabled),
+:root[data-theme=light] .btn:hover:not(:disabled) { background: #000; }
+:root[data-theme=light] .btn.ghost { background: #fff; color: var(--fg); border-color: var(--line2); }
+:root[data-theme=light] .btn.ghost:hover:not(:disabled) { background: var(--card2); }
+:root[data-theme=light] .btn.danger { background: #fff; color: #a82424; }
+:root[data-theme=light] .card { background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .05); }
+:root[data-theme=light] h3 .hi,
+:root[data-theme=light] .chh .hi { color: color-mix(in srgb, rgb(var(--rgb)) 72%, #000); background: rgba(var(--rgb), .16); }
+:root[data-theme=light] .cb { color: color-mix(in srgb, rgb(var(--rgb)) 70%, #000); background: rgba(var(--rgb), .17); box-shadow: inset 0 0 0 1px rgba(var(--rgb), .3); }
+:root[data-theme=light] .big .cur { color: #3a4152; }
+:root[data-theme=light] .pill { background: rgba(11, 122, 85, .1); color: #08653f; }
+:root[data-theme=light] .pill.bad { background: rgba(196, 44, 44, .1); color: #a82424; }
+:root[data-theme=light] .pill.warn { background: rgba(245, 180, 84, .2); color: #7d4a00; }
+:root[data-theme=light] .pill.acc { background: rgba(53, 82, 212, .1); color: #2a44b8; }
+:root[data-theme=light] .pill.nt { background: #eceff4; color: var(--mut); }
+:root[data-theme=light] .tag { border-color: #c5cbd8; }
+:root[data-theme=light] .tag.stale,
+:root[data-theme=light] .tag.ex { border-color: rgba(148, 87, 0, .45); color: #7d4a00; }
+:root[data-theme=light] .tag.api { border-color: rgba(53, 82, 212, .45); color: #2a44b8; }
+:root[data-theme=light] .al.bad { background: rgba(196, 44, 44, .06); border-color: rgba(196, 44, 44, .3); }
+:root[data-theme=light] .al.warn { background: rgba(245, 180, 84, .12); border-color: rgba(148, 87, 0, .3); }
+:root[data-theme=light] .al.ok { background: rgba(11, 122, 85, .06); border-color: rgba(11, 122, 85, .25); }
+:root[data-theme=light] .pbar,
+:root[data-theme=light] .track,
+:root[data-theme=light] .stk,
+:root[data-theme=light] .share { background: #edf0f5; box-shadow: inset 0 0 0 1px #dfe3eb; }
+:root[data-theme=light] .pbar i { background: linear-gradient(90deg, #4a68e6, #6d86f0); }
+:root[data-theme=light] .pbar b { background: repeating-linear-gradient(45deg, rgba(53, 82, 212, .38) 0 5px, rgba(53, 82, 212, .14) 5px 10px); }
+:root[data-theme=light] .track > s { background: #8b93a7; }
+:root[data-theme=light] a.li:hover .grow > b,
+:root[data-theme=light] button.li:hover .grow > b { color: var(--fg); text-decoration-color: #9aa2b5; }
+:root[data-theme=light] .ck.paid { background: rgba(11, 122, 85, .13); }
+:root[data-theme=light] .ck.inc { background: #e9ecf2; }
+:root[data-theme=light] .ck.due { border-color: #b3bac9; }
+:root[data-theme=light] .segs i { background: #e3e6ee; }
+:root[data-theme=light] .segs i.on { background: linear-gradient(90deg, #17a375, #1bb584); }
+:root[data-theme=light] .bc { background: rgba(11, 122, 85, .07); box-shadow: inset 0 0 0 1px rgba(11, 122, 85, .2); }
+:root[data-theme=light] .bc b { color: #08653f; }
+:root[data-theme=light] .bc.bad { background: rgba(196, 44, 44, .06); box-shadow: inset 0 0 0 1px rgba(196, 44, 44, .2); }
+:root[data-theme=light] .bc.bad b { color: #a82424; }
+:root[data-theme=light] .bc.warn { background: rgba(245, 180, 84, .12); box-shadow: inset 0 0 0 1px rgba(148, 87, 0, .22); }
+:root[data-theme=light] .bc.warn b { color: #7d4a00; }
+/* (HOTFIX-1) the fill colour only: a `background` shorthand here also reset select.selv's arrow to full size, so its two
+   triangle gradients painted the whole select slate with white triangles (Settings → Weekly summary's day) */
+:root[data-theme=light] .seg,
+:root[data-theme=light] .chin,
+:root[data-theme=light] .txta,
+:root[data-theme=light] .selv,
+:root[data-theme=light] .inp,
+:root[data-theme=light] .edin,
+:root[data-theme=light] .choice { background-color: #f7f8fb; }
+:root[data-theme=light] .seg button[aria-pressed=true] { background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .12), inset 0 0 0 1px var(--line2); }
+:root[data-theme=light] .skel { background: linear-gradient(90deg, #eceef3 0%, #f5f6f9 50%, #eceef3 100%); background-size: 200% 100%; }
+:root[data-theme=light] .fchip[aria-pressed=true] { background: #151922; color: #fff; border-color: #151922; }
+:root[data-theme=light] .fchip.rv[aria-pressed=true] { background: #f5b454; color: #1b1400; border-color: #f5b454; }
+:root[data-theme=light] .fchip.cat { color: #fff; }
+:root[data-theme=light] .search::placeholder,
+:root[data-theme=light] .chin::placeholder,
+:root[data-theme=light] .txta::placeholder,
+:root[data-theme=light] .inp input::placeholder,
+:root[data-theme=light] .edin input::placeholder { color: #6b7385; }
+:root[data-theme=light] .tx tbody tr:hover td { background: #f6f7fa; }
+:root[data-theme=light] select.cat { background-color: #eef0f5; background-image: linear-gradient(45deg, transparent 50%, #5a6275 50%), linear-gradient(135deg, #5a6275 50%, transparent 50%); }
+:root[data-theme=light] select.cat.review { background-color: rgba(245, 180, 84, .2); color: #7d4a00; border-color: rgba(148, 87, 0, .35); }
+:root[data-theme=light] select.cat.done { background-color: rgba(11, 122, 85, .1); color: #08653f; }
+:root[data-theme=light] #msg.error { color: #8f1d1d; }
+:root[data-theme=light] .modal { background: rgba(15, 20, 30, .42); }
+:root[data-theme=light] .sheet { background: #fff; box-shadow: 0 30px 80px rgba(15, 20, 30, .22); }
+:root[data-theme=light] .opt:hover:not(:disabled) { background: rgba(12, 14, 19, .03); }
+:root[data-theme=light] .chips button { background: #fff; }
+:root[data-theme=light] .chips button[aria-checked=true] { background: rgba(53, 82, 212, .1); color: #2a44b8; }
+:root[data-theme=light] .panel { background: #fff; box-shadow: -24px 0 60px rgba(15, 20, 30, .14); }
+:root[data-theme=light] .mono { background: #eef0f5; }
+:root[data-theme=light] .emptyov { background: rgba(255, 255, 255, .95); }
+:root[data-theme=light] .ring > svg > circle:first-child { stroke: rgba(12, 14, 19, .09); }
+:root[data-theme=light] .tgl { background: #bcc3d1; }
+:root[data-theme=light] .tgl i { background: #fff; }
+:root[data-theme=light] .tgl[aria-checked=true] { background: #129168; }
+:root[data-theme=light] .sync .dot.ok { box-shadow: 0 0 0 3px rgba(11, 122, 85, .14); }
+/* TASK-22f: Sync now on white; the panel's shadow and the re-login line in the light ink */
+:root[data-theme=light] .syncbtn { background: #fff; }
+:root[data-theme=light] .syncbtn:hover:not(:disabled) { background: var(--card2); border-color: #aeb5c4; }
+:root[data-theme=light] .syncbtn:disabled { background: transparent; }
+:root[data-theme=light] .syncp { box-shadow: 0 24px 60px rgba(16, 24, 40, .18); }
+:root[data-theme=light] .spic.ok { background: rgba(11, 122, 85, .12); }
+:root[data-theme=light] .spic.bad { background: rgba(196, 44, 44, .1); }
+:root[data-theme=light] .spic.warn { background: rgba(245, 180, 84, .22); color: #7d4a00; }
+:root[data-theme=light] .sprow.relog { border-color: rgba(196, 44, 44, .35); background: rgba(196, 44, 44, .05); }
+:root[data-theme=light] .sprow.relog .grow > span { color: #a82424; }
+:root[data-theme=light] .syncscrim { background: rgba(16, 24, 40, .45); }
+:root[data-theme=light] .colsel { color: #2a44b8; background-color: rgba(53, 82, 212, .07); }   /* (HOTFIX-1: keeps its arrow) */
+:root[data-theme=light] .frame { background: #eceef3; }
+:root[data-theme=light] .steps i { background: #dde1e9; }
+/* the app icon keeps its dark tile on the light sidebar; a hairline keeps its corners crisp on white */
+:root[data-theme=light] .brand img { box-shadow: 0 0 0 1px rgba(12, 14, 19, .12); }
+@media (max-width: 1023.98px) {
+  :root[data-theme=light] .top { background: rgba(243, 244, 247, .96); }
+  :root[data-theme=light] .tabbar { background: #fff; }  /* opaque: page text ghosted through at .97 */
+}
+/* (TASK-18 gate) the Loans & debt page's paid-off line and pressed sort tab, read on white */
+:root[data-theme=light] .win-t { color: #2a44b8; }
+:root[data-theme=light] .sorttabs button[aria-pressed=true] { color: #fff; }
+/* (TASK-20) TASK-19's screens in the light theme: goals, the bills calendar, splits / notes / tags, the docked transaction
+   sheet, rollover and the Alpaca rows, with the same text colours as above (4.5:1 or more on white / #f3f4f7) */
+:root[data-theme=light] .gpace b.pos,
+:root[data-theme=light] .remain.ok { color: #08653f; }
+:root[data-theme=light] .gpace b.bad,
+:root[data-theme=light] .gshort p,
+:root[data-theme=light] .mslbl .bad,
+:root[data-theme=light] .bchip.late .bct span,
+:root[data-theme=light] .agi.late .grow > span,
+:root[data-theme=light] .nwc.bad { color: #a82424; }
+:root[data-theme=light] .goal.short { border-color: rgba(196, 44, 44, .4); }
+:root[data-theme=light] .mstgt { border-top-color: rgba(21, 25, 34, .45); }
+:root[data-theme=light] .msc > i { background: #129168; }
+:root[data-theme=light] .msc > i.pos { background: rgba(18, 145, 104, .75); }
+:root[data-theme=light] .msc > i.neg { background: rgba(196, 44, 44, .7); }
+:root[data-theme=light] .gsheet .inp input[type=month] { color-scheme: light; }
+:root[data-theme=light] .cwd,
+:root[data-theme=light] .cday.out { background: #f3f5f9; }
+:root[data-theme=light] .cday.today .dn b { color: #fff; }
+:root[data-theme=light] .cday .tdy { color: #2a44b8; }
+:root[data-theme=light] .ck.late { border-color: rgba(196, 44, 44, .65); }
+:root[data-theme=light] .ttag { background: rgba(141, 76, 186, .12); color: #6b2f93; }
+:root[data-theme=light] .sfchip.on,
+:root[data-theme=light] .tx tbody tr.sel td { background: rgba(53, 82, 212, .08); }
+:root[data-theme=light] .txpanel { background: #fff; box-shadow: -24px 0 60px rgba(15, 20, 30, .14); }
+:root[data-theme=light] .taginp { background: #f7f8fb; }
+:root[data-theme=light] .remain.warn { color: #7d4a00; }
+/* (HOTFIX-1) states the layout gate now also opens in the light theme: the budget editor's Save was black text on its
+   black button, its "Remove budget" and every form's errors light pink on white */
+:root[data-theme=light] .bx-foot button.p { color: #fff; }
+:root[data-theme=light] .bx-foot button.rm { color: #c42c2c; }
+:root[data-theme=light] .bx-foot button.rm:hover { background: rgba(196, 44, 44, .08); }
+:root[data-theme=light] .bx .err,
+:root[data-theme=light] .ferr { color: #a82424; }
+:root[data-theme=light] .bx .edin.bx-in { background: #fff; }
+:root[data-theme=light] .edin:has(input[aria-invalid]),
+:root[data-theme=light] .fld.bad .inp,
+:root[data-theme=light] .fld.bad .chips button { border-color: rgba(196, 44, 44, .6); }
+/* (HOTFIX-1) a car's or property's page (TASK-12 / 13), never drawn light before: the picture's frame, the notes, the
+   beds / baths / sq ft facts, the safety chips and the equity bar's track were the dark theme's near-black fills */
+:root[data-theme=light] .vd-pic { background: linear-gradient(180deg, #eef1f6 0%, #e4e8ef 100%); }
+:root[data-theme=light] .vd-pic.cutout { background: none; }
+:root[data-theme=light] .vd-quiet,
+:root[data-theme=light] .vd-facts div { background: #f7f8fb; }
+:root[data-theme=light] .vd-chip { background: #f3f5f9; }
+:root[data-theme=light] .vd-bar { background: #edf0f5; }

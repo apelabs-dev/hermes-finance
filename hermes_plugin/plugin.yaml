@@ -1,0 +1,39 @@
+name: hermes-finance
+version: 0.1.0
+description: "Answers money questions from your local hermes-finance database (spending, budgets, transactions, net worth, bills, loans, investments, cash flow, goals, categorization rules; read-only), syncs your banks on request, and files transactions, adds rules, sets budget caps and tracks bills only after you approve each change."
+kind: standalone
+manifest_version: 2
+api_version: 1
+provides_tools:
+  - finance_spend
+  - finance_budget_status
+  - finance_transactions
+  - finance_networth
+  - finance_bills
+  - finance_loans
+  - finance_holdings
+  - finance_cashflow
+  - finance_status
+  - finance_goals
+  - finance_rules
+  - finance_sync
+  - finance_set_category
+  - finance_add_rule
+  - finance_set_cap
+  - finance_track_bill
+provides_hooks:
+  - pre_tool_call
+config_schema:
+  HERMES_FINANCE_DATA_DIR:
+    type: str
+    default: ""
+    description: "The hermes-finance data directory (the one holding finance.db). Empty: the app's own choice (FINANCE_DATA_DIR, else the app's data/ directory), so the plugin and the app always read the same database."
+  HERMES_FINANCE_APP_DIR:
+    type: str
+    default: ""
+    description: "A hermes-finance checkout to load the app from (its src/), when the hermes_finance package isn't installed in Hermes's Python. Also read from the environment variable of the same name. The daily and weekly report jobs run from it too (hermes finance crons)."
+  HERMES_FINANCE_CRON_DELIVER:
+    type: str
+    default: ""
+    description: "Where a new daily or weekly report job is delivered when `hermes finance crons plan` gets no --deliver: one Hermes delivery target as PLATFORM:CHAT_ID (for example discord:<channel id>). Empty: plan asks for --deliver. Existing jobs keep their own destination."
+tags: [finance, budgeting, personal]

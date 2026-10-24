@@ -1,0 +1,65 @@
+/* The bills calendar (TASK-19): a month grid from 1200px (seven columns need ~130px each beside the sidebar), an agenda
+   by day below. */
+.calcard h3 .calnav { margin-left: auto; }
+.calnav span { min-width: 130px; text-align: center; }
+.calsum { display: flex; gap: 10px; margin: -2px 0 16px; flex-wrap: wrap; }
+.calsum > div { background: var(--card2); border: 1px solid var(--line); border-radius: 14px; padding: 9px 14px; min-width: 150px; }
+.calsum span { display: block; font-size: 13px; }
+.calsum b { font-size: 20px; font-weight: 700; }
+.calg { display: grid; gap: 1px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--line); }
+.cwk { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; }
+.cwd { background: #11151e; font-size: 13px; font-weight: 600; color: var(--dim); padding: 8px 10px; }
+.cday { background: var(--card); min-height: 112px; padding: 7px 7px 9px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cday.out { background: #11151e; }
+.cday .dn { font-size: 13.5px; font-weight: 600; color: var(--mut); padding: 1px 3px; display: flex; align-items: center; gap: 7px; }
+.cday.out .dn { color: var(--dim); font-weight: 500; }
+.cday.today .dn b { display: inline-grid; place-items: center; min-width: 24px; height: 24px; border-radius: 12px; background: var(--acc);
+  color: #0c0e13; font-size: 13px; }
+.cday .tdy { font-size: 13px; color: #b3c3ff; font-weight: 600; }
+.bchip { border: 0; width: 100%; text-align: left; color: inherit; min-height: 44px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 7px; padding: 6px 7px; border-radius: 9px;
+  background: var(--card2); box-shadow: inset 3px 0 0 var(--cc); min-width: 0; }
+.bchip .ck, .agi .ck, .calleg .ck { width: 18px; height: 18px; margin-top: 1px; }
+.bchip .av { width: 22px; height: 22px; font-size: 13px; margin-top: 0; }   /* (TASK-20) the merchant's logo, beside the check */
+.ck.due { border-width: 2px; }
+.ck.late { border-color: rgba(255, 123, 123, .75); }
+/* (baseline K7) the amount is never cut: the name and amount's column is never narrower than the amount (the name gives
+   way, with its ellipsis), and where it can't be that wide beside the check and logo (a day under 148px, 1200 to ~1430px
+   wide; or a five-figure amount) the name and amount go under them, the chip's whole width. At 1200 the days are 115px:
+   "$2,252.00" was cut to "$2,252." under the next day, and a Saturday's "$165.03" by the calendar's edge. 66px: a
+   four-figure amount ($2,252.00), so a month's chips go under at the same width */
+.bchip .bct { flex: 1 1 66px; display: flex; flex-direction: column; line-height: 1.3; }
+.bchip .bct b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  contain: inline-size; }
+.bchip .bct span { font-size: 13px; color: var(--mut); white-space: nowrap; }
+.bchip.paid .bct b { color: var(--mut); }
+.bchip.late .bct span { color: #ffa3a3; }
+.bchip:hover, .agi:hover { background: var(--card3); }
+.bchip:focus-visible, .agi:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+.agenda { display: none; }
+.calleg { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 14px; font-size: 13px; color: var(--mut); }
+.calleg > span { display: inline-flex; align-items: center; gap: 7px; }
+/* Option A: the legend's help control is 10px from the item it explains, like every other control, not the legend's
+   wider 18px rhythm (which is between whole legend items, not between an item and a control). */
+.calleg:has(> .help-trigger) { column-gap: 10px; }
+@media (max-width: 1199.98px) {
+  .calg { display: none; }
+  .agenda { display: block; }
+  .calcard h3 { flex-wrap: wrap; }
+  .calcard h3 .calnav { margin-left: 0; width: 100%; justify-content: space-between; margin-top: 10px; }
+  .calsum > div { flex: 1 1 0; min-width: 0; padding: 8px 11px; display: flex; flex-direction: column; justify-content: space-between; }
+  /* the numbers sit on one line across the three tiles even when a label ("September total") wraps (hotfix 2026-09-29) */
+  .calsum b { font-size: 17px; }
+  .agd + .agd { margin-top: 6px; }
+  .agh { display: flex; align-items: center; gap: 12px; padding: 10px 0 4px; }
+  .agh .grow { min-width: 0; }
+  .agh .grow > b { display: block; font-weight: 650; }
+  .agh .grow > span { display: block; font-size: 13px; color: var(--mut); }
+  .agi { box-shadow: inset 3px 0 0 var(--cc); padding: 9px 0 9px 12px; border-radius: 0; }
+  .agi .grow { min-width: 0; }
+  .agi .grow > b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agi .grow > span { display: block; font-size: 13px; color: var(--mut); }
+  .agi.late .grow > span { color: #ffa3a3; }
+}
+/* Recurring's narrow rows (the Subscriptions card, phone Bills rows): the sub-line's category badge goes, so the category
+   name fits whole (MOCK-017 independent audit, fix 6) */
+.li.wrap:has(> .rt > .pill) .grow > span > .cb { display: none; }

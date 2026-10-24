@@ -1,0 +1,19 @@
+/* The Alpaca live account (TASK-19): its rows (an API connection, no Plaid slot) and the Connect form. */
+.tag.api { border-color: rgba(142, 168, 255, .5); color: #b3c3ff; font-size: 13px; margin-left: 8px; }
+.apirow .grow { min-width: 0; }
+.apirow:not(.r2) .grow > b { display: flex; align-items: center; flex-wrap: wrap; }
+.apirow:not(.r2) .grow > span { white-space: normal; }
+.nwc { display: flex; align-items: center; gap: 6px; color: var(--ok); font-size: 13px; margin-top: 2px; }
+.nwc.off { color: var(--mut); }
+.nwc.bad { color: #ffa3a3; }
+.nwc svg.i { width: 15px; height: 15px; flex: none; }
+.apictl { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.apictl .lnk { background: none; border: 0; padding: 0; color: var(--acc); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.apnote { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 13.5px; color: var(--mut); }
+.apnote svg.i { width: 16px; height: 16px; margin-top: 2px; flex: none; color: var(--warn); }
+.apres:empty { display: none; }
+.apres { margin-top: 14px; }
+.apsum { display: flex; gap: 10px; margin-top: 10px; }
+.apsum > div { flex: 1 1 0; background: var(--card2); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+.apsum span { display: block; font-size: 13px; }
+.apsum b { font-size: 18px; font-weight: 700; }

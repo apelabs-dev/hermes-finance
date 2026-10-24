@@ -1,0 +1,424 @@
+/* The Budgets page body (polish P2A, budgets.js): the budget cards (.bcard, .sugg), the "No budget yet" card (.nb /
+ * .nbrow) and the grouped Planned / Spent / Left table. Under 600px each table row reflows to the name and Left on the
+ * first line and "Planned · Spent" on the second, so the page never scrolls sideways. Motion is opacity and transform
+ * only, 120-250ms ease-out, and none under prefers-reduced-motion.
+ *
+ * Load order (web.py, docs/css-load-order.md): app.css, then the feature sheets in FEATURE_FILES order (this one is the
+ * last of them), then settings.css, light.css, tap.css. The sign-in / first-run page loads app.css, settings.css,
+ * light.css and tap.css only, none of the feature sheets. So a rule here beats an app.css rule of the same specificity,
+ * and light.css (the light theme) and tap.css (hit areas) beat it. tests/test_css_load_order.py checks the order.
+ */
+
+/* ---- moved from app.css (the budgets / recurring section): the budget cards and the "No budget yet" rows ---- */
+.bcard .hd { display: flex; align-items: center; gap: 11px; }
+.bcard .hd b { font-weight: 650; font-size: 16px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Every budget card is the same height and its footer is bottom-anchored: a row's cards line up. The "Still due" band
+   is always present, empty when nothing is due. (Option C, sketches/023-tooltip-options: the footer's own grid, below,
+   replaced a band that held the disclosure by itself.) */
+.bcard { display: flex; flex-direction: column; }
+.bcard .fig .due { min-height: 24px; }
+.bcard .budget-extra { display: flow-root; min-height: 40px; } /* reserve the rollover band across neighboring cards */
+.bcard .fig { display: flex; align-items: center; gap: 18px; margin: 16px 0 4px; color: inherit; text-decoration: none; }
+/* (TASK-18) every budget card's figure at the same height: top-aligned beside the ring (a "Still due" line under
+   Transport's figure had centred it 15px higher), padded so a one-line figure still sits on the ring's middle */
+.bcard .fig { align-items: flex-start; }
+.bcard .fig > div:last-child { padding-top: 15px; }
+.bcard .fig .big { font-size: 30px; }
+.bcard .fig .mut { font-size: 14px; }
+.bcard .fig > div:last-child { min-width: 0; }
+/* "Still due $X" (the category's recurring bills not paid yet this month) and who they are: names may shorten. */
+.bcard .fig .due { display: flex; align-items: center; gap: 8px; margin-top: 7px; min-width: 0; }
+.bcard .fig .due .mut { font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sugg { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; flex-wrap: wrap; min-height: 49px; }
+/* Option C: the budget card's footer is TWO deterministic lines inside one wrapping flex box: line 1 is the amount
+   alone, line 2 is "Bills due details" at the left with Edit pushed to the right. Because the amount always takes a
+   full line, no card's footer grows taller than its neighbour's — that is what keeps Edit at one Y across a row.
+   Three grid attempts and what each actually did, all measured with the layout gate:
+   - The amount on `1 / 3` with "Use" in column 2: the two shared one cell and overlapped ("two siblings overlap" x27).
+   - Two columns with the amount in column 1: correct boxes, but `minmax(0, 1fr)` let "Use" steal the amount's width
+     (247px -> 193px at 1280); the rollover amount wrapped to two lines and pushed Edit 24px below its neighbour.
+   - `max-content` anywhere: the grid became 1067px wide inside a 355px card (scrollWidth 1067 vs clientWidth 355).
+   Flex-wrap gets the adjacency without any of those, and the gate's alignment check is the judge. */
+/* Budget card footer — ONE nowrap line (2026-10-02). Measured: at 1280 the footer inner width is 254px and
+   `Budget $225` alone took 246px, so amount + Details + Edit could never share a row. `Budget: $X` is the short
+   label, the amount shrinks/ellipsizes rather than pushing the controls off the line, and the two controls sit
+   right. */
+.bcard > .sugg { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; min-height: 34px; }
+.bcard > .sugg > span:first-child { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the spacer is the line's slack: it grows, so Details+Edit (and Use, on a suggested card) sit at the right on BOTH
+   kinds of card. Hiding it and leaning on `margin-left:auto` instead left a capped card's Edit stranded mid-row. */
+.bcard > .sugg > .sp { flex: 1 1 auto; min-width: 0; }
+.bcard > .sugg > button[title] { flex: 0 0 auto; }   /* the Use button */
+.bcard > .sugg > .help-trigger.bfd { flex: 0 0 auto; margin: 0; min-height: 34px; background: transparent; padding: 3px 0; }
+.bcard > .sugg > button:last-child { flex: 0 0 auto; margin-left: 0; }
+/* A card with NO budget is a different job: its footer reads `Suggested $850` beside a `Use` button, and that label
+   needs 111px where the capped card's `Budget: $250` needs 69px (measured on the nocaps fixture at 1280/1024). Forcing
+   both onto one nowrap line cut the money off — an ellipsis through a figure is never acceptable, and this is a figure.
+   So only the UNCAPPED card wraps to two lines; the capped card, which is the common case and the one reported in review,
+   keeps its single line and its 47px footer. Uncapped cards are taller and that is the accepted cost (2026-10-02).
+   The gate's `clipping` check flags money under an ellipsis, so this is the alternative it was written to catch. */
+.bcard > .sugg.suggwrap { flex-wrap: wrap; align-content: flex-start; row-gap: 6px; }
+.bcard > .sugg.suggwrap > span:first-child { flex: 1 1 100%; }
+/* the rollover fact now lives in the Details panel, so the reserved band below the figure is only needed when the
+   hook actually renders there — keep it reserved anyway so card heights stay equal whether or not it is present */
+.bcard .fig .due { min-height: 0; }
+.bcard .budget-extra:empty { min-height: 0; }
+
+/* The footer's line: the disclosure sits at the same height as the Edit button it shares, so both centres are level. */
+.bcard > .sugg > .help-trigger.bfd { min-height: 34px; }
+.sugg button, .nb .setc { border: 1px solid var(--line2); background: var(--card2); border-radius: 9px; padding: 6px 12px; font-size: 13.5px; font-weight: 550; }
+
+/* "No budget yet" rows — ONE line, always the same height (2026-10-02). The `Suggested $X · Use` line moved into the
+   row's Details panel, so the conditional second line that made these rows 65/104/85/104 is gone and no reserved band
+   is needed. Name takes the slack, amount and the two controls keep their size.
+   NOTE: `flex-wrap: wrap`, not `nowrap`, and that is deliberate. With nowrap the cap editor could no longer break to
+   its own line and escaped its card by 111px (gate 2, budgets-set-budget, every width). Nothing on the CLOSED row
+   wraps, because `.grow` shrinks to its 90px floor instead — the old `min-width: 150px` was what FORCED the wrap this
+   row no longer takes. Wrapping is therefore free when closed, and it is what gives the opened editor a full-width
+   line of its own. */
+.nb .li { flex-wrap: wrap; align-items: center; column-gap: 10px; }
+/* The name block: `flex: 1 1 auto` with `min-width: 90px`, and BOTH numbers were wrong on their own (measured
+   2026-10-02 at 1280, where the row's content is 254px wide):
+   - `1 1 auto` alone: the block sized to its CONTENT, so a long reason (225px) pushed the amount and Set onto a
+     second line and the rows went 112 vs 155.
+   - `1 1 0` alone: a zero basis STARVED the block instead — nothing was guaranteed, so a row with two controls
+     (badge + amount + Details + Set = ~180px) left the name 42px and it rendered as "Gro…" / "No b…". Equal rows by
+     truncation is not a fix; it is the same bug wearing a hat.
+   `auto` + a 90px floor is the pair that works: the block starts at its content, shrinks toward 90px when the row is
+   tight (and the reason ellipsizes rather than the name), and grows with the leftover space when it is not. The name
+   itself is never the thing that gets cut — it is the shortest text on the row by a wide margin. */
+.nb .li > .grow { flex: 1 1 104px; min-width: 0; }
+/* The NAME is the one thing here that must never be cut — "Gro…" / "Rent & U…" is worse than a shortened reason. The
+   block is sized so the NAME always fits: `min-width: 90px` is only a floor, and the reason below it is the element
+   built to truncate (it carries the full sentence as its hover title). So the block may still shrink, but never below
+   the widest name it holds — which on a 254px row is ~120px for "Rent & Utilities". */
+.nb .li > .grow > b { display: block; overflow: hidden; text-overflow: ellipsis; }
+/* OVERRIDE 1: the name never wraps. app.css's `.acct .grow > span, .li.wrap .grow > span, .li.wrap .grow > b
+   { white-space: normal }` matches this row (it IS a `.li.wrap`). While these rules sat in app.css above that rule it
+   won on source order, and the name wrapped to two lines on "Rent & Utilities" and made that row taller than its
+   neighbours. This rule wins on specificity instead (0,4,1 against 0,3,1), so it holds in any load order, and it is
+   the only one that keeps the name on one line (the clamp above sets no white-space).
+   Test: tests/test_budget_rows.py::test_name_stays_on_one_line. */
+.li.wrap.nbrow > .grow > b { white-space: nowrap; }
+.nb .li > .grow > span { display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* OVERRIDE 2: the reason wraps. The clamp above keeps a reason on one line and cuts it with an ellipsis, but a
+   no-budget row's reason carries money ("$247 spent in October") and a figure is never cut, so on these rows it wraps
+   instead (polish P2A). This replaces `.li.wrap.nbrow > .grow > span { white-space: nowrap }`, an override that never
+   applied: it lost to app.css's `.li.wrap .grow > span { white-space: normal }` on source order and to this rule on
+   specificity. 0,5,1 beats the clamp (0,3,1) and app.css's rule in any load order.
+   Test: tests/test_budget_rows.py::test_reason_is_never_cut. */
+.nb .li.wrap.nbrow > .grow > span { white-space: normal; }
+.nb .setc { margin-left: 0; flex: none; }
+.nb .li > .help-trigger.nbsg { flex: none; margin-right: 2px; }
+.nb .setc:hover, .sugg button:hover { color: var(--fg); border-color: #4a5470; }
+.nb .sg { display: block; font-size: 13px; color: var(--mut); margin-top: 2px; }
+.nb .sg b { color: var(--fg); }
+.nb .sg .lnk { font-size: 13px; }
+@media (max-width: 1023.98px) {
+  .bcard > .sugg { grid-template-rows: auto minmax(44px, auto) auto; min-height: 96px; }
+}
+
+/* ---- the Budgets page body ---- */
+
+.mvb, .btcard, .card.nb { margin-top: 16px; }
+.mvb:first-child, .btcard:first-child, .card.nb:first-child { margin-top: 0; }
+
+/* (polish P2e) the banner that offers the move to group budgets */
+.mvb { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; border: 1px solid var(--line);
+  border-radius: 14px; background: rgba(142, 168, 255, .07); color: var(--mut); font-size: 14px; }
+.mvb > svg.i { color: var(--acc); }
+.mvb > p { flex: 1; min-width: 0; }
+.mvb .got { flex: none; border: 1px solid var(--line2); background: var(--card2); border-radius: 9px; padding: 6px 12px;
+  font-size: 13.5px; font-weight: 550; color: var(--fg); }
+.mvb .got:hover { border-color: #4a5470; }
+.mvb > p { color: var(--fg); font-weight: 550; }
+.mvb .later { flex: none; border: 0; background: none; border-radius: 9px; padding: 6px 8px; font-size: 13.5px; font-weight: 550; color: var(--mut); }
+.mvb .later:hover { color: var(--fg); }
+
+/* the table */
+.btcard { padding: 6px 10px 8px; }
+.bt { width: 100%; border-collapse: collapse; font-size: 14.5px; font-variant-numeric: tabular-nums; }
+.bt th { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); text-align: right;
+  padding: 10px 12px 8px; border-bottom: 1px solid var(--line); }
+.bt td { padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.bt th:first-child, .bt td:first-child { text-align: left; }
+.bt th:not(:first-child), .bt td.p, .bt td.a, .bt td.r { width: 1%; white-space: nowrap; min-width: 108px; }
+.bt tbody:last-of-type tr:last-child td { border-bottom: 0; }
+.bt tr.g td { background: var(--card2); font-weight: 650; color: var(--fg); padding-top: 7px; padding-bottom: 7px; }
+.bt tr.g td:first-child { border-radius: 10px 0 0 10px; }
+.bt tr.g td:last-child { border-radius: 0 10px 10px 0; }
+.bt tr.g td { border-bottom: 0; }
+.gbtn { display: flex; align-items: center; justify-content: center; flex: none; width: 32px; min-height: 32px; border: 0;
+  background: none; color: inherit; font: inherit; font-weight: 650; text-align: left; padding: 0; border-radius: 8px; cursor: pointer; }
+.gbtn .chev svg { width: 16px; height: 16px; color: var(--dim); transition: transform 150ms ease-out; }
+.bg.shut .gbtn .chev svg { transform: rotate(-90deg); }
+.ghl .gc { flex: none; color: var(--dim); font-size: 13px; font-weight: 600; }
+.gtot.b { color: #ffa3a3; } .gtot.o { color: #72e3bb; } .gtot.w { color: #ffc977; }
+/* polish P2e: a group's Planned is an edit control: solid with a budget of its own, dashed when it's the caps' sum */
+.bt tr.g .plan { font-weight: 650; }
+.bt tr.g .plan.own { color: var(--fg); }
+.bt tr.g .plan:not(.own) { border-style: dashed; }
+.ghw { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ghw .ghl { flex: 1 1 auto; width: auto; min-width: 0; }
+/* the group head line: fold chevron, tile, the name (a link to the group's transactions), how many caps, its Details */
+.ghl { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: nowrap; }
+.ghl .gn { flex: none; white-space: nowrap; overflow-wrap: normal; }
+.gover { flex: 0 1 auto; min-width: 0; color: #ffc977; font-size: 13px; font-weight: 550; }
+/* an uncapped category in a group budget: only its Spent */
+.bt tr.u td { padding-top: 8px; padding-bottom: 8px; }
+.bt tr.u .nml { color: var(--mut); }
+.bt tr.u .udue { color: var(--dim); }   /* a bill still due in an uncapped category: it counts in its group's Left */
+/* group roll-up: an uncapped category counted in its group gets Set in Planned (a quiet, dashed button) */
+.bt tr.u .plan.set { border-style: dashed; color: var(--dim); position: relative; }
+.bt tr.u .plan.set::after { content: ""; position: absolute; inset: -10px -6px; }   /* a 44px hit area on a phone */
+
+/* one icon column (review 2026-10-22, "all buttons are still misaligned"): a category's icon sits under its group's
+   icon, not 18px left of it. Group: 12px cell padding + 32px chevron + 10px gap = 54px; a category: 12 + 42. */
+.bt .nm { display: flex; flex-direction: column; gap: 6px; padding-left: 42px; min-width: 0; }
+.bt .nm .l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.bt .nml { color: var(--fg); font-weight: 550; text-decoration: none; min-width: 0; overflow-wrap: anywhere; letter-spacing: .01px; }   /* a name wraps: a clipped link would also cut its 44px phone hit box */
+/* letter-spacing .01px (invisible): WebKit sizes this shrink-to-fit name ~0.14px narrower than its own one-line text when it
+   has a space and isn't weight 400 (Inter Variable at 550), so "Other Transport" broke at the space in Safari; any non-zero
+   letter-spacing makes its intrinsic width match its line layout (review t_37004e6b). */
+.bt .nml:hover { text-decoration: underline; }
+.hair { display: flex; height: 3px; width: 90%; max-width: 440px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.hair i { display: block; height: 100%; background: var(--ok); }
+.hair i.w { background: var(--warn); } .hair i.b { background: var(--bad); }
+.hair i.d { opacity: .45; }
+.plan { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 9px;
+  background: none; color: var(--mut); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.plan:hover { color: var(--fg); border-color: var(--line2); }
+.plan .roll { margin: 0; }   /* rollover.css's old card-line `.roll { margin: 10px 0 2px }` pushed the icon ~4px low */
+.plan .roll svg { width: 13px; height: 13px; color: var(--dim); display: block; }
+.act { color: var(--mut); }
+.rp { display: inline-block; border-radius: 999px; padding: 2px 10px; font-weight: 650; background: rgba(79, 209, 165, .14); color: #72e3bb; }
+.rp.w { background: rgba(245, 180, 84, .16); color: #ffc977; }
+.rp.b { background: rgba(255, 123, 123, .16); color: #ffa3a3; }
+.rp.z { background: var(--card2); color: var(--dim); }
+
+/* folding a group: its rows come back with a short fade and rise (the chevron turns in 150ms) */
+@keyframes btin { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.bt tr.in { animation: btin 160ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .bt tr.in { animation: none; }
+  .gbtn .chev svg { transition: none; }
+}
+
+/* polish P2e: the review sheet of the move to group budgets: a row per group (tile, name, what it spent, its caps), then the
+   choice and the amount */
+.mvlist { margin-top: 10px; }
+.mvrow { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; padding: 14px 0; border-top: 1px solid var(--line); }
+.mvrow:first-child { border-top: 0; }
+.mvn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.mvn b { font-size: 15px; font-weight: 650; color: var(--fg); }
+.mvsp { margin-left: auto; font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.mvcaps { flex: 1 1 100%; font-size: 13.5px; color: var(--mut); font-variant-numeric: tabular-nums; }
+.mvch { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.mvch .edin.off { opacity: .45; }
+.mvrow > .err { grid-column: 2; font-size: 13px; color: #ffa3a3; }
+.mvrow > .err:empty, .mvfail:empty { display: none; }
+.mvfail { margin-top: 8px; font-size: 13.5px; color: #ffa3a3; }
+:root[data-theme=light] .mvrow > .err, :root[data-theme=light] .mvfail { color: #a82424; }
+/* Apply stays in view while the groups scroll: the action row sticks to the sheet's bottom edge, on its background */
+.sheet.mvsheet > .row { position: sticky; bottom: -26px; z-index: 1; margin: 8px -26px -26px; padding: 14px 26px 26px;
+  background: inherit; border-top: 1px solid var(--line); }
+@media (max-width: 1023.98px) {
+  .sheet.mvsheet > .row { bottom: -28px; margin: 8px -18px -28px; padding: 14px 18px 28px; }
+}
+@media (max-width: 600px) {
+  .mvch, .mvrow > .err { grid-column: 1 / -1; }
+  .mvseg { flex: 1 1 100%; }
+  .mvseg button { flex: 1 1 auto; padding: 6px 10px; white-space: nowrap; }   /* each choice on one line at 390 */
+}
+
+/* the history in a row's Details: six bars and the budget as a dashed line */
+.hist { margin-top: 12px; }
+.hist .plot { position: relative; display: flex; align-items: flex-end; gap: 8px; height: 76px; }
+.hist .hc { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+.hist .hc i { display: block; width: 100%; max-width: 28px; margin: 0 auto; min-height: 1px; border-radius: 5px 5px 2px 2px; background: rgba(var(--rgb), .6); }
+.hist .hc i.cur { background: rgb(var(--rgb)); }
+.hist .hc i.part { background: rgba(var(--rgb), .35); }
+.hist .cap { position: absolute; left: 0; right: 0; height: 0; border-top: 1.5px dashed rgba(238, 240, 246, .6); pointer-events: none; }
+.hist .lbl { display: flex; gap: 8px; margin-top: 4px; }
+.hist .lbl span { flex: 1; text-align: center; font-size: 13px; color: var(--dim); }
+.hist small { display: block; margin-top: 6px; font-size: 13px; color: var(--dim); }
+
+/* No budget yet: a suggestion is a button on the row (Use $X), a new category says so, the quiet rows fold away */
+.nb .li > .usec { flex: none; border: 1px solid var(--line2); background: var(--card2); border-radius: 9px; padding: 6px 12px;
+  font-size: 13.5px; font-weight: 550; color: var(--acc); white-space: nowrap; }
+.nb .li > .usec:hover { border-color: #4a5470; }
+.nb .newc { display: inline-block; margin-left: 8px; font-size: 13px; font-weight: 700; color: var(--acc); background: rgba(142, 168, 255, .14);
+  border-radius: 999px; padding: 1px 7px; vertical-align: 1px; }
+.nb .more { display: block; margin: 8px 0 2px; border: 0; background: none; color: var(--acc); font-size: 13.5px; font-weight: 550; padding: 4px 0; }
+.nb .more:hover { text-decoration: underline; }
+
+:root[data-theme=light] .gtot.b { color: #a82424; } :root[data-theme=light] .gtot.o { color: #08653f; }
+:root[data-theme=light] .gtot.w, :root[data-theme=light] .gover { color: #7d4a00; }
+:root[data-theme=light] .mvb { background: rgba(53, 82, 212, .06); }
+:root[data-theme=light] .mvb > svg.i { color: #2a44b8; }
+:root[data-theme=light] .mvb .got { background: #fff; }
+:root[data-theme=light] .rp { background: rgba(11, 122, 85, .1); color: #08653f; }
+:root[data-theme=light] .rp.w { background: rgba(245, 180, 84, .2); color: #7d4a00; }
+:root[data-theme=light] .rp.b { background: rgba(196, 44, 44, .1); color: #a82424; }
+:root[data-theme=light] .rp.z { background: #eceff4; color: var(--mut); }
+:root[data-theme=light] .hair { background: #e6e9f0; }
+:root[data-theme=light] .hist .cap { border-top-color: rgba(21, 25, 34, .55); }
+:root[data-theme=light] .nb .li > .usec, :root[data-theme=light] .nb .newc { color: #2a44b8; }
+
+@media (max-width: 600px) {
+  .btcard { padding: 2px 8px 6px; }
+  .bt thead { display: none; }
+  .bt, .bt tbody, .bt tr, .bt td { display: block; width: 100%; min-width: 0; }
+  .bt tr.c { display: grid; grid-template-columns: auto auto 1fr minmax(72px, max-content); align-items: center; gap: 4px 10px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+  .bt tbody:last-of-type tr:last-child { border-bottom: 0; }
+  .bt tr.c td { border: 0; padding: 0; text-align: left; width: auto; min-width: 0; white-space: normal; }
+  /* the name (and its bar) take the row up to Left, not just as wide as "Planned · Spent" under it (review 2026-10-21):
+     the name stays on one line where it fits, its (i) right after it, and every row's bar is the same length */
+  .bt tr.c td.n { grid-column: 1 / 4; grid-row: 1; }
+  /* the name keeps its own width (Safari shrank it a pixel short and wrapped "Other / Transport"), and only wraps when it
+     can't fit next to its (i); no `pretty` re-balancing on a two-word name */
+  .bt tr.c .nm .l > .nml { flex: 0 0 auto; max-width: calc(100% - 68px); text-wrap: wrap; }
+  .bt tr.c td.r { grid-column: 4; grid-row: 1; justify-self: end; text-align: right; }
+  .bt tr.c td.p, .bt tr.c td.a { grid-row: 2; font-size: 13px; color: var(--dim); white-space: nowrap; }
+  .bt tr.c td.p { grid-column: 1; padding-left: 0; }   /* "Planned · Spent" starts where the category's bar starts (review 2026-10-21) */
+  .bt tr.c td.a { grid-column: 2; }
+  .bt tr.c td.p::before { content: "Planned "; }
+  .bt tr.c td.a::before { content: "Spent "; }
+  .bt tr.c td.p .plan { border: 0; border-bottom: 1px dotted var(--dim); border-radius: 0; padding: 0; color: var(--dim); }
+  .bt tr.c td.a .act { color: var(--dim); }
+  .bt .nm { padding-left: 0; }
+  .hair { width: 100%; }
+  /* a group row: its name and Left, then (polish P2e) "Planned · Spent" under the name, Planned being its edit control */
+  /* (a wrapping line, not a grid: a grid's auto columns sized by "Planned · Spent" left Left no room on a narrow phone) */
+  .bt tr.g { display: flex; flex-wrap: wrap; align-items: center; gap: 0 10px; background: var(--card2); border-radius: 10px;
+    padding: 0 12px 8px 4px; margin-top: 8px; }
+  .bt tr.g::after { content: ""; order: 2; flex: 0 0 100%; }   /* Planned · Spent start a line of their own */
+  .bt tr.g td { display: block; background: transparent; border-radius: 0; padding: 0; width: auto; min-width: 0; text-align: left; white-space: nowrap; }
+  .bt tr.g td:first-child { order: 0; flex: 1 1 0; min-width: 0; }
+  .bt tr.g td.r { order: 1; flex: none; text-align: right; }
+  .bt tr.g td.p, .bt tr.g td.a { font-size: 13px; font-weight: 500; color: var(--dim); }
+  .bt tr.g td.p { order: 3; padding-left: 34px; }   /* under the group's icon (4px row padding + 34 = 38), like its categories' */
+  .bt tr.g td.a { order: 4; }
+  .bt tr.g td.p::before { content: "Planned "; }
+  .bt tr.g td.a::before { content: "Spent "; }
+  /* Planned | Spent: a short hairline centred in the 10px gap and on the text, instead of the off-centre "·" (review 2026-10-21) */
+  .bt tr.c td.a, .bt tr.g td.a { position: relative; }
+  .bt tr.c td.a::after, .bt tr.g td.a::after { content: ""; position: absolute; left: -5.5px; top: 50%; width: 1px; height: 11px;
+    transform: translateY(-50%); background: var(--dim); opacity: .45; pointer-events: none; }
+  .bt tr.g td.p .plan { border: 0; border-bottom: 1px dotted var(--dim); border-radius: 0; padding: 0; color: var(--dim); font-weight: 500; }
+  .bt tr.g td.p .plan.own { color: var(--mut); border-bottom-style: solid; }
+  .ghw { flex-wrap: wrap; gap: 0 12px; }
+  .ghw .ghl { flex: 1 1 100%; }
+  /* the (i) keeps the standard 10px control gap here too: measured at 390 with a group budget and its over-note, every
+     group name still fits on one line and the fold button and the link never overlap (review 2026-10-21) */
+  .gover { flex: 1 1 100%; min-width: 0; padding-left: 34px; margin: 0 0 4px; white-space: normal; }
+  .bt tr.u { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 10px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+  .bt tr.u td { border: 0; padding: 0; width: auto; min-width: 0; text-align: left; }
+  .bt tr.u td.p, .bt tr.u td.r { display: none; }
+  /* Set sits right after the category's name, 10px on like a capped row's (i) (review 2026-10-22: it hung in a
+     column by the amounts, far from what it sets); the amount keeps the rest of the row, flush right */
+  .bt tr.u:has(.set) { grid-template-columns: minmax(0, max-content) auto 1fr; }
+  .bt tr.u td.a { text-align: right; }
+  .bt tr.u td.p:has(.set) { display: block; }
+  .bt tr.u td.a { text-align: right; font-size: 13px; }
+  /* the fold chevron draws 24px wide, so the group's icon lands at 38px, the column its categories use; its tap area
+     stays 44x44 through tap.css's hit box (centred on it: 10px into the row's padding and the gap before the tile) */
+  .gbtn { width: 24px; min-height: 44px; }
+
+  /* the move banner: its words on a line, the two buttons under them */
+  .mvb { flex-wrap: wrap; row-gap: 6px; }
+  .mvb > p { flex: 1 1 calc(100% - 36px); }
+  .mvb .got { margin-left: 32px; }
+  /* No budget yet: the name and its reason take the first line whole, the buttons sit under them */
+  .nb .li.wrap.nbrow > .grow { flex: 1 1 calc(100% - 50px); }
+  .nb .li.wrap.nbrow > .grow + * { margin-left: 43px; }
+  .nb .li.wrap.nbrow > .grow ~ .setc { margin-left: 0; }
+  .nb .li.wrap.nbrow > .grow + .setc { margin-left: 43px; }
+  /* a group's categories sit under it, not left of it (review 2026-10-21): their icon lines up with the group's icon
+     (past its chevron) and their name and "Planned" with the group's; Left keeps the right edge */
+  /* one icon column at 38px for groups, categories, "Planned" and the editor; every row's Left ends 12px in, where the
+     group's total ends (a category's pill ended 8px past it) */
+  .bt tr.c, .bt tr.u { padding-left: 38px; padding-right: 12px; }
+}
+/* tap targets (QA): the name link (22px) and the phone Planned button (21px) get a 24px+ hit area, same layout */
+.bt .nml, .bt .plan { position: relative; }
+.bt .nml::after, .bt .plan::after { content: ""; position: absolute; inset: -4px 0; }
+
+/* the suggestion's (i) sits right after the category name (review 2026-10-21), not in the Use / Set action row */
+.nb .li.wrap.nbrow > .grow:has(> .nbsg) { display: grid; grid-template-columns: minmax(0, max-content) auto 1fr; column-gap: 10px; align-items: center; }
+.nb .li.wrap.nbrow > .grow > .nbsg { grid-column: 2; grid-row: 1; margin: -4px 0 0; align-self: end; }   /* 24px like every (i), the standard 10px from its text; -4px on top keeps the name line 20px without touching the reason under it */
+.nb .li.wrap.nbrow > .grow > .nbsg + span { grid-column: 1 / -1; grid-row: 2; }
+
+
+/* the group name is a link to the group's transactions: the same 24px+ hit area as a category's, and 44px on a phone.
+   Its ::after grows up and down only, so it never reaches the fold button beside it */
+.ghl .gn { position: relative; }
+.ghl .gn::after { content: ""; position: absolute; inset: -4px 0; }
+@media (max-width: 600px) {
+  /* 44px wide too, but from the ::after, not min-width on the link: a min-width box padded short names (Food, Bills,
+     Health) so their count and (i) sat further out than on every other group. It grows sideways only by what a name is
+     short of 44px (3px each side for "Food"), well inside the 10px gaps, so it still never reaches the fold button */
+  .ghl .gn::after { inset: -12px min(0px, calc(50% - 22px)); }
+}
+
+/* a group's Details: this month's spend per category, biggest first, each name a link to that category's transactions */
+.bd { margin-top: 2px; }
+.bdr { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.bdr:last-child { border-bottom: 0; }
+.bdr .nml { color: var(--fg); text-decoration: none; min-width: 0; overflow-wrap: anywhere; position: relative; }
+.bdr .nml::after { content: ""; position: absolute; inset: -4px 0; }
+.bdr .nml:hover { text-decoration: underline; }
+.bdr .v { flex: none; margin-left: auto; font-size: 14px; font-weight: 600; color: var(--mut); text-align: right; }
+
+/* "No budget yet": a group's name is a link too (the same one as in the table) */
+.nb .nbgrp a.nbgn { color: inherit; text-decoration: none; position: relative; }
+.nb .nbgrp a.nbgn:hover { text-decoration: underline; }
+.nb .nbgrp a.nbgn::after { content: ""; position: absolute; inset: -4px 0; }
+
+/* ---- the cap editor (app.js capEditor): the app's modal sheet. A centred 460px dialog from 1024px, the app's bottom sheet
+   (app.css .sheet) below it; Save · Cancel · Remove budget in one row, or on a phone (<=600px) Save and Cancel as an equal
+   pair with Remove full width under them. Its roll-over row is rollover.css's. ---- */
+.bx-grab { display: none; }
+.sheet .bx-sub { color: var(--mut); font-size: 14px; margin: 6px 0 12px; }
+.sheet.bx-sheet .shd h2 { font-size: 19px; }
+.bx { display: grid; text-align: left; }
+.bx > * { padding: 14px 0; }
+.bx > * + * { border-top: 1px solid var(--line); }
+.bx-top { display: flex; flex-direction: column; gap: 14px; }
+.bx-field { display: grid; gap: 6px; }
+.bx-lab { font-size: 13px; font-weight: 600; color: var(--mut); letter-spacing: .01em; }
+.bx .edin.bx-in { width: 100%; height: 52px; border-radius: 11px; padding: 0 12px; background: var(--bg); }
+.bx .edin.bx-in input { font-size: 22px; font-weight: 650; }
+.bx .edin.bx-in .pre { font-size: 16px; }
+.bx-sug { font-size: 14px; color: var(--mut); line-height: 1.4; }
+.bx-sug b { color: var(--fg); font-weight: 650; }
+.bx .err { color: #ffa3a3; font-size: 13px; }
+.bx .err:empty { display: none; }
+.bx-foot { display: flex; align-items: center; gap: 10px; }
+.bx-foot .sp { flex: 1; }
+.bx-foot button { height: 40px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--line2); background: var(--card3);
+  color: var(--fg); font-size: 14px; font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; }
+.bx-foot button:hover:not(.rm) { border-color: #4a5470; }
+.bx-foot button.p { background: var(--fg); border-color: var(--fg); color: #0c0e13; font-weight: 650; }
+.bx-foot button.rm { background: transparent; border-color: transparent; color: #ffa3a3; padding: 0 10px; }
+.bx-foot button.rm:hover { background: rgba(255, 123, 123, .1); }
+.bx-foot button.rm svg.i { width: 16px; height: 16px; }
+@media (min-width: 1024px) {
+  .sheet.bx-sheet { width: min(460px, 94vw); border-radius: 18px; padding: 18px 22px 12px; }
+}
+@media (max-width: 1023.98px) {
+  .sheet.bx-sheet { padding: 16px 18px 20px; }
+  /* the keyboard-safe footer: sticks to the bottom of the scrolling sheet (the sheet's bottom padding moves into it, so the
+     layout is the same), on the sheet's own background so nothing shows through; the dialog's is not sticky */
+  .bx-foot { position: sticky; bottom: -20px; z-index: 1; margin: 0 -18px -20px; padding: 14px 18px 34px; background: var(--card); }
+}
+@media (max-width: 600px) {
+  .sheet.bx-sheet { padding-top: 10px; }
+  .bx-grab { display: block; width: 36px; height: 4px; border-radius: 2px; background: var(--line2); margin: 0 auto 14px; }
+  .bx-foot { flex-wrap: wrap; }
+  .bx-foot .sp { display: none; }
+  .bx-foot button { height: 46px; }
+  .bx-foot button:not(.rm) { flex: 1; justify-content: center; }
+  .bx-foot button.rm { flex: 1 1 100%; justify-content: center; height: 40px; }   /* its 44px hit area is tap.css's ::after */
+}

@@ -1,0 +1,45 @@
+/* The category picker (polish P0, catpick.js): the button looks like the select it replaced (select.cat in app.css);
+   the list opens in a popover on a wide screen and in a panel at the bottom under 600px. */
+button.catb { display: inline-flex; align-items: center; min-width: 0; max-width: 180px; border: 1px solid transparent;
+  background-color: #1d2331; color: var(--fg); border-radius: 9px; padding: 5px 28px 5px 10px; font-size: 14px; line-height: 1.5;
+  cursor: pointer; text-align: left;
+  background-image: linear-gradient(45deg, transparent 50%, #9ba2b6 50%), linear-gradient(135deg, #9ba2b6 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 10px) 50%; background-size: 4px 4px; background-repeat: no-repeat; }
+button.catb .catn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.catb.review { background-color: rgba(245, 180, 84, .13); color: #ffc977; border-color: rgba(245, 180, 84, .32); }
+button.catb.done { background-color: rgba(79, 209, 165, .13); color: #72e3bb; }
+button.catb:disabled { opacity: .6; }
+button.catb[aria-expanded=true] { border-color: var(--acc); }
+.spl button.catb { flex: 1; min-width: 0; max-width: none; height: 38px; font-size: 14.5px; }
+:root[data-theme=light] button.catb { background-color: #eef0f5; background-image: linear-gradient(45deg, transparent 50%, #5a6275 50%),
+  linear-gradient(135deg, #5a6275 50%, transparent 50%); }
+:root[data-theme=light] button.catb.review { background-color: rgba(245, 180, 84, .2); color: #7d4a00; border-color: rgba(148, 87, 0, .35); }
+:root[data-theme=light] button.catb.done { background-color: rgba(11, 122, 85, .1); color: #08653f; }
+
+.cpk { position: fixed; z-index: 94; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line2);
+  border-radius: 16px; box-shadow: 0 18px 50px rgba(0, 0, 0, .5); overflow: hidden; }
+.cpk:focus { outline: none; }
+.cpks { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.cpks svg.i { width: 16px; height: 16px; color: var(--dim); flex: none; }
+.cpkq { flex: 1; min-width: 0; background: none; border: 0; color: var(--fg); font-size: 14.5px; padding: 6px 0; outline: none; }
+.cpkl { overflow: auto; overscroll-behavior: contain; padding: 2px 8px 10px; }
+.cpkg[hidden], .cpko[hidden], .cpkn[hidden] { display: none; }
+.cpkh { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); padding: 8px 6px 2px; }
+.cpki { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 2px; }
+.cpko { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 3px 6px; border-radius: 10px;
+  font-size: 13.5px; color: var(--fg); cursor: pointer; }
+.cpko.on { background: var(--card2); }
+.cpko[aria-selected=true] { font-weight: 650; }
+.cpkt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cpko > svg.i { width: 15px; height: 15px; color: var(--acc); flex: none; }
+.cpkn { margin: 0; padding: 14px 6px 4px; color: var(--dim); font-size: 14px; }
+.cpkscrim { position: fixed; inset: 0; z-index: 93; background: rgba(3, 5, 9, .72); }
+@media (max-width: 600px) {
+  .cpk { left: 0; right: 0; bottom: 0; max-height: 86vh; max-height: 86dvh; border-radius: 20px 20px 0 0; border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom); }
+  .cpki { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cpko { min-height: 44px; }
+}
+@media (max-width: 1023.98px) {
+  .tx button.catb { max-width: none; min-width: 150px; }
+}

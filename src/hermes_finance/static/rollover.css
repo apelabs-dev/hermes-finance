@@ -1,0 +1,12 @@
+/* Budget rollover (TASK-19): the rolled-over line on a budget card, the switch in the cap editor. */
+.roll { margin: 10px 0 2px; }
+/* a settings row inside the cap editor's sheet: what it is and what it is doing now on the left, the switch on the right */
+.bx-roll { display: flex; align-items: center; gap: 16px; }
+.bx-roll .grow { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.bx-roll .grow > b { font-size: 14.5px; font-weight: 600; }
+.bx-roll .grow > span { font-size: 13px; color: var(--mut); white-space: normal; overflow: visible; text-overflow: clip; }   /* carries money: wraps, never an ellipsis */
+.bx-roll .tgl:disabled { opacity: .5; }
+/* every budget card's figure at the same y (MOCK-017 alignment pass): top-aligned beside its ring, padded so a one-line
+   figure still sits centred on the 84px ring */
+.bcard .fig { align-items: flex-start; }
+.bcard .fig > div:last-child { padding-top: 15px; }

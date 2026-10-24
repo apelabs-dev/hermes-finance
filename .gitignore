@@ -1,0 +1,27 @@
+# local data: SQLite DB + access-token backup (never commit)
+data/
+*.db
+*.db-*
+*.sqlite
+*.jsonl
+
+# secrets
+.env*
+
+# python / tooling
+.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+site/
+build/
+
+# orchestrator build artifacts
+.build_err.log
+.build_result.json
+sketches/
+data-review/
+
+# untracked private words for scripts/dehardcode.py (docs/dehardcode.md)
+.private-words

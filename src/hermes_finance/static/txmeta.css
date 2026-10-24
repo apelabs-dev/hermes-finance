@@ -1,0 +1,108 @@
+/* Transactions (TASK-19): saved filters, tag chips, a split row, the transaction sheet (docked from 1400px). */
+.sfbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 14px; }
+.sfbar[hidden] { display: none; }
+.sfl { font-size: 13px; font-weight: 600; color: var(--dim); margin-right: 2px; }
+.sfchip { display: inline-flex; align-items: center; border: 1px solid var(--line); background: var(--card); border-radius: 999px; }
+.sfchip.on { border-color: var(--acc); background: rgba(142, 168, 255, .1); }
+.sfchip .sfgo { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; color: var(--mut); font-size: 13.5px;
+  font-weight: 550; padding: 6px 4px 6px 12px; white-space: nowrap; }
+.sfchip .sfgo:hover, .sfchip.on .sfgo { color: var(--fg); }
+.sfchip .sfgo svg.i { width: 15px; height: 15px; color: var(--acc); }
+.sfchip .cnt { font-size: 13px; color: var(--dim); font-weight: 600; }
+.sfchip .sfx { display: grid; place-items: center; width: 28px; height: 28px; margin-right: 3px; border: 0; background: none; color: var(--dim);
+  border-radius: 50%; }
+.sfchip .sfx:hover { color: var(--fg); background: var(--card2); }
+.sfchip .sfx svg.i { width: 13px; height: 13px; }
+.sfbar .lnk { display: inline-flex; align-items: center; gap: 5px; font-size: 13.5px; margin-left: 4px; background: none; border: 0;
+  color: var(--acc); font-weight: 600; }
+.sfbar .lnk svg.i { width: 15px; height: 15px; }
+.sfbar .tagf { font-size: 13.5px; padding: 6px 12px; }
+.ttags { display: inline-flex; gap: 5px; margin-left: 8px; flex: none; }
+.ttag { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 550; line-height: 20px; padding: 0 8px;
+  border-radius: 999px; border: 0; background: rgba(199, 146, 234, .14); color: #dcbcf2; white-space: nowrap; font-family: inherit; }
+button.ttag { cursor: pointer; }
+.ttag::before { content: "#"; opacity: .8; }
+.ttag.big { font-size: 14px; line-height: 28px; padding: 0 6px 0 11px; }
+.ttag button { border: 0; background: none; color: inherit; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; }
+.ttag button svg.i { width: 13px; height: 13px; }
+.splitc { gap: 9px; min-width: 0; }
+.sbadges { display: inline-flex; flex: none; gap: 3px; }
+.splt { font-size: 14px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.splt b { color: var(--fg); font-weight: 600; }
+.tx tbody tr[data-tid] { cursor: pointer; }
+.tx tbody tr.sel td { background: rgba(142, 168, 255, .1); }
+.tx tbody tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--acc); }
+
+/* the sheet: docked beside the table from 1400px (440px sheet + a table of 660px or more), the usual sheet below */
+body.txopen main { margin-right: 440px; }
+body.txopen .tx .c-acct { display: none; }
+.txpanel { position: fixed; top: 0; right: 0; bottom: 0; width: 440px; z-index: 60; background: #10131a; border-left: 1px solid var(--line2);
+  overflow: auto; padding: 22px 24px 30px; }
+.txpanel[hidden] { display: none; }
+.txpanel .shd h2, .txsheet .shd h2 { font-size: 20px; overflow-wrap: anywhere; }
+.txhead { margin: 16px 0 4px; }
+.txhead .big.s { font-size: 32px; }
+.txhead .sub { margin-top: 4px; overflow-wrap: anywhere; }
+.tsec { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.tsh { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.tsh b { font-size: 15px; font-weight: 650; }
+.tsh span { font-size: 13px; color: var(--dim); text-align: right; }
+.spl { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.spl select.cat { flex: 1; min-width: 0; max-width: none; height: 38px; font-size: 14.5px; }
+.spl .edin { width: 112px; height: 38px; flex: none; }
+.ib.sm { width: 34px; height: 34px; border-radius: 10px; flex: none; }
+.ib.sm:disabled { opacity: .45; }
+.spl.one .btn { flex: none; }
+.addl, .unsplit, .tagpick { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0; color: var(--acc);
+  font-weight: 600; font-size: 14px; padding: 0; }
+.addl { margin: 2px 0 14px; }
+.addl svg.i { width: 15px; height: 15px; }
+.unsplit { margin-top: 10px; color: var(--mut); }
+.tagpick { font-size: 13px; }
+.tsec > .track { height: 8px; }
+.remain { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; font-size: 14px; font-weight: 600; }
+.remain b { font-size: 16px; }
+.remain.warn { color: #ffc977; }
+.remain.ok { color: #72e3bb; justify-content: flex-start; gap: 7px; }
+.remain svg.i { width: 17px; height: 17px; }
+.tsec .hint { margin-top: 8px; }
+.txta { width: 100%; resize: vertical; background: #0e1118; border: 1px solid var(--line2); border-radius: 12px; padding: 10px 13px;
+  font: inherit; font-size: 15px; color: var(--fg); outline: 0; }
+.txta:focus { border-color: var(--acc); }
+.txta::placeholder { color: #8a92a8; }
+.tagrow { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.addtag { display: inline-flex; align-items: center; gap: 5px; border: 1px dashed var(--line2); background: none; border-radius: 999px;
+  padding: 4px 12px; font-size: 14px; color: var(--mut); line-height: 20px; }
+.addtag svg.i { width: 14px; height: 14px; }
+.taginp { background: #0e1118; border: 1px solid var(--acc); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 14px;
+  color: var(--fg); outline: 0; width: 140px; line-height: 20px; }
+@media (max-width: 1399.98px) { body.txopen main { margin-right: 0; } }
+/* desktop (1024px+, below the dock): the transaction sheet is a drawer sliding in from the right, full height; a phone keeps
+   its bottom sheet. Opacity/transform only, the --mo-sheet token (app.css), a fade under reduced motion */
+@media (min-width: 1024px) {
+  .modal.on:has(> .sheet.txsheet) { place-items: stretch end; padding: 0; }
+  .sheet.txsheet { width: min(440px, 94vw); height: 100vh; max-height: 100vh; border-radius: 24px 0 0 24px; border-right: 0;
+    padding: 22px 24px 30px; animation: mo-slide-x var(--mo-sheet) var(--mo-in); }
+  .modal.on:has(> .sheet.txsheet) { animation: mo-fade var(--mo-sheet) var(--mo-in); }
+}
+@media (max-width: 1023.98px) {
+  .sfbar { margin-top: 0; }
+  .ttags { margin-left: 6px; }
+  .txsheet .txhead .big.s { font-size: 30px; }
+}
+/* the approved Transactions table (MOCK-017 independent audit): it fits its card at every width. From 1024px fixed columns,
+   the merchant takes what's left and shortens with an ellipsis; Account hides from 1024 to 1199px (as beside the sheet) */
+@media (min-width: 1024px) {
+  table.tx { table-layout: fixed; }
+  .tx thead th:nth-child(1) { width: 84px; }
+  .tx thead th:nth-child(3) { width: 196px; }
+  .tx thead th:nth-child(4) { width: 246px; }
+  .tx thead th:nth-child(5) { width: 124px; }
+  .tx td.c-m { overflow: hidden; }
+  .tx .m { max-width: none; min-width: 0; }
+  .tx .c-acct .acc { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; }
+}
+@media (min-width: 1024px) and (max-width: 1199.98px) { .tx .c-acct { display: none; } }
+/* tap targets (QA): a tag chip is 20px tall; its hit area is 28px, same layout */
+button.ttag { position: relative; }
+button.ttag::after { content: ""; position: absolute; inset: -4px 0; }

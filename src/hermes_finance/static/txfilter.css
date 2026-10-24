@@ -1,0 +1,211 @@
+/* The Transactions page's filters (polish P1, txfilter.js): the Filters button and the chips of what's picked under the
+   bar; the drawer (on the right, 380px; a sheet from the bottom under 600px); the table's sort headers and day rows.
+   Motion is opacity and transform only: in 220ms ease-out, out in 140ms; none with reduced motion (app.css). */
+
+/* ---- the bar ---- */
+.tfbtn { display: inline-flex; align-items: center; gap: 7px; margin-left: auto; border: 1px solid var(--line); background: var(--card);
+  border-radius: 12px; padding: 8px 13px; color: var(--fg); font-size: 14px; font-weight: 550; cursor: pointer; }
+.tfbtn:hover { border-color: var(--line2); }
+.tfbtn[aria-expanded=true] { border-color: var(--acc); }
+.tfbtn svg.i { width: 16px; height: 16px; color: var(--mut); }
+.tfn { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--acc);
+  color: #0c0e13; font-size: 12px; font-weight: 700; }
+.tfn[hidden] { display: none; }
+
+.txchips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -4px 0 14px; }
+.txchips[hidden] { display: none; }
+.tfchip { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 9px 4px 12px; border-radius: 999px;
+  border: 1px solid rgba(142, 168, 255, .4); background: rgba(142, 168, 255, .12); color: var(--fg); font-size: 13.5px; font-weight: 600;
+  cursor: pointer; max-width: 100%; }
+.tfchip .tfgp { color: var(--mut); font-weight: 500; }
+.tfchip svg.i { width: 14px; height: 14px; color: var(--dim); stroke-width: 2.2; }
+.tfchip:hover { border-color: var(--acc); }
+.tfchip:hover svg.i { color: var(--fg); }
+.tfsum { color: var(--mut); font-size: 13.5px; margin-left: 2px; white-space: nowrap; }
+.tfsum b { color: var(--fg); font-weight: 650; }
+.tfsum b.in { color: var(--ok); }
+.txchips .tfclr { font-size: 13.5px; background: none; border: 0; padding: 4px 2px; cursor: pointer; }
+.tfsortc, .txchips.sortonly { display: none; }   /* the order: from 1024px the table's headers show it */
+
+/* ---- the table: sort headers, day rows ---- */
+/* a block flex box: an inline one takes its baseline from its first item, the arrow on Amount's (row-reverse) */
+.tx th .sortb { display: flex; align-items: center; gap: 5px; width: max-content; max-width: 100%; min-height: 24px; margin: -3px 0;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.tx th.num .sortb { flex-direction: row-reverse; margin-left: auto; }   /* the arrow on the left, the word over the figures */
+.tx th .sortb:hover, .tx th .sortb.on { color: var(--fg); }
+.tx th .sortb svg.i { width: 14px; height: 14px; stroke-width: 2.2; opacity: .5; }
+.tx th .sortb.on svg.i { opacity: 1; color: var(--acc); }
+.tx th .sortb:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 4px; }
+.tx tr.day th, .tx tr.day td { padding: 14px 16px 7px; color: var(--dim); font-size: 13px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; text-align: left; }
+.tx tr.day td.num { text-align: right; text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 650; color: var(--mut); }
+.tx tr.day td.num.in { color: var(--ok); }
+.tx tbody tr.day:hover td, .tx tbody tr.day:hover th { background: none; }
+/* a day's header reads as a band, not one more row (review 2026-10-21): darker than the card in both themes */
+.tx tbody tr.day { background: rgba(0, 0, 0, .28); }
+:root[data-theme=light] .tx tbody tr.day { background: rgba(15, 23, 42, .055); }
+.tx tr.day th, .tx tr.day td { color: var(--mut); }
+.tx tr.day td.num.in { color: var(--ok); }
+
+/* ---- the drawer ---- */
+.tfscrim { position: fixed; inset: 0; z-index: 90; background: rgba(3, 5, 9, .62); opacity: 0; transition: opacity var(--mo-exit) var(--mo-out); }
+.tfscrim.on { opacity: 1; transition: opacity var(--mo-sheet) var(--mo-in); }
+.tfd { position: fixed; z-index: 91; top: 0; right: 0; bottom: 0; width: 380px; max-width: 92vw; display: flex; flex-direction: column;
+  background: var(--card); border-left: 1px solid var(--line2); box-shadow: -18px 0 50px rgba(0, 0, 0, .45);
+  transform: translateX(100%); opacity: .6; transition: transform var(--mo-exit) var(--mo-out), opacity var(--mo-exit) var(--mo-out); }
+.tfd.on { transform: none; opacity: 1; transition: transform var(--mo-sheet) var(--mo-in), opacity var(--mo-sheet) var(--mo-in); }
+.tfd:focus { outline: none; }
+.tfhd { display: flex; align-items: flex-start; gap: 12px; padding: 20px 18px 16px; border-bottom: 1px solid var(--line); }
+.tfti { flex: 1; min-width: 0; }
+.tfhd h2 { font-size: 18px; font-weight: 650; letter-spacing: -.01em; margin: 0; }
+.tfsub { margin: 4px 0 0; color: var(--mut); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tfbody { flex: 1; overflow: auto; overscroll-behavior: contain; padding: 4px 18px 18px; }
+.tfs { padding: 16px 0 4px; }
+.tfs + .tfs { border-top: 1px solid var(--line); margin-top: 10px; }
+.tfsh { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.tfsh h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }
+.tfsh h3 label { cursor: inherit; }
+.tfsel { color: var(--acc); font-size: 12px; font-weight: 650; }
+.tfsearch { display: flex; align-items: center; gap: 8px; padding: 0 12px; margin-bottom: 6px; border: 1px solid var(--line);
+  border-radius: 11px; background: var(--card2); }
+.tfsearch:focus-within { border-color: var(--acc); }
+.tfsearch svg.i { width: 16px; height: 16px; color: var(--dim); }
+.tfq { flex: 1; min-width: 0; padding: 8px 0; border: 0; background: none; color: var(--fg); font-size: 14.5px; outline: none; }
+.tfq::placeholder { color: var(--dim); }
+.tfsearch + .tftree { margin-top: 2px; }
+
+/* a row: the checkbox covers it all (the row is the target); the span after the input draws the box */
+.tfr { position: relative; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 3px 8px; border-radius: 9px;
+  cursor: pointer; font-size: 14px; color: var(--fg); }
+.tfr:hover, .tfr:has(.tfc:checked), .tfr:has(.tfc:indeterminate) { background: var(--card2); }
+.tfr .tfc { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.tfbox { display: grid; place-items: center; width: 18px; height: 18px; flex: none; border: 1.5px solid var(--line2); border-radius: 5px;
+  color: #0c0e13; }
+.tfbox svg.i { display: none; width: 13px; height: 13px; stroke-width: 3; }
+.tfc:checked + .tfbox, .tfc:indeterminate + .tfbox { background: var(--acc); border-color: var(--acc); }
+.tfc:checked:not(:indeterminate) + .tfbox svg[data-icon=check], .tfc:indeterminate + .tfbox svg[data-icon=minus] { display: block; }
+.tfc:focus-visible + .tfbox { outline: 2px solid var(--acc); outline-offset: 2px; }
+.tft { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tfcnt { color: var(--mut); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tfcnt.zero { color: var(--dim); opacity: .6; }
+.tfr.tfu { margin-bottom: 4px; }
+.tfun { width: 24px; height: 24px; flex: none; border: 1.5px dashed var(--line2); border-radius: 7px; }
+.tfg { display: flex; align-items: center; gap: 2px; margin-top: 2px; }
+.tfg .tfr { flex: 1; min-width: 0; font-weight: 650; }
+.tfx { display: grid; place-items: center; width: 26px; height: 30px; flex: none; border: 0; border-radius: 7px; background: none;
+  color: var(--dim); cursor: pointer; }
+.tfx:hover { color: var(--fg); }
+.tfx svg.i { width: 16px; height: 16px; }
+.tfdot { width: 10px; height: 10px; flex: none; border-radius: 50%; }
+.tfkids { padding-left: 28px; }
+.tfh2 { margin: 12px 0 4px 8px; font-size: 12px; font-weight: 650; color: var(--dim); }
+.tfnone { margin: 8px; color: var(--dim); font-size: 14px; }
+
+/* tags: a select-like button; its list opens under it, in the drawer */
+.tfdd { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 40px; padding: 7px 12px; border: 1px solid var(--line);
+  border-radius: 11px; background: var(--card2); color: var(--fg); font-size: 14px; text-align: left; cursor: pointer; }
+.tfdd[aria-expanded=true] { border-color: var(--acc); }
+.tfdd svg.i { width: 16px; height: 16px; color: var(--dim); }
+.tfdd[aria-expanded=true] svg.i:last-child { transform: rotate(180deg); }
+.tfddp { margin-top: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--card2); }
+.tfddp .tfq { width: 100%; margin-bottom: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); }
+.tfddp .tfr:hover, .tfddp .tfr:has(.tfc:checked) { background: var(--card3); }
+.tftl { max-height: 240px; overflow: auto; overscroll-behavior: contain; }
+.tfnote { margin: 6px 8px 2px; color: var(--dim); font-size: 12.5px; }
+
+.tfpills { display: flex; flex-wrap: wrap; gap: 8px; }
+.tfpill { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 13px; color: var(--mut);
+  font-size: 14px; font-weight: 550; cursor: pointer; }
+.tfpill:hover { color: var(--fg); }
+.tfpill[aria-pressed=true] { background: var(--fg); border-color: var(--fg); color: #0c0e13; }
+.tfsorts { display: none; }
+.tfsort { width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--card2);
+  color: var(--fg); font-size: 14px; }
+
+.tfft { display: flex; align-items: center; gap: 12px; padding: 14px 18px calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line); }
+.tfft .btn.ghost { flex: none; border-color: transparent; color: var(--mut); padding-left: 4px; padding-right: 10px; }
+.tfft .btn.ghost:hover { color: var(--fg); background: none; }
+.tfft .btn.w { flex: 1; }
+
+@media (max-width: 1023.98px) {
+  /* the table's headers aren't shown here: Sort is in the drawer, and a chip says which order is on */
+  .tfsorts { display: block; }
+  .tfsortc { display: inline-flex; border-color: var(--line2); background: var(--card); }
+  .tfsortc svg.i:first-child { color: var(--acc); }
+  .txchips.sortonly:not([hidden]) { display: flex; }
+  /* Filters beside the search; the kind chips on the lines under them (the ::after, a whole line of no height, breaks it) */
+  .fbar:has(> .tfbtn) > .search { flex: 1 1 0; min-width: 0; }
+  .fbar:has(> .tfbtn)::after { content: ""; order: 1; flex: 0 0 100%; margin-top: -8px; }
+  .fbar:has(> .tfbtn) > .fchip { order: 2; }
+  .tfbtn { min-height: 44px; margin-left: 0; }
+  .tfr { min-height: 44px; }
+  .tfx { width: 36px; height: 44px; }
+  .tfdd, .tfsort { min-height: 44px; }
+  .tfpill { min-height: 40px; }
+  .tfchip { min-height: 34px; }
+  /* a day's header: its date and total on one line (the rows under it are each a grid here) */
+  .tx tbody tr.day { display: flex; align-items: baseline; justify-content: space-between; padding: 16px 13px 8px; }
+  .tx tr.day th, .tx tr.day td { padding: 0; border: 0; }
+  .tx tr.day td.c-cat { display: none; }
+}
+@media (max-width: 600px) {
+  .tfd { top: auto; left: 0; width: auto; max-width: none; max-height: 88vh; max-height: 88dvh; border-left: 0; border-top: 1px solid var(--line2);
+    border-radius: 20px 20px 0 0; box-shadow: 0 -18px 50px rgba(0, 0, 0, .45); transform: translateY(100%); }
+  .tfd.on { transform: none; }
+}
+
+:root[data-theme=light] .tfn, :root[data-theme=light] .tfbox { color: #fff; }
+:root[data-theme=light] .tfchip { border-color: rgba(53, 82, 212, .35); background: rgba(53, 82, 212, .08); }
+:root[data-theme=light] .tfscrim { background: rgba(21, 25, 34, .38); }
+:root[data-theme=light] .tfd { box-shadow: -18px 0 50px rgba(21, 25, 34, .16); }
+:root[data-theme=light] .tfpill[aria-pressed=true] { background: #151922; border-color: #151922; color: #fff; }
+@media (prefers-reduced-motion: reduce) {
+  .tfd, .tfd.on { transform: none; }   /* the phone sheet's translateY(100%) above outranks app.css's reduce rule: fade only */
+}
+
+/* Transactions' single month/window control. Overview and Budgets retain the shared switcher. */
+.mon.txwindow { max-width: 100%; }
+.mon.txwindow button { min-width: 44px; min-height: 44px; flex: none; }
+.mon.txwindow button[hidden] { display: none; }
+.mon.txwindow #monl { display: flex; gap: 6px; width: auto; height: auto; padding: 7px 10px; border-radius: 999px;
+  color: var(--fg); font-size: 14px; font-weight: 600; line-height: 1.4; }
+.mon.txwindow #monl svg { flex: none; width: 14px; height: 14px; }
+.rgscrim { position: fixed; inset: 0; z-index: 90; background: rgba(3,5,9,.45); }
+.rgpicker { position: fixed; z-index: 91; top: var(--rg-top,78px); left: var(--rg-left,24px); width: 360px; max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 100px); overflow-y: auto; overscroll-behavior: contain; padding: 16px;
+  background: var(--card); color: var(--fg); border: 1px solid var(--line2); border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.25); font-size: 14px; }
+.rgpicker h2 { font-size: 17px; margin: 0; }
+.rgpicker h3 { font-size: 13px; color: var(--mut); margin: 12px 0 8px; font-weight: 600; }
+.rghd, .rgyr { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rgpicker button { min-height: 44px; min-width: 44px; font-size: 14px; cursor: pointer; }
+.rgyr button { display: grid; place-items: center; border: 0; background: none; color: var(--fg); border-radius: 10px; }
+.rgyr svg { width: 18px; height: 18px; }
+.rgmg { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+.rgm, .rgpills button { border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--fg); }
+.rgpicker button[aria-pressed=true] { border-color: var(--acc); background: var(--card3); color: var(--fg); font-weight: 650; }
+.rgpills { display: flex; flex-wrap: wrap; gap: 6px; }
+.rgpills button { padding: 6px 13px; border-radius: 999px; }
+.rgc { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.rgch, .rgapply { grid-column: 1 / -1; }
+.rgch, .rgc label { font-size: 13px; color: var(--mut); }
+.rgc label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.rgc input { width: 100%; min-width: 0; min-height: 44px; padding: 6px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--card2); color: var(--fg); font: inherit; font-size: 16px; color-scheme: dark; }
+[data-theme=light] .rgc input { color-scheme: light; }
+.rgnote { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb,var(--warn) 12%,var(--card));
+  color: var(--mut); font-size: 13.5px; margin: 0 0 12px; }
+.rgsummary { font-size: 14px; color: var(--fg); margin: 0 0 12px; }
+.rgnote[hidden], .rgsummary[hidden] { display: none; }
+.tx tr.mhd { background: var(--card2); }
+.tx tr.mhd th, .tx tr.mhd td { font-weight: 700; color: var(--fg); text-transform: none; letter-spacing: normal; }
+@media (max-width:1023.98px) {
+  .rgpicker { top: auto; right: 0; left: 0; bottom: 0; width: 100%; max-width: none; max-height: 90dvh;
+    border-radius: 20px 20px 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .top .mon.txwindow { justify-content: center; }
+  .mon.txwindow #monl { flex: 1; justify-content: center; white-space: normal; font-size: 13px; }
+  /* Ranges hide prev/next and show only the × on the right; mirror its 44px slot + 2px gap on the left
+     so the label centres on the whole pill, not on the space left of the ×. */
+  .mon.txwindow:has(#rgclear) { padding-left: calc(3px + 46px); }
+}

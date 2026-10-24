@@ -1,0 +1,282 @@
+/* Hermes Finances: the TASK-18 screens (Settings, first-run setup, the built-in login's sign-in and set-up, importing a
+   file), from the approved MOCK-017 screens. On top of app.css (its cards, rows, pills, switches, sheets and inputs);
+   the light theme's colours are in light.css. No glow, no animation; text 15px, secondary 13px or more. */
+
+/* ---- the sidebar's Settings, at the bottom (the phone drawer's too) ---- */
+.snav.sfoot { margin: 12px -10px 0; padding-top: 10px; border-top: 1px solid #161a24; }
+.cbtn { white-space: nowrap; }
+
+/* ---- page note, the "example" tag ---- */
+.pgnote { color: var(--mut); font-size: 14px; margin: -6px 0 16px; }
+.tag.ex { border-color: rgba(245, 180, 84, .5); color: #ffc977; }
+
+/* ---- Settings: rows ---- */
+.sc h3 { margin-bottom: 8px; }
+.srow { display: flex; align-items: center; gap: 12px 14px; padding: 12px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.sc h3 + .srow, .sc h3 + div > .srow:first-child, .sc .gh + .srow, .sc .gh + div > .srow:first-child { border-top: 0; }
+.srow.tight { padding: 9px 0; }
+.srow .grow { min-width: 180px; }
+.srow .grow > b { font-weight: 600; display: block; }
+.srow .grow > span { font-size: 13px; color: var(--mut); display: block; margin-top: 1px; white-space: normal; overflow-wrap: anywhere; }
+.sc .hint, .wiz .hint, .sheet .hint { overflow-wrap: anywhere; }  /* a long path (the secrets file) wraps */
+.srow .grow > span.use { display: flex; align-items: center; gap: 9px; margin-top: 6px; }
+.srow .use .meter { width: 90px; margin: 0; flex: none; }
+.srow.col { flex-direction: column; align-items: stretch; }
+.srow .meter { margin: 8px 0 0; max-width: 260px; }
+.slotn { font-size: 18px; font-weight: 700; }
+.inp.tin { height: 38px; width: 84px; padding: 0 12px; border-radius: 10px; }
+.inp.tin input { font-size: 15px; font-variant-numeric: tabular-nums; }
+.inp.tin .pre { font-size: 14px; }
+.pairc { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+select.selv { height: 38px; padding: 0 30px 0 13px; border-radius: 10px; border: 1px solid var(--line2); background: #0e1118; font-size: 14.5px;
+  font-weight: 550; appearance: none; -webkit-appearance: none; cursor: pointer; max-width: 100%;
+  background-image: linear-gradient(45deg, transparent 50%, #9ba2b6 50%), linear-gradient(135deg, #9ba2b6 50%, transparent 50%);
+  background-position: calc(100% - 16px) 16px, calc(100% - 11px) 16px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+select.selv option { background: var(--card2); }
+.srow .seg button { display: inline-flex; align-items: center; gap: 6px; }
+.srow .seg button svg.i { width: 15px; height: 15px; }
+.srow.col .seg { align-self: flex-start; }
+.range { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+.range input[type=range] { flex: 1; accent-color: var(--acc); min-width: 0; height: 28px; }
+.range .sv { flex: none; font-size: 17px; font-weight: 700; min-width: 40px; text-align: right; }
+.sticks { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); margin: 2px 54px 0 0; gap: 12px; }
+.sfootl { padding-top: 12px; border-top: 1px solid var(--line); }
+.ibx { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--card2); color: var(--mut); flex: none; }
+.dbtns { display: flex; gap: 10px; flex-wrap: wrap; }
+.dbtns .btn { padding: 10px 15px; font-size: 14.5px; white-space: nowrap; }
+a.btn { text-decoration: none; }
+.mono.nw { white-space: nowrap; }
+.sc .hint { margin-top: 12px; }
+.sc .gh { margin: 14px 0 0; }
+.sc .ferr { margin-top: 4px; }
+.sc .btn.sm, .sc .lnk { white-space: nowrap; }
+button.lnk { background: none; border: 0; padding: 0; color: var(--acc); font-weight: 600; font-size: 14px; display: inline-flex;
+  align-items: center; gap: 6px; cursor: pointer; }
+button.lnk svg.i { width: 16px; height: 16px; }
+.soon { font-size: 13px; color: var(--dim); }
+/* AI provider */
+.aiseg { display: flex; width: 100%; margin: 0 0 4px; }
+.aiseg button { flex: 1 1 0; text-align: center; }
+.aist { display: flex; align-items: center; gap: 8px 12px; padding: 14px 0 4px; flex-wrap: wrap; }
+.aist .grow { min-width: 160px; }
+.aist .grow > b { display: block; font-weight: 600; }
+.aist .grow > span { display: block; font-size: 13px; color: var(--mut); white-space: normal; }
+.inp.fx { height: 38px; border-radius: 10px; padding: 0 12px; width: 272px; max-width: 100%; }
+.inp.fx input { font-size: 14px; }
+.inp.fx.hdr { width: 230px; }
+/* MCP */
+.mono.ep { font-size: 13px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }  /* a whole address on its own line;
+   a long one (a real tailnet host) wraps at the <wbr> after its scheme instead of sticking out of its card; a part
+   still too long for the card alone breaks mid-word as a last resort (hotfix 2026-09-29, live layout gate) */
+.cfgrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.cfgrow .seg button { font-size: 13.5px; }
+details.cfg { margin-top: 10px; }
+details.cfg summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--mut); }
+details.cfg summary::-webkit-details-marker { display: none; }
+details.cfg summary svg.i { width: 15px; height: 15px; color: var(--dim); flex: none; }
+details.cfg[open] summary svg.i { transform: rotate(90deg); }
+details.cfg pre { display: block; margin-top: 8px; padding: 10px 12px; white-space: pre; overflow-x: auto; font-weight: 500; }
+.tgl:disabled { opacity: .45; }
+.srow .grow > span.warnl { color: var(--warn); }
+.howos { margin-top: 8px; font-size: 13px; }
+.howos b { display: block; font-weight: 600; margin-bottom: 4px; }
+.howos pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; font-weight: 500; }
+.token-new { margin-top: 10px; padding: 12px 14px; border-radius: 14px; background: rgba(79, 209, 165, .08);
+  border: 1px solid rgba(79, 209, 165, .28); font-size: 14px; color: var(--mut); }
+.token-new .mono { display: block; margin: 8px 0; padding: 8px 10px; overflow-wrap: anywhere; user-select: all; }
+.token-new .row { display: flex; gap: 10px; flex-wrap: wrap; }
+/* Access & security */
+.safety { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0 2px; padding: 8px 11px; border-radius: 11px;
+  border: 1px solid rgba(255, 123, 123, .4); background: rgba(255, 123, 123, .07); color: #ffa3a3; font-size: 13px; font-weight: 550; }
+.safety svg.i { width: 15px; height: 15px; flex: none; }
+.safety > span:not(.tag) { flex: 1 1 200px; }
+.acd { margin-top: 6px; }
+.lastreq { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--mut); margin-top: 6px; padding-top: 12px;
+  border-top: 1px solid var(--line); }
+.lastreq .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.btn.danger.sm { padding: 6px 12px; }
+
+/* ---- choices (access modes, AI, demo or real banks) ---- */
+.choices { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.choice { display: flex; align-items: center; gap: 14px; text-align: left; border: 1px solid var(--line2); background: #0e1118; border-radius: 16px;
+  padding: 14px 16px; color: inherit; width: 100%; }
+.choice.on { border-color: var(--acc); background: rgba(142, 168, 255, .08); }
+.choice .grow > b { font-size: 16px; display: block; }
+.choice .grow > span { white-space: normal; font-size: 13.5px; display: block; color: var(--mut); }
+.choice .grow > span.dim { color: var(--dim); }
+.choice .rad { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line2); flex: none; }
+.choice.on .rad { border: 6px solid var(--acc); }
+.choices.sm { gap: 8px; margin-top: 10px; }
+.choices.sm .choice { padding: 10px 12px; gap: 12px; border-radius: 14px; }
+.choices.sm .choice .grow > b { font-size: 15px; }
+.choices.sm .choice .rad { width: 18px; height: 18px; }
+.choices.sm .choice.on .rad { border-width: 5px; }
+
+/* ---- board pages (first-run setup): no app chrome ---- */
+body.board { display: block; }
+body.board aside#side, body.board .tabbar, body.board .top, body.board #msg, body.board .scrim { display: none !important; }
+body.board main { padding: 34px 40px 60px; max-width: none; }
+.sheet.static { position: static; width: auto; max-width: 560px; max-height: none; overflow: visible; margin: 0 auto; box-shadow: none; border-radius: 22px; }
+.wiz { max-width: 560px; margin: 0 auto; }
+.wiz .wb { justify-content: center; margin: 4px 0 18px; }
+.steps { display: flex; align-items: center; gap: 5px; margin-bottom: 18px; }
+.steps i { width: 38px; height: 6px; border-radius: 3px; background: #232a3a; flex: none; }
+.steps i.on { background: var(--acc); }
+.steps span { margin-left: 8px; font-size: 13px; color: var(--dim); font-weight: 600; white-space: nowrap; }
+.capl { margin-top: 8px; }
+.capl .li { gap: 11px; }
+.capl .li .grow > span { white-space: normal; }
+.capl .amt { min-width: 70px; text-align: right; white-space: nowrap; }
+.capl .btn.sm, .capl .pill { min-width: 64px; justify-content: center; }
+.sheet .row .btn { white-space: nowrap; }
+@media (max-width: 1023.98px) {
+  body.board main { padding: 20px 12px 40px; }
+  .sheet.static { border-radius: 18px; padding: 18px 16px 20px; }
+  .steps i { width: 30px; }
+  .capl .amt { min-width: 0; }
+}
+
+/* ---- sign in (built-in login) ---- */
+body.signin { display: block; min-height: 100vh; }
+body.signin main { padding: 48px 16px 40px; max-width: none; }
+.sheet.static.login { width: 100%; max-width: 400px; }
+.sheet.static.login .brand { justify-content: center; margin: 2px 0 16px; }
+.sheet.static.login h2 { font-size: 21px; font-weight: 700; letter-spacing: -.02em; text-align: center; }
+.sheet.static.login > p, .sheet.static.login > .hint { text-align: center; }
+.lrow { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.codeb { display: flex; gap: 8px; justify-content: center; margin: 14px 0 4px; }
+.codeb input { width: 44px; height: 52px; border-radius: 12px; border: 1px solid var(--line2); background: #0e1118; text-align: center;
+  font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; outline: 0; padding: 0; }
+.codeb input:focus { border-color: var(--acc); box-shadow: inset 0 0 0 1px var(--acc); }
+.fld .codeb { justify-content: flex-start; }
+.qrrow { display: flex; align-items: center; gap: 16px; margin: 14px 0 4px; flex-wrap: wrap; }
+.qr { width: 144px; height: 144px; border-radius: 10px; flex: none; background: #fff; display: block; }
+.qrrow .mut { display: block; font-size: 13px; }
+.qk { display: inline-block; margin-top: 6px; font-size: 14px; letter-spacing: .06em; overflow-wrap: anywhere; }
+.pws { display: flex; align-items: center; gap: 6px 12px; margin-top: 10px; font-size: 13.5px; color: var(--mut); flex-wrap: wrap; }
+.pws .segs { margin: 0; flex: 1 1 120px; max-width: 170px; }
+.pws > span:last-child { white-space: nowrap; }
+.pws .segs i.weak { background: var(--bad); } .pws .segs i.fair { background: var(--warn); }
+.rcodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 14px 0 4px; padding: 14px 16px;
+  border-radius: 14px; background: #0e1118; border: 1px solid var(--line2); font-size: 15px; letter-spacing: .04em; }
+.rcodes span { white-space: nowrap; }  /* a recovery code never breaks across lines */
+.chk { display: flex; align-items: center; gap: 10px; margin-top: 18px; font-size: 15px; font-weight: 550; cursor: pointer; }
+.chk input { width: 20px; height: 20px; accent-color: var(--acc); flex: none; }
+@media (max-width: 1023.98px) {
+  body.signin main { padding: 22px 10px 40px; }
+  .codeb { gap: 6px; }
+  .codeb input { width: 40px; height: 48px; }
+}
+
+/* ---- import a file ---- */
+.drop { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; border: 2px dashed var(--line2); border-radius: 18px;
+  padding: 30px 20px 26px; margin-top: 14px; color: var(--mut); font-size: 14px; }
+.drop.over { border-color: var(--acc); background: rgba(142, 168, 255, .06); }
+.drop b { color: var(--fg); font-size: 16px; }
+.drop .btn { margin-top: 8px; }
+.dri { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: rgba(79, 209, 165, .14); color: var(--ok); margin-bottom: 4px; }
+.dri svg.i { width: 24px; height: 24px; }
+.filec { display: flex; align-items: center; gap: 12px; margin: 14px 0 12px; padding: 10px 12px; border-radius: 14px; background: var(--card2); }
+.filec .grow > span { font-size: 13px; }
+.mapw { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+table.map { width: 100%; border-collapse: collapse; font-size: 14px; }
+.map th { text-align: left; font-size: 13px; font-weight: 600; color: var(--dim); padding: 9px 12px 4px; white-space: nowrap; }
+.map td { padding: 7px 12px; border-top: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.map td.num { text-align: right; }
+.map tr.maprow td { border-top: 0; padding-bottom: 10px; }
+.map select.colsel { border: 1px solid rgba(142, 168, 255, .5); background-color: rgba(142, 168, 255, .1); color: #d5deff; border-radius: 9px;
+  padding: 4px 24px 4px 9px; font-size: 13.5px; font-weight: 600; appearance: none; -webkit-appearance: none; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 13px) 12px, calc(100% - 9px) 12px; background-size: 4px 4px, 4px 4px; background-repeat: no-repeat; }
+.map select.colsel option, .mapacct select option { background: var(--card2); color: var(--fg); }
+.detect { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; color: var(--mut); align-items: center; }
+.detect > span { display: inline-flex; align-items: center; gap: 6px; }
+.detect svg.i { width: 15px; height: 15px; color: var(--ok); }
+.detect select.selv { height: 32px; font-size: 13.5px; }
+.mapacct { flex-wrap: wrap; row-gap: 6px; }
+.mapacct .grow { flex: 1 1 150px; }
+.mapacct .grow > b { white-space: normal; }
+.mapacct select.selv { margin-left: auto; max-width: 100%; }  /* the whole "Add as account: <name>" when it fits */
+.done { display: flex; align-items: center; gap: 18px; margin: 18px 0; }
+.done .ring .rin > svg { width: 26px; height: 26px; color: var(--ok); }
+.done b { display: block; font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+.done span { font-size: 14px; color: var(--mut); }
+.sheet.wide { width: min(720px, 96vw); }
+
+/* ---- light theme: these screens' own colours ---- */
+:root[data-theme=light] .snav.sfoot { border-top-color: var(--line); }
+:root[data-theme=light] .tag.ex { border-color: rgba(148, 87, 0, .45); color: #7d4a00; }
+:root[data-theme=light] select.selv, :root[data-theme=light] .choice, :root[data-theme=light] .codeb input,
+:root[data-theme=light] .rcodes { background-color: #f7f8fb; }
+:root[data-theme=light] select.selv { background-image: linear-gradient(45deg, transparent 50%, #5a6275 50%), linear-gradient(135deg, #5a6275 50%, transparent 50%); }
+:root[data-theme=light] .choice.on { background: rgba(53, 82, 212, .07); }
+:root[data-theme=light] .safety { color: #a82424; background: rgba(196, 44, 44, .05); border-color: rgba(196, 44, 44, .35); }
+:root[data-theme=light] .map select.colsel { color: #2a44b8; background-color: rgba(53, 82, 212, .07); }
+:root[data-theme=light] .token-new { background: rgba(11, 122, 85, .06); border-color: rgba(11, 122, 85, .25); }
+:root[data-theme=light] .steps i { background: #dde1e9; }
+:root[data-theme=light] .steps i.on { background: var(--acc); }
+
+/* hotfix 2026-09-29: Settings is one column of equal-width cards (was a packed 2-column masonry) */
+/* full content width, so the cards line up with the header's right edge (Sync now) like every other page; a 920px cap
+   left a dead strip on the right of a wide screen */
+.sgrid { display: flex; flex-direction: column; gap: 16px; }
+@media (max-width: 1023.98px) { .sgrid { gap: 14px; } }
+
+/* TASK-24: Categorization rules. Collapsed: the title line with its summary and a chevron. Open: suggestions, the
+   search + All / Yours / AI line, dense one-line rows with hairline dividers (the Transactions list's look). */
+.sc.rules h3 { margin-bottom: 0; }
+.sc.rules.open h3 { margin-bottom: 10px; }
+.rsum { flex: 1 1 200px; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; background: none; border: 0;
+  padding: 4px 0; color: var(--mut); font: inherit; font-size: 13.5px; font-weight: 550; cursor: pointer; text-align: right; }
+.rsum:hover { color: var(--fg); }
+.rsum svg.i { width: 17px; height: 17px; flex: none; transition: transform .15s; }
+.rsum[aria-expanded=true] svg.i { transform: rotate(180deg); }
+.rsumt { min-width: 0; }
+.rsumt .rsg { color: var(--acc); font-weight: 650; }
+.rbar { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; flex-wrap: wrap; }
+.rbar .search.rq { flex: 1 1 220px; min-width: 0; padding: 7px 12px; font-size: 14px; }
+.rsugs { margin-bottom: 10px; }
+.rsugs .gh { margin-top: 0; }
+.rrow { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 4px 0; border-top: 1px solid var(--line); min-width: 0; }
+.gh + .rrow, .rlist > .rrow:first-child { border-top: 0; }
+.rrow .grow { flex: 1 1 0; min-width: 0; }
+.rrow .grow > .rpat, .rrow .grow > .rst { display: block; font-size: 14.5px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rrow .grow > .rpat b, .rrow .grow > .rst b { font-weight: 650; }
+.rrow .grow > .rsub { display: none; }
+.rrow .grow > b { font-weight: 600; }
+.rcat { display: inline-flex; align-items: center; gap: 7px; flex: 0 1 210px; min-width: 0; font-size: 14px; color: var(--mut); }
+.rcat .rar { color: var(--dim); flex: none; }
+.rcat .rcn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rn { flex: none; width: 84px; text-align: right; font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.racts { display: inline-flex; gap: 2px; flex: none; width: 102px; justify-content: flex-end; }
+.rib { width: 32px; height: 32px; border-radius: 9px; border: 0; background: transparent; color: var(--dim); display: grid; place-items: center; cursor: pointer; }
+.rib svg.i { width: 16px; height: 16px; }
+.rib:hover { background: var(--card2); color: var(--fg); }
+.rib.rdel:hover { color: var(--bad); }
+.rmore, .rmenu { display: none; }
+.rrow.confirm .grow > b { color: var(--bad); }
+.rrow.sug .pairc { flex: none; }
+.rlist .more.rall { margin-top: 10px; }
+.rlist .rnone { margin: 10px 0 4px; }
+.rmoresug { margin-top: 6px; font-size: 13.5px; }
+.rlead { color: var(--mut); overflow-wrap: anywhere; }
+.rlead b { color: var(--fg); }
+.rsheet select.selv { width: 100%; }
+@media (max-width: 1023.98px) {
+  /* a phone: one rule per row, the category under the pattern, one ⋯ menu (44px) for its actions */
+  .rsum { flex-basis: 100%; justify-content: space-between; text-align: left; min-height: 44px; }
+  .rcat, .rn, .racts { display: none; }
+  .rrow { flex-wrap: wrap; min-height: 52px; gap: 4px 10px; }
+  .rrow .grow > .rpat { white-space: normal; overflow-wrap: anywhere; }
+  .rrow .grow > .rsub { display: block; font-size: 13px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rrow .grow > .rst { white-space: normal; }
+  .rrow.sug .pairc, .rrow.confirm .pairc { flex: 1 1 100%; justify-content: flex-end; padding-bottom: 6px; }
+  .rmore { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border: 0; border-radius: 11px; background: transparent;
+    color: var(--mut); font-size: 20px; line-height: 1; cursor: pointer; }
+  .rrow.rmenu-open .rmore { background: var(--card2); color: var(--fg); }
+  .rmenu { display: flex; flex: 1 1 100%; gap: 8px; justify-content: flex-end; flex-wrap: wrap; padding-bottom: 8px; }
+  .rbar { flex-wrap: nowrap; gap: 6px; }
+  .rbar .search.rq { flex: 1 1 100px; width: 100px; padding: 7px 8px; }
+  .rbar .rseg { flex: none; display: flex; }
+  .rbar .rseg button { min-width: 56px; min-height: 44px; padding: 6px 8px; text-align: center; justify-content: center; }
+}

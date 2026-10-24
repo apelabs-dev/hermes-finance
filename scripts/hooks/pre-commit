@@ -1,0 +1,44 @@
+#!/bin/sh
+# The privacy pre-commit hook, two checks of what the commit will hold (the index, `git show :path`), not the working files:
+#  1. the de-hardcode check: no private word staged under src/ or hermes_plugin/ (your login, home-directory name or
+#     name, HERMES_FINANCE_TEST_PRIVATE's words, or the words in the file HERMES_FINANCE_PRIVATE_FILE names, else
+#     .private-words at the repo root);
+#  2. the release scan of every staged file that ships: no private word, home path, credential, real email or real id.
+# The scanner is scripts/dehardcode.py, the same one the pytest gates (tests/test_dehardcode_task18.py,
+# tests/test_release_scan.py) and CI run. Install: scripts/install-hooks.sh. See docs/dehardcode.md.
+root=$(git rev-parse --show-toplevel) || exit 1
+checker="$root/scripts/dehardcode.py"
+if [ ! -f "$checker" ]; then
+    echo "pre-commit: $checker is missing; skipping the de-hardcode check" >&2
+    exit 0
+fi
+py="${HERMES_FINANCE_HOOK_PYTHON:-}"
+if [ -z "$py" ]; then
+    if [ -x "$root/.venv/bin/python" ]; then py="$root/.venv/bin/python"; else py=python3; fi
+fi
+out=$("$py" "$checker" --staged)
+status=$?
+if [ "$status" -eq 0 ]; then
+    out=$("$py" "$checker" --release-staged 2>/dev/null)
+    status=$?
+    [ "$status" -eq 0 ] && exit 0
+    if [ "$status" -eq 1 ]; then
+        echo "pre-commit: the release scan found something private in a staged file (path:line: rule):" >&2
+        echo "$out" | sed 's/^/  /' >&2
+        echo "Replace it with an invented value (or, for a deliberate synthetic one, add a reasoned RELEASE_EXEMPT entry" >&2
+        echo "in scripts/dehardcode.py), then git add and commit again. The gate tests/test_release_scan.py runs it too." >&2
+        exit 1
+    fi
+    echo "pre-commit: the release scan could not run (exit $status)" >&2
+    exit "$status"
+fi
+if [ "$status" -eq 1 ]; then
+    echo "pre-commit: a private word is staged under src/ or hermes_plugin/ (path:line: token):" >&2
+    echo "$out" | sed 's/^/  /' >&2
+    echo "Take it out (personal data belongs in the DB or the settings, never in the code), then git add and commit again." >&2
+    echo "A false positive? Commit with 'git commit --no-verify'; the gate (tests/test_dehardcode_task18.py) still runs in scripts/check.py." >&2
+    exit 1
+fi
+echo "pre-commit: the de-hardcode check could not run (exit $status)" >&2
+[ -n "$out" ] && echo "$out" >&2
+exit "$status"

@@ -1,0 +1,44 @@
+[project]
+name = "hermes-finance"
+version = "0.1.0"
+description = "Plaid -> local SQLite personal-finance pipeline for the Hermes budgeting agent"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "argon2-cffi>=23.1,<26",   # TASK-18: the built-in login's password and recovery-code hashes (argon2id)
+    "ofxtools>=0.9.5,<0.10",   # TASK-18: reading OFX / QFX files (Add account -> Import a file)
+]
+
+[project.optional-dependencies]
+# TASK-13b: cut a car's Commons photo out of its background (rembg's birefnet-general model, ~973 MB, downloaded
+# once into ~/.rembg/models). Optional: without it the photo is shown as it is, cover-cropped. `uv sync --extra photos`
+photos = ["rembg[cpu]>=2.0.61", "pillow>=10.0", "numpy>=1.26", "scipy>=1.11"]
+# TASK-17: `finance mcp` (stdio) and the /mcp route of `finance serve` (streamable HTTP), the official MCP Python SDK.
+# Optional: without it every other command works and /mcp answers 501. `uv sync --extra mcp`
+mcp = ["mcp>=2.2,<3"]
+
+[project.scripts]
+finance = "hermes_finance.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "mcp>=2.2,<3",   # the MCP tests (TASK-17) run against the real SDK
+    "pytest-xdist>=3.6",   # TEST-SPEED: scripts/check.py runs the suite on several workers (pytest -n)
+    "playwright==1.62.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live and not webkit'"
+markers = [
+    "env_dependent(capability): requires an installed Hermes host capability; offline probes give explicit skip reasons",
+    "webkit: optional WebKit browser checks (run explicitly with -m webkit)",
+    "live: calls real Plaid production (/link/token/create only). Run explicitly: uv run pytest -m live",
+]

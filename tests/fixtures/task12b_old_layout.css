@@ -1,0 +1,19 @@
+/* TASK-12b discriminating fixture: the layout as it was before the fix (app.css at c35fdba, ~line 450 and ~line 677),
+   injected after the page's own stylesheet by tests/test_layout_gate_12b.py (and `audit_layout.py --inject-css`), so the
+   new "segments" and "empty" checks must FAIL on it. !important only because the fixed rules are more specific. */
+
+/* the empty-history message, placed for a one-point chart's axes: bottom-left of whatever box it lands in */
+.emptyov { position: absolute !important; left: 64px !important; right: auto !important; bottom: 40px !important;
+  max-width: 400px !important; width: auto !important; margin: 0 !important; }
+/* the box it sat in: the chart area, as tall as a chart (and stretched by the card) */
+.chwrap.nochart { display: block !important; height: 260px !important; min-height: 260px !important; padding: 0 !important; }
+.chwrap.onept { display: block !important; }
+.chwrap.onept > .plot { position: absolute !important; inset: 0 !important; height: auto !important; }
+
+@media (max-width: 759.98px) {
+  .emptyov { left: 0 !important; right: 0 !important; bottom: 34px !important; max-width: none !important; }
+  .chwrap.nochart, .chwrap.onept { height: 230px !important; min-height: 230px !important; }
+  /* the range chips: stretched across the card, each button its own content width */
+  .hdrow .seg { width: 100% !important; justify-content: space-between !important; }
+  .hdrow .seg button { flex: 0 0 auto !important; }
+}

@@ -1,0 +1,50 @@
+/* Hermes Finances: tap targets on a phone (TASK-20). Under 1024px every control a finger aims at (buttons, link-buttons,
+   switches, chips, segmented controls, the menu button, a sheet's close, the month arrows, inputs, selects, the tab bar
+   and the drawer's links) is at least 44 x 44 px to hit, and looks exactly as before:
+   - a button, link or switch gets a transparent hit box: its ::after, centred on it and never smaller than 44 x 44;
+   - an input grows past the field its wrapper draws (the wrapper keeps its size);
+   - a select gets transparent top and bottom borders round the same pill (its line moves to an inset shadow), with
+     negative margins so the page lays out as before.
+   The layout gate's `tap` check (scripts/audit_layout.py) measures exactly this at 360, 390, 430 and 768. */
+@media (max-width: 1023.98px) {
+  :where(button, [role=button], [role=switch], [role=tab], summary, a[href]) { position: relative; }
+  :is(button, [role=button], [role=switch], [role=tab], summary, a[href]):not(p a, .hint a, .note a)::after {
+    content: ""; position: absolute;
+    top: min(0px, calc(50% - 22px)); bottom: min(0px, calc(50% - 22px));
+    left: min(0px, calc(50% - 22px)); right: min(0px, calc(50% - 22px));
+  }
+  /* TASK-22d: a control inside another (the Net worth tile's All / Custom, in the tile's link to Accounts) wins its own
+     area, the space between a group's buttons too: the outer one's hit box (inset 0 on a big card) comes later in the
+     tree and was painted over them, so a tap on Custom opened Accounts. Every overlay sits at z-index 20 or more. */
+  :where(button, [role=button], [role=switch], [role=tab], summary, a[href]) :where(button, [role=button], [role=switch],
+    [role=tab], [role=radio], [role=checkbox], [role=group], [role=radiogroup], summary, a[href], input, select, textarea) {
+    position: relative; z-index: 1;
+  }
+
+  /* inputs: the wrapper (.inp, .edin) draws the field; the input itself is 44px tall, centred on it */
+  .inp input, .edin input { min-height: 44px; }
+  .inp.tin input { margin-right: -12px; padding-right: 12px; }   /* into the field's own right padding */
+  .search { min-height: 44px; }
+  .range input[type=range], input[type=range] { height: 44px; margin-top: -8px; margin-bottom: -8px; }   /* the track stays put */
+  /* the authenticator's six boxes: 40px drawn, 44px to hit (transparent sides, the gap as before) */
+  .codeb input { width: 44px; margin: 0 -2px; border: 1px solid transparent; border-width: 1px 3px; background-clip: padding-box;
+    box-shadow: inset 0 0 0 1px var(--line2); }
+  .codeb input:focus { border-color: transparent; box-shadow: inset 0 0 0 2px var(--acc); }
+  /* a "Use" link inside a line of text: the line no longer cuts its hit box off (it holds a figure, never shortened) */
+  .nb .sg { overflow: visible; }
+  /* "I saved them": the whole row takes the tap, in the room it had */
+  .chk { padding: 11px 0; margin-top: 7px; margin-bottom: -11px; }
+
+  /* selects */
+  select.cat { border-width: 6px 1px 5px; background-clip: padding-box; min-height: 44px; margin: -5.5px 0; }
+  select.cat.review { border-color: transparent; box-shadow: inset 0 0 0 1px rgba(245, 180, 84, .32); }
+  :root[data-theme=light] select.cat.review { border-color: transparent; box-shadow: inset 0 0 0 1px rgba(148, 87, 0, .35); }
+  .bsel { border-width: 4px 0 3px; border-color: transparent; padding-left: 12px; padding-right: 12px; background-clip: padding-box;
+    box-shadow: inset 0 0 0 1px var(--line); min-height: 44px; margin-top: -3.5px; margin-bottom: -3.5px; }
+  select.selv { height: 44px; border-width: 4px 0; border-color: transparent; padding-left: 14px; padding-right: 31px;
+    background-clip: padding-box; box-shadow: inset 0 0 0 1px var(--line2); margin-top: -3px; margin-bottom: -3px; }
+  .detect select.selv { height: 44px; border-width: 6px 0; margin-top: -6px; margin-bottom: -6px; }
+  .map select.colsel { border-width: 8px 0; border-color: transparent; padding-left: 10px; padding-right: 25px; min-height: 44px;
+    background-clip: padding-box; box-shadow: inset 0 0 0 1px rgba(142, 168, 255, .5); margin-top: -7px; margin-bottom: -7px; }
+  :root[data-theme=light] .map select.colsel { box-shadow: inset 0 0 0 1px rgba(53, 82, 212, .4); }
+}

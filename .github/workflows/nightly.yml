@@ -1,0 +1,52 @@
+# Nightly (and on demand): the whole suite with a headless Chrome, scripts/check.py full in its two parts: part 1 is
+# every test except the gates, part 2 the three gates (numbers, layout, controls). On macOS, with the runner's Google
+# Chrome (tests/cdp.py finds /Applications/Google Chrome.app): the browser tests and the layout gate are tuned to
+# macOS Chrome's text rendering, and Linux Chromium's differs by fractions of a pixel. A scheduled run is skipped while
+# the repository is private (macOS minutes cost ten times as much there); a manual run always goes.
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full:
+    if: github.event_name != 'schedule' || !github.event.repository.private
+    runs-on: macos-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
+    env:
+      HERMES_FINANCE_TEST_PRIVATE: ${{ secrets.HERMES_FINANCE_TEST_PRIVATE }}
+      HERMES_PLAID: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the locked dependencies
+        run: uv sync --frozen
+      - name: Chrome, and a temp dir whose check logs can be uploaded
+        run: |
+          mkdir -p "$RUNNER_TEMP/hf"
+          echo "TMPDIR=$RUNNER_TEMP/hf" >> "$GITHUB_ENV"
+          uv run python -c 'import sys; sys.path.insert(0, "tests"); import cdp; print(cdp.find_chrome() or sys.exit("no Chrome"))'
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
+      - name: scripts/check.py full --part ${{ matrix.part }}
+        run: uv run python scripts/check.py full --part ${{ matrix.part }}
+      - name: Upload the logs (check.py keeps them when a run fails)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-logs-part-${{ matrix.part }}
+          path: ${{ runner.temp }}/hf/hf-check-*/
+          retention-days: 7
+          if-no-files-found: ignore
