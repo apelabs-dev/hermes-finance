@@ -13,7 +13,7 @@ import re
 import subprocess
 import tempfile
 
-PUBLIC_URL = 'https://github.com/arspesk/hermes-finance.git'
+PUBLIC_URL = os.environ.get('HERMES_FINANCE_PUBLIC_URL', '')
 VERSION_FILES = ('pyproject.toml', 'uv.lock', 'hermes_plugin/plugin.yaml',
                  'src/hermes_finance/__init__.py', '.release-please-manifest.json')
 FILES = VERSION_FILES + ('CHANGELOG.md',)
@@ -78,6 +78,8 @@ def normalize(path, text):
 
 
 def sync(repo: Path, tag: str, public_url: str = PUBLIC_URL) -> bool:
+    if not public_url:
+        raise SyncError('no public repository URL: pass --public-url or set HERMES_FINANCE_PUBLIC_URL')
     if not re.fullmatch('v' + SEMVER, tag):
         raise SyncError('tag must be vX.Y.Z (stable numeric version)')
     repo = repo.resolve()
@@ -153,7 +155,7 @@ def sync(repo: Path, tag: str, public_url: str = PUBLIC_URL) -> bool:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('tag')
-    parser.add_argument('--public-url', default=PUBLIC_URL, help='read-only clone URL (local bare repos work too)')
+    parser.add_argument('--public-url', default=PUBLIC_URL, help='read-only clone URL of the public repository (default: $HERMES_FINANCE_PUBLIC_URL; local bare repos work too)')
     args = parser.parse_args()
     try:
         repo = Path(git(Path.cwd(), 'rev-parse', '--show-toplevel'))

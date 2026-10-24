@@ -47,6 +47,9 @@ def fixture(tmp_path, legacy_manifest=False):
     git(public, 'tag', 'v0.2.0')
     dev = tmp_path / 'dev'
     git(tmp_path, 'clone', '-q', str(public), str(dev))
+    # sync_release strips GIT_* env, so CI runners without a global identity need a repo-local one.
+    git(dev, 'config', 'user.name', 'Test')
+    git(dev, 'config', 'user.email', 'test@example.com')
     if legacy_manifest:
         (dev / '.release-please-manifest.json').write_text(json.dumps({'.': '0.2.0'}, indent=2) + '\n')
         git(dev, 'add', '.')

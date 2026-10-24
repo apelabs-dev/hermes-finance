@@ -13,7 +13,6 @@ at `0.2.0`; both bootstrap and last-release boundaries point to that commit.
 Release Please discovers subsequent releases normally; the boundary remains the
 oldest commit it needs to search, not a forced version.
 
-Like [sur9e's configuration](https://github.com/arspesk/sur9e/blob/main/release-please-config.json),
 Conventional Commit squash titles drive versions: `feat: ...` → next minor,
 `fix: ...` → next patch. Before 1.0, breaking changes bump the minor, too.
 Explicit `changelog-sections` expose only `feat` and `fix`; ordinary `docs`,
@@ -45,7 +44,7 @@ untouched.
    exports the committed source, using the development-only tool:
 
    ```sh
-   git clone https://github.com/arspesk/hermes-finance.git "$PUBLIC_CLONE"
+   git clone https://github.com/<owner>/hermes-finance.git "$PUBLIC_CLONE"
    python scripts/export_public.py --into "$PUBLIC_CLONE" --title 'feat: explain the exported changes' --body 'Deterministic release notes.'
    ```
 
@@ -56,14 +55,14 @@ untouched.
    rewrites earlier history. Unsynchronized public versions or changelog notes are
    refused before writing any destination object or file.
 3. The orchestrator reviews the export and pushes its branch to public `main`.
-   Release Please sees that squash title and opens/updates a release PR. Arsenii
+   Release Please sees that squash title and opens/updates a release PR. The maintainer
    reviews and merges the PR. That merge causes Release Please to create the next
    tag and GitHub release. No package publishing is configured.
 4. After the public release PR merges and its tag exists, run in a **clean development
    checkout**, on the branch that will be exported next:
 
    ```sh
-   python scripts/sync_release.py v0.3.0
+   python scripts/sync_release.py v0.3.0 --public-url https://github.com/<owner>/hermes-finance.git
    ```
 
    This fetches the public tag in a temporary clone and commits only
@@ -118,8 +117,8 @@ An organization policy may prevent changing it. Operator commands (never part of
 export or sync):
 
 ```sh
-gh api repos/arspesk/hermes-finance/actions/permissions/workflow
-gh api --method PUT repos/arspesk/hermes-finance/actions/permissions/workflow -F can_approve_pull_request_reviews=true
+gh api repos/<owner>/hermes-finance/actions/permissions/workflow
+gh api --method PUT repos/<owner>/hermes-finance/actions/permissions/workflow -F can_approve_pull_request_reviews=true
 ```
 
 PRs created using `GITHUB_TOKEN` do not trigger other workflows. To have normal CI
@@ -128,7 +127,7 @@ for this repository with Contents and Pull requests read/write access, and store
 as `RELEASE_PLEASE_TOKEN`:
 
 ```sh
-gh secret set RELEASE_PLEASE_TOKEN --repo arspesk/hermes-finance
+gh secret set RELEASE_PLEASE_TOKEN --repo <owner>/hermes-finance
 ```
 
 The command prompts securely; do not put a token in a command or log. The workflow
