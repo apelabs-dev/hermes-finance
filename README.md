@@ -8,6 +8,8 @@ Your agent gets the same numbers as native tools, over MCP, or through the dashb
 
 Full documentation: [`docs/`](docs/index.md), a MkDocs site (`uvx --python 3.12 --with "mkdocs-material>=9.5,<10" --from "mkdocs>=1.6,<2" mkdocs build --strict`).
 
+Try the [read-only static demo](docs/demo.md) with synthetic data; it builds without an account or API key.
+
 ## Quickstart
 
 You need Python 3.12 and [uv](https://docs.astral.sh/uv/).
@@ -68,12 +70,77 @@ Every command is in the [CLI reference](docs/reference/cli.md), generated from `
 > refuses to connect the same bank twice, and offers **Reconnect** (Link's update mode, no new Item) for a broken
 > one. Never connect a bank a second time. Details: [Plaid setup](docs/plaid.md).
 
+## Install as a Hermes plugin
+
+Version 0.2.0 is a beta. No bank or API key is required to install the plugin or read
+a local database. Plaid, market data and AI providers are optional; manual accounts,
+imports and synthetic data work without them.
+
+The plugin is an adapter, so first prepare a trusted **app checkout** with Python 3.12
+and uv. Do not install the app into Hermes's Python 3.11 environment. Replace `<owner>`
+with the repository owner supplied by your distributor; this release's public identity
+and catalog listing remain gated on the privacy-reviewed public export.
+
+```sh
+git clone https://github.com/<owner>/hermes-finance.git
+cd hermes-finance
+uv sync
+export HERMES_FINANCE_APP_DIR="$PWD"
+uv run finance doctor
+```
+
+`finance doctor` runs offline and exits 1 when optional integrations are missing. It
+explains how to configure them; missing provider keys do not prevent plugin loading.
+Keep this checkout available: the installed plugin loads `src/hermes_finance/tooldefs.py`
+from it, and report jobs use its app environment. It does not download the app for you.
+
+Install the adapter from the same trusted repository (the `#hermes_plugin` fragment
+selects its subdirectory), then validate it:
+
+```sh
+hermes plugins install 'https://github.com/<owner>/hermes-finance.git#hermes_plugin' --no-enable
+hermes plugins validate hermes_plugin
+hermes plugins doctor --ci hermes_plugin
+hermes plugins enable hermes-finance
+hermes plugins list
+```
+
+For a reproducible install, add `--ref <full-40-character-commit-sha>` to the install
+command, using a reviewed commit from that repository. A private repository needs
+existing Git access. Review any scanner warnings; a dangerous verdict blocks installation.
+
+Persist the checkout path for future Hermes processes in your active profile's
+`config.yaml` (merge into existing `plugins` settings), or export it whenever you start Hermes:
+
+```yaml
+plugins:
+  entries:
+    hermes-finance:
+      settings:
+        HERMES_FINANCE_APP_DIR: /path/to/hermes-finance
+        HERMES_FINANCE_DATA_DIR: /path/to/finance-data
+```
+
+The data directory holds `finance.db`; without that setting the app uses
+`FINANCE_DATA_DIR`, then its checkout's `data/`. To try local reads without a bank,
+run `uv run python tests/demo_data.py /tmp/finance-plugin-demo` and set
+`HERMES_FINANCE_DATA_DIR` in the profile settings to `/tmp/finance-plugin-demo`.
+The plugin opens reads read-only and never creates a missing database.
+
+Each category change, rule, budget cap and tracked bill requires approval. Scheduled
+and unattended runs block those writes. Sync can contact Plaid using the app's stored
+credentials; a billed bank refresh also requires approval. Optional report jobs run
+subprocesses only after explicit `hermes finance crons apply`. The Ask completion
+bridge delegates to Hermes's configured model and authentication. The app can read
+its configured secrets files and Hermes environment file; this external dependency
+and credential access need catalog policy review before any public submission.
+
 ## The three AI modes
 
 All three use the same 16 `finance_*` tools (`src/hermes_finance/tooldefs.py`). A read tool returns exactly what the
 matching `finance <command> --json` prints. Details: [AI modes](docs/ai-modes.md).
 
-**Hermes plugin.** Link `hermes_plugin/` into Hermes's plugins directory and enable it. Hermes then gets native tools,
+**Hermes plugin.** Follow [Install as a Hermes plugin](#install-as-a-hermes-plugin). Hermes then gets native tools,
 a usage skill, and optional daily and weekly report jobs (`hermes finance crons`). The Ask panel can also use Hermes's
 own model, so the app never sees a model key. Writes show Hermes's approval prompt with the change in plain words.
 *Trade-off:* approvals need a person there. In scheduled jobs and on unattended platforms the plugin refuses writes

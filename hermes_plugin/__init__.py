@@ -68,9 +68,11 @@ def _load_app(ctx: Any):
                 sys.path.insert(0, str(src))
             return importlib.import_module("hermes_finance.tooldefs")
     where = f"{APP_DIR}={configured} has no src/hermes_finance" if configured else "hermes_finance isn't installed"
-    raise ImportError(f"hermes-finance plugin: can't load the app ({where}). Install hermes-finance in Hermes's Python, "
-                      f"or set plugins.entries.hermes-finance.settings.{APP_DIR} (or the {APP_DIR} environment "
-                      "variable) to a hermes-finance checkout.")
+    raise ImportError(f"hermes-finance plugin: can't load the app ({where}). First prepare a trusted hermes-finance "
+                      "checkout with Python 3.12 and uv sync. Set "
+                      f"plugins.entries.hermes-finance.settings.{APP_DIR} (or the {APP_DIR} environment variable) "
+                      "to that checkout, then run uv run finance doctor there. No bank or API key is required "
+                      "to load the plugin; integrations are optional. See README.md#install-as-a-hermes-plugin.")
 
 
 CRON_BLOCK = ("{tool} isn't available in a scheduled job: a scheduled run has nobody to approve a change, and the job "

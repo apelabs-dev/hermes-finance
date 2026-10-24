@@ -1,3 +1,3 @@
 """hermes-finance: Plaid -> local SQLite pipeline for personal budgeting."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

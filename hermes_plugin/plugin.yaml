@@ -1,5 +1,5 @@
 name: hermes-finance
-version: 0.1.0
+version: 0.2.0
 description: "Answers money questions from your local hermes-finance database (spending, budgets, transactions, net worth, bills, loans, investments, cash flow, goals, categorization rules; read-only), syncs your banks on request, and files transactions, adds rules, sets budget caps and tracks bills only after you approve each change."
 kind: standalone
 manifest_version: 2
@@ -31,7 +31,7 @@ config_schema:
   HERMES_FINANCE_APP_DIR:
     type: str
     default: ""
-    description: "A hermes-finance checkout to load the app from (its src/), when the hermes_finance package isn't installed in Hermes's Python. Also read from the environment variable of the same name. The daily and weekly report jobs run from it too (hermes finance crons)."
+    description: "Prerequisite for a standalone plugin install: a trusted hermes-finance checkout (its src/), prepared with uv sync using Python 3.12. Also read from the environment variable of the same name. Run uv run finance doctor there to configure optional integrations. The daily and weekly report jobs run from it too (hermes finance crons)."
   HERMES_FINANCE_CRON_DELIVER:
     type: str
     default: ""

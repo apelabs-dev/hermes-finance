@@ -301,7 +301,10 @@ def _manifest_list(key: str) -> list[str]:
 
 def test_the_manifest_lists_exactly_what_registers(plugin):
     text = (PLUGIN_DIR / "plugin.yaml").read_text()
-    assert re.search(r"^name: hermes-finance$", text, re.M) and re.search(r"^version: 0\.1\.0$", text, re.M)
+    assert re.search(r"^name: hermes-finance$", text, re.M)
+    import tomllib
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    assert re.search(rf"^version: {re.escape(version)}$", text, re.M)
     assert "requires_env" not in text
     assert _manifest_list("provides_tools") == list(plugin.tools) == list(tooldefs.TOOLS)
     assert _manifest_list("provides_hooks") == list(plugin.hooks) == ["pre_tool_call"]

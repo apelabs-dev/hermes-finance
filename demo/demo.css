@@ -1,0 +1,25 @@
+/* Hermes Finances, static demo: the permanent "Demo — synthetic data" banner (demo/shim.js draws it) and the offsets that keep
+   the app's sticky and fixed parts below it. Nothing else of the app's look changes. */
+:root { --hfd-h: 34px; }
+html.hf-demo body { padding-top: var(--hfd-h); }
+#hf-demo-bar { position: fixed; top: 0; left: 0; right: 0; height: var(--hfd-h); z-index: 96; display: flex; align-items: center;
+  gap: 12px; padding: 0 12px; background: #2a1f05; color: #ffe2a3; border-bottom: 1px solid #6b4d0f; font-size: 13px;
+  line-height: 1.2; white-space: nowrap; }
+#hf-demo-bar .hfd-tag { flex: none; background: #f5b454; color: #1b1300; border-radius: 6px; padding: 3px 8px; font-weight: 700;
+  letter-spacing: .01em; }
+#hf-demo-bar .hfd-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:root[data-theme=light] #hf-demo-bar { background: #fff3d6; color: #4a3400; border-bottom-color: #e6c27a; }
+
+/* the app's parts that sit at the top of the window */
+html.hf-demo aside#side { top: var(--hfd-h); height: calc(100vh - var(--hfd-h)); }
+html.hf-demo .panel, html.hf-demo .chat, html.hf-demo .txpanel, html.hf-demo .modal { top: var(--hfd-h); }
+@media (max-width: 1023.98px) {
+  /* (the phone header needs no offset: app.css makes body its scroll container there, so the body's padding moves it) */
+  html.hf-demo aside#side { height: auto; bottom: 0; }
+  #hf-demo-bar .hfd-text { display: none; }
+}
+@media (max-width: 380px) {
+  #hf-demo-bar { gap: 8px; padding: 0 8px; }
+}
+
+html.hf-demo #chat .fchip { white-space: normal; text-align: left; min-height: 44px; font-size: 13px; }
