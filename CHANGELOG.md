@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/arspesk/hermes-finance/compare/v0.2.0...v0.2.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* first-run fixes from the clean-machine acceptance run ([df2aafb](https://github.com/arspesk/hermes-finance/commit/df2aafb55c059a8f0b2c71a3a02f1fb1d3b0e47e))
+* let categories under a group budget get a budget of their own ([5c1e5b7](https://github.com/arspesk/hermes-finance/commit/5c1e5b744a18b2f6538cec69de7fea0d634a01d3))
+
 ## 0.2.0
 
 Beta release. The standalone Hermes plugin requires a trusted app checkout prepared
