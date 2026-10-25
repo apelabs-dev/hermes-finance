@@ -1,4 +1,39 @@
+<a id="top"></a>
+
+<div align="center">
+
+<img src="docs/assets/logo.svg" alt="hermes-finance logo" width="96">
+
 # hermes-finance
+
+### Your money, on your computer, with an AI agent that can read it.
+
+<a href="LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/License-AGPL--3.0-f5f5f5?style=flat"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-1f1f1f?style=flat"></picture></a>
+[![Python-3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat&logo=python&logoColor=white)](pyproject.toml)
+![Self-hosted](https://img.shields.io/badge/self--hosted-6a91fc?style=flat)
+![Data in local SQLite](https://img.shields.io/badge/data-local_SQLite-2f9e6e?style=flat)
+![Writes ask first](https://img.shields.io/badge/writes-ask_first-e5534b?style=flat)
+
+<sub>Plugs into</sub>
+
+<a href="#the-three-ai-modes"><picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/Hermes_Agent-fff?style=flat"><img alt="Hermes Agent" src="https://img.shields.io/badge/Hermes_Agent-111827?style=flat"></picture></a>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/MCP-fff?style=flat&logo=modelcontextprotocol&logoColor=000"><img alt="MCP" src="https://img.shields.io/badge/MCP-000?style=flat&logo=modelcontextprotocol&logoColor=white"></picture>
+![Plaid](https://img.shields.io/badge/Plaid-111111?style=flat)
+![OFX / QFX / CSV import](https://img.shields.io/badge/OFX%20%2F%20QFX%20%2F%20CSV_import-5b6b8c?style=flat)
+
+<sub>Built with</sub>
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat&logo=sqlite&logoColor=white)
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/uv-f5f5f5?style=flat&logo=uv&logoColor=261230"><img alt="uv" src="https://img.shields.io/badge/uv-261230?style=flat&logo=uv&logoColor=DE5FE9"></picture>
+![Vanilla JS](https://img.shields.io/badge/Vanilla_JS-b8a200?style=flat&logo=javascript&logoColor=white)
+![Chart.js](https://img.shields.io/badge/Chart.js-FF6384?style=flat&logo=chartdotjs&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-0A9EDC?style=flat&logo=pytest&logoColor=white)
+![MkDocs Material](https://img.shields.io/badge/MkDocs_Material-526CFE?style=flat&logo=materialformkdocs&logoColor=white)
+
+</div>
+
+---
 
 A self-hosted personal-finance dashboard for people who already run [Hermes](#the-three-ai-modes). It pulls your
 accounts, balances and transactions from Plaid into a SQLite file on your own computer. It files spending into
@@ -12,7 +47,7 @@ Try the [read-only static demo](docs/demo.md) with synthetic data; it builds wit
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/overview-dark.png">
-  <img src="docs/assets/screenshots/overview-light.png" alt="hermes-finance Overview: monthly spending, net worth, Where it went and Budgets with synthetic demo data" width="1440" height="1500">
+  <img src="docs/assets/screenshots/overview-light.png" alt="hermes-finance Overview: monthly spending, net worth, Where it went and Budgets with synthetic demo data">
 </picture>
 
 ## Quickstart

@@ -36,10 +36,10 @@ untouched.
    checks and the privacy scan. Capture README images when the Overview changes:
    `PYTHONPATH=src python scripts/capture_readme_shots.py --evidence-dir /path/outside/repo`.
    The capture uses exported fixtures and helpers, a pinned 2026-09-25 date, one
-   managed Chrome slot and a temporary synthetic database. The 1440 × 1500 images
-   use an actual 1440 × 1500 CSS viewport at device scale 1. The extra height includes
-   the hero and meaningful Budgets/Where it went content at native desktop width,
-   without changing application CSS. Commit only the two PNGs.
+   managed Chrome slot and a temporary synthetic database. The images are
+   2880 × 1800 PNGs: a real 1440 × 900 CSS viewport at device scale 2, so they stay
+   crisp when GitHub scales them down. The README sets no width/height on them, which
+   keeps the aspect ratio on phones. Commit only the two PNGs.
 2. The operator clones the distribution repository into a disposable directory and
    exports the committed source, using the development-only tool:
 

@@ -156,7 +156,7 @@ def test_readme_pngs_and_capture_dependencies():
         assert path in readme
         data = (ROOT / path).read_bytes()
         assert data[:8] == b'\x89PNG\r\n\x1a\n'
-        assert struct.unpack('>II', data[16:24]) == (1440, 1500)
+        assert struct.unpack('>II', data[16:24]) == (2880, 1800)
     for path in ('scripts/capture_readme_shots.py', 'scripts/sync_release.py', 'tests/cdp.py',
                  'tests/demo_data.py', 'tests/gate_dbs.py', 'scripts/check.py', 'docs/releasing.md'):
         assert (ROOT / path).exists()
@@ -164,6 +164,9 @@ def test_readme_pngs_and_capture_dependencies():
 
 def test_native_readme_capture_framing():
     source = (ROOT / 'scripts/capture_readme_shots.py').read_text()
-    assert 'browser.size(1440, 1500, scale=1)' in source
-    assert "'css_width': 1440, 'css_height': 1500, 'device_scale': 1" in source
-    assert 'width="1440" height="1500"' in (ROOT / 'README.md').read_text()
+    assert 'browser.size(1440, 900, scale=2)' in source
+    assert "'css_width': 1440, 'css_height': 900, 'device_scale': 2" in source
+    # A fixed height attribute squashes the image on narrow (phone) GitHub views.
+    readme = (ROOT / 'README.md').read_text()
+    assert 'height="1500"' not in readme and 'overview-light.png" alt=' in readme
+    assert 'docs/assets/logo.svg' in readme and (ROOT / 'docs/assets/logo.svg').exists()

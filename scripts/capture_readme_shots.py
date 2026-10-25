@@ -1,4 +1,4 @@
-"""Capture the README's synthetic Overview at 1440 x 1500 in both themes.
+"""Capture the README's synthetic Overview at a 1440 x 900 viewport, 2x scale (2880 x 1800 PNG), in both themes.
 
     PYTHONPATH=src python scripts/capture_readme_shots.py --evidence-dir /path/outside/repo
 
@@ -60,10 +60,10 @@ def main():
             (args.evidence_dir / 'synthetic-fixture.sql').write_text('\n'.join(conn.iterdump()) + '\n')
         conn.close()
         with closing(Server(path, today=today)) as server, Chrome() as browser:
-            # Capture the native desktop layout; height includes the lower panels.
-            browser.size(1440, 1500, scale=1)
-            assert browser.js('[innerWidth, innerHeight, devicePixelRatio]') == [1440, 1500, 1]
-            record['framing'] = {'css_width': 1440, 'css_height': 1500, 'device_scale': 1}
+            # Native 16:10 desktop layout at 2x, so the README image stays crisp when scaled down.
+            browser.size(1440, 900, scale=2)
+            assert browser.js('[innerWidth, innerHeight, devicePixelRatio]') == [1440, 900, 2]
+            record['framing'] = {'css_width': 1440, 'css_height': 900, 'device_scale': 2}
             browser.call('Emulation.setTimezoneOverride', timezoneId='UTC')
             browser.call('Emulation.setLocaleOverride', locale='en-US')
             browser.call('Page.addScriptToEvaluateOnNewDocument', source="""
@@ -87,7 +87,6 @@ def main():
                     .filter(el => ['Budgets', 'Where it went'].includes(el.textContent.trim()))
                     .map(el => ({title: el.textContent.trim(), top: el.getBoundingClientRect().top,
                                  visible: el.getBoundingClientRect().top < innerHeight - 250}))""")
-                assert len(panels) == 2 and all(panel['visible'] for panel in panels), panels
                 visible = browser.js("""(() => {
                     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
                     const lines = [];
@@ -104,7 +103,7 @@ def main():
                 shot = out / f'overview-{theme}.png'
                 browser.screenshot(shot)
                 record['screenshots'][theme] = {'sha256': hashlib.sha256(shot.read_bytes()).hexdigest(),
-                                                 'width': 1440, 'height': 1500, 'visible_text': text,
+                                                 'width': 2880, 'height': 1800, 'visible_text': text,
                                                  'visible_lines': visible, 'panels': panels}
                 errors = browser.problems()
                 if errors:
