@@ -224,8 +224,8 @@ def test_a_groups_planned_is_edited_inline(tmp_path, width):
         assert q(b, f"{FOOD} .gover") == "categories add up to $550"
         assert marked(b, "Food") is None and marked(b, "Transport") is None
         assert q(b, coffee_in_food) is not None and q(b, ".nbrow[data-category='Coffee']") is None   # still counted in Food
-        assert q(b, f"{coffee_in_food} .plan") is None   # a group budget covers it: no Set of its own
-        assert b.js("document.querySelectorAll('tbody.bg[data-group=\"Food\"] tr:not(.g) .plan').length") == 2   # the caps stay
+        assert q(b, f"{coffee_in_food} .plan.set") == "Set"   # a group budget doesn't lock it out of one of its own (2026-10-24)
+        assert b.js("document.querySelectorAll('tbody.bg[data-group=\"Food\"] tr:not(.g) .plan:not(.set)').length") == 2   # the caps stay
         assert "$1,910" in b.js("document.getElementById('page').textContent")   # 500 + the 5 caps outside Food
         sizes_ok(b)
         # clear: the group is the caps' sum again
@@ -392,5 +392,37 @@ def test_a_group_with_no_budget_and_no_caps_gets_one_from_no_budget_yet(tmp_path
         assert stored(path)[0] == {"Home": 2500}
         assert q(b, 'tr.g[data-group="Home"]', "el.dataset.budget") == "2500", q(b, '#page .bt')
         assert q(b, home) is None
+        sizes_ok(b)
+        assert b.problems() == []
+
+
+@WIDTHS
+def test_a_group_budget_leaves_every_category_a_set(tmp_path, width):
+    """The owner, 2026-10-24: under a group budget, its uncapped categories had no Set anywhere: the ones with spending got a
+    Spent row without one, the ones with nothing spent had no row at all. Every uncapped category of the group now has a
+    Set: under the group when it has spending, else in No budget yet, saying the group already counts it. Setting one
+    gives that category a budget of its own and leaves the group's."""
+    path = build(tmp_path / "synthetic.sqlite", date.today(), food=500)
+    with site(path, width) as (b, url):
+        rows = b.js("""(() => { const out = {};
+          for (const r of document.querySelectorAll('tbody.bg[data-group="Food"] tr.u')) out[r.dataset.category] = ['table', (r.querySelector('.plan.set') || {}).textContent];
+          for (const r of document.querySelectorAll('#page .nb .nbrow[data-category]')) out[r.dataset.category] = ['nb', (r.querySelector('.setc') || {}).textContent, r.querySelector('.grow > span[title]').title];
+          return out; })()""")
+        caps = stored(path)[2]
+        uncapped = [n for n in ("Groceries", "Eating Out", "Coffee", "Alcohol & Bars") if n not in caps]
+        assert uncapped, caps
+        for n in uncapped:
+            assert n in rows and rows[n][1] == "Set", (n, rows)
+            if rows[n][0] == "nb":
+                assert rows[n][2] == "Counted in Food’s $500", rows[n]
+        assert rows["Coffee"][0] == "table"
+        # set Coffee from its row: its own budget, the group's untouched
+        tap(b, "tbody.bg[data-group='Food'] tr.u[data-category='Coffee'] .plan.set")
+        typed(b, "40")
+        key(b, "Enter")
+        groups, _, caps = stored(path)
+        assert caps.get("Coffee") == 40.0 and groups == {"Food": 500.0}
+        assert q(b, PLAN) == "$500"
+        assert q(b, "tbody.bg[data-group='Food'] tr.c[data-category='Coffee'] .plan") == "$40"
         sizes_ok(b)
         assert b.problems() == []

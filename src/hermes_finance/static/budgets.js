@@ -10,7 +10,8 @@
  *
  * Polish P2e, group budgets (groupbudget.py): a group's Planned is an edit control too. A group with a budget of its own
  * shows it as Planned, every category in it as Spent (the caps inside keep their rows, the uncapped ones with spending get
- * a plain Spent row) and, when its caps add up to more, a short warn note. A group without one: Planned is its caps' sum,
+ * a Spent row with Set, 2026-10-24; the rest stay in No budget yet, "Counted in <group>’s $X") and, when its caps add up
+ * to more, a short warn note. A group without one: Planned is its caps' sum,
  * and (group roll-up, 2026-10-22) Spent / Left take every category in it: its uncapped ones with spending or a bill due
  * get a Spent row under the group with Set in Planned (they leave No budget yet); a group with no cap stays there whole.
  * Above the table, while a group with caps has
@@ -193,12 +194,13 @@
     return tr;
   }
 
-  // polish P2e: an uncapped category inside a group budget: its spending counts in the group's Spent, so it gets a row
-  // with just that (no Planned, no Left of its own). Group roll-up: in a group with no budget of its own the same row's
-  // Planned is Set, which opens the cap editor (its suggestion included), as No budget yet's Set did.
-  function spendRow(c, g) {
-    const set = g.budget == null ? h('button', {type: 'button', class: 'plan set', title: 'Set a budget for this category',
-      'aria-label': `Set a budget for ${c.category}`}, 'Set') : null;
+  // polish P2e: an uncapped category in a counted group: its spending counts in the group's Spent, so it gets a row with
+  // that and no Left of its own. Its Planned is Set, which opens the cap editor (its suggestion included), as No budget
+  // yet's Set did: in a group with a budget of its own too, where a category budget is tracked on its row as Transport's
+  // are (the owner, 2026-10-24: a group budget must not lock its categories out of budgets of their own).
+  function spendRow(c) {
+    const set = h('button', {type: 'button', class: 'plan set', title: 'Set a budget for this category',
+      'aria-label': `Set a budget for ${c.category}`}, 'Set');
     const tr = h('tr', {class: 'u', role: 'row', dataset: {category: c.category, spent: String(c.spend)}},
       h('td', {class: 'n', role: 'cell'}, h('div', {class: 'nm'}, h('span', {class: 'l'}, badge(c.category, 'xs'),
         h('a', {class: 'nml', href: hashFor('transactions', {category: c.category}), title: `See ${c.category} transactions`}, c.category)))),
@@ -206,7 +208,7 @@
         c.spend === 0 && c.due > 0 ? h('span', {class: 'act udue', title: 'A bill still due this month: it counts in the group'}, `${money(c.due)} due`)
           : h('span', {class: 'act'}, money(c.spend))),
       h('td', {class: 'r', role: 'cell'}));
-    if (set) set.addEventListener('click', () => openEditor(c, set));
+    set.addEventListener('click', () => openEditor(c, set));
     return tr;
   }
 
@@ -228,7 +230,7 @@
     const shut = SHUT.has(g.name);
     const own = g.budget != null;
     const capped = cats.filter((c) => c.cap != null).length;
-    const rows = cats.map((c) => (c.cap != null ? categoryRow(c, d) : spendRow(c, g)));
+    const rows = cats.map((c) => (c.cap != null ? categoryRow(c, d) : spendRow(c)));
     const ids = rows.map((r, i) => { r.id = `bt-${g.name.replace(/\W+/g, '-').toLowerCase()}-${i}`; return r.id; });
     // the fold button is the chevron alone (a link can't live inside a button); its hit box stays 44px on a phone, and
     // a tap 24px in from its left edge still folds it
@@ -327,8 +329,10 @@
         h('span', {title: why}, why)), setc);
   }
 
-  function noBudget(d, uncapped) {
+  function noBudget(d, uncapped, owner = new Map()) {
     const reasons = new Map(d.not_budgeted.map((x) => [x.category, x.reason]));
+    // under a group budget the group already counts it: said instead of the general reason
+    for (const [n, g] of owner) reasons.set(n, `Counted in ${g.name}’s ${money(g.budget)}`);
     const order = new Map(d.groups.flatMap((g) => g.categories).map((n, i) => [n, i]));
     const byOrder = (a, b) => (order.get(a.category) ?? 1e6) - (order.get(b.category) ?? 1e6);
     const byName = new Map(d.categories.map((c) => [c.category, c]));
@@ -462,13 +466,16 @@
 
   HOOKS.budgetsBody = (d) => {
     LATEST = d;
-    // a group budget counts every category in its group: those are budgeted, never "No budget yet"; a group with caps
-    // counts its uncapped ones too, and the ones with spending (or a bill due) sit under it instead
+    // a counted group (a budget of its own, or caps) counts its uncapped categories too: the ones with spending (or a bill
+    // due) sit under it with Set. The rest stay in No budget yet, so every category keeps a Set somewhere (the owner,
+    // 2026-10-24: Home Goods, Parking and the like had no row at all under a group budget); under a group budget their
+    // line says the group already counts them.
     const byName = new Map(d.categories.map((c) => [c.category, c]));
-    const covered = new Set(d.groups.flatMap((g) => (g.budget != null ? g.categories
-      : counts(g, byName) ? g.categories.filter((n) => byName.has(n) && rolled(byName.get(n), g)) : [])));
+    const covered = new Set(d.groups.flatMap((g) => (counts(g, byName)
+      ? g.categories.filter((n) => byName.has(n) && rolled(byName.get(n), g)) : [])));
     const uncapped = d.categories.filter((c) => c.cap == null && !covered.has(c.category));
+    const owner = new Map(d.groups.filter((g) => g.budget != null).flatMap((g) => g.categories.map((n) => [n, g])));
     const groups = shown(d);
-    return [moveBanner(d), groups.length ? table(d, groups) : null, noBudget(d, uncapped)];
+    return [moveBanner(d), groups.length ? table(d, groups) : null, noBudget(d, uncapped, owner)];
   };
 });
