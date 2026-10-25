@@ -74,6 +74,8 @@ def test_calendar_same_name_and_repeated_occurrence_use_exact_key(chrome, site):
         if(unique.length<2) throw Error('fixture needs distinct bill identities');
         d.bills=[{...unique[0],merchant:'Same display name'}, {...unique[1],merchant:'Same display name'},
           {...unique[0],merchant:'Same display name',date:d.month+'-28',projected:true}];
+        // The calendar lays chips out by date; keep the fixture in that order so chip i is bill i whatever today is
+        d.bills.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
         window.__expected=d.bills.map(x=>({key:x.key,date:x.date}));
         return new Response(JSON.stringify(d),{headers:{'Content-Type':'application/json'}});};""")
     b.js("document.querySelector('.calnav button:not([disabled])').click()")

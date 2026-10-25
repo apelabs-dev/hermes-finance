@@ -66,10 +66,17 @@ def site(tmp_path_factory):
 
 
 @pytest.fixture
-def fresh(tmp_path):
+def fresh(tmp_path, chrome):
     srv = serve(tmp_path)
-    yield srv
-    srv.close()
+    try:
+        yield srv
+    finally:
+        # The module's browser outlives this server. Unload its document first, even after a failed assertion:
+        # a bill write can still be reloading transactions and then their saved filters during shutdown().
+        try:
+            chrome.goto("about:blank", ready=False)
+        finally:
+            srv.close()
 
 
 @pytest.fixture(scope="module")
@@ -94,6 +101,9 @@ def q(site, sql, args=()):
 
 
 def clean(b):
+    # A toast or a drawn table does not mean its follow-up reads have finished. Drain them while their server lives,
+    # then collect errors, so a late failure is attributed to this test rather than the next document's test.
+    assert b.settled() == ""
     assert b.problems() == []
     assert b.js("document.documentElement.scrollWidth <= innerWidth + 1")
 
@@ -231,7 +241,7 @@ def test_edit_schedule_and_stop_tracking_from_a_bills_sheet(fresh, chrome):
     chrome.js(until("#toast.on"))
     assert q(fresh, "SELECT cadence, variable, stopped_at FROM tracked_bills WHERE merchant_key = 'southern california edison'") == \
         [("bimonthly", 1, None)]
-    chrome.js(wait(600))
+    assert chrome.settled() == ""
     rows = {r["name"]: r for r in chrome.js(ROWS)}
     assert "every 2 months" in rows[SCE]["sub"]
     chrome.js(click("#page .li[data-bill]", SCE))
@@ -241,7 +251,7 @@ def test_edit_schedule_and_stop_tracking_from_a_bills_sheet(fresh, chrome):
     assert chrome.js("document.querySelector('#sheet h2').textContent") == f"Stop tracking {SCE}?"
     chrome.js(click("#sheet .row .btn", "Stop tracking"))
     chrome.js(until("#toast.on"))
-    chrome.js(wait(600))
+    assert chrome.settled() == ""
     assert SCE not in {r["name"] for r in chrome.js(ROWS)}
     assert q(fresh, "SELECT stopped_at IS NOT NULL FROM tracked_bills WHERE merchant_key = 'southern california edison'") == [(1,)]
     clean(chrome)
@@ -257,6 +267,6 @@ def test_settings_approve_applies_the_pending_agent_change(fresh, chrome):
     chrome.js(until("#toast.on"))
     assert q(fresh, "SELECT status FROM pending_actions") == [("applied",)]
     assert q(fresh, "SELECT cadence, variable, stopped_at FROM tracked_bills WHERE merchant_key = 'netflix'") == [("monthly", 0, None)]
-    chrome.js(wait(600))
+    assert chrome.settled() == ""
     assert chrome.js("document.querySelectorAll('#page [data-pending]').length") == 0
     clean(chrome)

@@ -118,6 +118,10 @@ writes, and an allowed write still waits for you.
 | Local (Ollama, LM Studio) | `http://127.0.0.1:11434/v1` |
 | Custom | the address you type |
 
+An OpenCode address (host `opencode.ai` or a subdomain, e.g. `https://opencode.ai/zen/go/v1`) gets the
+`x-opencode-session` header it requires automatically: a random id made once per install, never from your key, and left
+out of backups.
+
 You set the model name and paste the key. The app is its own agent harness. It sends the tool schemas, runs every tool
 call itself (up to 6 rounds, one 60-second deadline per question), and sends the results back. A write becomes an
 approval card in the panel (Approve / Deny). Nothing changes until you approve it. Settings lists Ask's pending cards

@@ -759,6 +759,68 @@ def test_an_isolated_step_answers_exactly_what_the_step_answers_in_process(data_
         "refused"
 
 
+ZOMBIE_WORKER = r'''
+import json, os, signal, sys, time
+from datetime import date
+from pathlib import Path
+
+signal.alarm(int(sys.argv[2]))                      # (the same own-alarm bound a real worker has: never left behind)
+sys.path.insert(0, sys.argv[1])
+from hermes_finance import tooldefs
+
+ask = json.loads(sys.stdin.buffer.read())
+tooldefs.today = lambda: date.fromisoformat(ask["today"])
+answer = {"ok": tooldefs.run_read(ask["name"], ask["args"], Path(ask["path"]), date.fromisoformat(ask["day"]))}
+sys.stdout.write(json.dumps(answer, default=str))
+sys.stdout.flush()
+os.close(1)                                         # EOF: _worker_exchange returns with the answer
+time.sleep(30)                                      # still running at the cleanup: killpg is the branch under test
+'''
+
+
+def test_a_group_macos_refuses_to_kill_still_answers_the_step(data_dir, monkeypatch):
+    """The child has answered and closed stdout but not exited, so the turn's cleanup calls killpg. On macOS a group
+    holding only an unreaped zombie refuses that with EPERM (errno 1), not ESRCH; the step's answer must still come
+    back (the group is the child's own, so a refusal means nothing is left to kill there) and the child must be gone
+    when the test ends, whether the cleanup succeeded or not."""
+    build("full", config.db_path())
+    path, deadline = config.db_path(), time.monotonic() + 2.5
+    args = {"by": "category", "month": "2026-09"}
+    expected = json.loads(json.dumps(tooldefs.run_read("finance_spend", args, path, TODAY), default=str))
+
+    monkeypatch.setattr(chat, "WORKER", ZOMBIE_WORKER)
+    refused = []
+    real_killpg = os.killpg              # (so this test can still kill the child it started)
+
+    def eperm(pgid, sig):
+        refused.append((pgid, sig))      # what macOS does when the group's only member is a zombie
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "killpg", eperm)
+    procs, real_popen = [], subprocess.Popen
+
+    def popen(*a, **k):
+        proc = real_popen(*a, **k)
+        procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    try:
+        got = chat._isolated("read", "finance_spend", args, path, TODAY, deadline)
+    finally:
+        for proc in procs:               # only what this test started, killed and reaped however it ended
+            if proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    real_killpg(proc.pid, signal.SIGKILL)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(10)
+            proc.stdin.close()
+            proc.stdout.close()
+    assert got == expected
+    assert [pgid for pgid, _ in refused] == [procs[0].pid]
+    assert procs[0].poll() is not None
+
+
 def test_an_isolated_step_that_crashes_is_an_internal_error_that_names_only_its_type(data_dir):
     """Anything the child raises that isn't a ToolError (here a real one: the plan's table is missing) is a
     RuntimeError here naming its type, never its message; a child that ends without an answer, the same."""

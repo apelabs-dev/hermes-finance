@@ -129,8 +129,10 @@ export HERMES_FINANCE_APP_DIR="$PWD"
 uv run finance doctor
 ```
 
-`finance doctor` runs offline and exits 1 when optional integrations are missing. It
-explains how to configure them; missing provider keys do not prevent plugin loading.
+`finance doctor` runs offline. It exits 1 when an integration is missing or unusable,
+and 0 otherwise. An integration switched off on purpose (e.g. `HERMES_ALPACA=off`)
+reports `off`: it is not counted as missing and does not fail the run. Doctor explains
+how to configure what is missing; missing provider keys do not prevent plugin loading.
 Keep this checkout available: the installed plugin loads `src/hermes_finance/tooldefs.py`
 from it, and report jobs use its app environment. It does not download the app for you.
 

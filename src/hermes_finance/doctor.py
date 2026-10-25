@@ -171,8 +171,10 @@ def login(conn: sqlite3.Connection) -> Check:
 
 def alpaca_check() -> Check:
     from . import alpaca
-    path = config.alpaca_key_path()
     keys = ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "APCA_ENV", "HERMES_ALPACA_KEY_FILE"]
+    if (os.environ.get(alpaca.KILL_ENV) or "").strip().lower() == "off":   # first: the key file isn't touched at all
+        return Check("alpaca", "off", f"disabled ({alpaca.KILL_ENV}=off)", keys)
+    path = config.alpaca_key_path()
     try:
         k = alpaca.load_keys(path)
     except alpaca.Refused:   # its message may quote the file's values: a fixed sentence instead
@@ -182,8 +184,6 @@ def alpaca_check() -> Check:
         return Check("alpaca", "error", f"the key file {path} can't be read ({type(e).__name__})", keys)
     if k is None:
         return Check("alpaca", "missing", f"no key file at {path}", keys, keys[:3])
-    if (os.environ.get(alpaca.KILL_ENV) or "").strip().lower() == "off":
-        return Check("alpaca", "off", f"key file set; Alpaca calls are switched off ({alpaca.KILL_ENV}=off)", keys)
     return Check("alpaca", "ok", f"key file {path}", keys)
 
 

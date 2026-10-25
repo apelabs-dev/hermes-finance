@@ -29,6 +29,7 @@ TIER_MAP = {
     "src/hermes_finance/bridge.py": ("tests/test_bridge*.py",),
     "src/hermes_finance/cdp_client.py": ("tests/test_valuation*.py",),
     "src/hermes_finance/chat.py": ("tests/test_chat*.py", "tests/test_browser_task23.py"),
+    "src/hermes_finance/aisession.py": ("tests/test_ai_opencode_session.py", "tests/test_chat*.py"),
     "src/hermes_finance/classify.py": ("tests/test_classify.py", "tests/test_review.py", "tests/test_task24*.py"),
     "src/hermes_finance/cli.py": ("tests/test_web.py", "tests/test_reads.py", "tests/test_query.py", "tests/test_doctor.py",
                                   "tests/test_backup_restore.py"),

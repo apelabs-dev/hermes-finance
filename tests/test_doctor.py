@@ -182,6 +182,33 @@ def test_bad_values_are_never_echoed(tmp_path):
     assert_no_leak(text.stdout, js.stdout)
 
 
+def test_explicit_off_with_no_key_file_is_off_and_exits_0(tmp_path):
+    env = everything_set(tmp_path)
+    env["HERMES_ALPACA"] = "off"
+    env["HERMES_ALPACA_KEY_FILE"] = str(tmp_path / "no-alpaca-file")
+    rep, text, js = report(env)
+    assert text.returncode == 0 and rep["ok"] is True and rep["missing"] == []
+    alpaca = by_name(rep)["alpaca"]
+    assert alpaca["status"] == "off" and alpaca["detail"] == "disabled (HERMES_ALPACA=off)"
+    line = next(line for line in text.stdout.splitlines() if " alpaca: " in line)
+    assert line == ("off alpaca: disabled (HERMES_ALPACA=off) -> "
+                    "README.md#integration-alpaca-investments")
+    assert_no_leak(text.stdout, text.stderr, js.stdout, js.stderr)
+
+
+def test_off_short_circuits_the_key_file(tmp_path):
+    env = everything_set(tmp_path)
+    env["HERMES_ALPACA"] = "off"
+    write(Path(env["HERMES_ALPACA_KEY_FILE"]), {"APCA_API_KEY_ID": "PK" + SENTINELS["APCA_API_KEY_ID"],
+                                                "APCA_API_SECRET_KEY": SENTINELS["APCA_API_SECRET_KEY"],
+                                                "APCA_ENV": "live"})   # a paper key, never read while off
+    rep, text, js = report(env)
+    assert rep["ok"] is True and text.returncode == 0
+    assert by_name(rep)["alpaca"]["status"] == "off"
+    assert by_name(rep)["alpaca"]["detail"] == "disabled (HERMES_ALPACA=off)"
+    assert_no_leak(text.stdout, text.stderr, js.stdout, js.stderr)
+
+
 def test_database_states(tmp_path):
     env = everything_set(tmp_path)
     path = Path(env["FINANCE_DATA_DIR"]) / "finance.db"

@@ -583,6 +583,7 @@ def test_ofx_checking_sgml():
         ("2026-09-25", "CAFÉ LUNA REFUND", -8.75, "202609250001"),          # CHARSET:1252, a '+' amount
     ]
     assert [r.line for r in st.rows] == list(range(1, 9))
+    assert [r.trntype for r in st.rows] == ["POS", "DIRECTDEP", "DEBIT", "DEBIT", "CHECK", "ATM", "DEBIT", "CREDIT"]
     assert {r.account for r in st.rows} == {"Checking ••1234"}
 
 
@@ -693,7 +694,7 @@ def test_ofx_empty_leaf_does_not_lose_transactions():
 
 def test_ofx_transaction_without_fitid_is_kept():
     [st] = ofx_statements(_ofx(_bank("9990001234", _trn("-1.00", fitid=None))))
-    assert st.rows == [Row("2026-09-01", "TRADER JOE'S #552", 1.0, "Checking ••1234", None, 1)]
+    assert st.rows == [Row("2026-09-01", "TRADER JOE'S #552", 1.0, "Checking ••1234", None, 1, "DEBIT")]
     assert st.balance is None and st.balance_date is None
 
 

@@ -10,7 +10,11 @@ import would do (preview) and does it (commit):
     that account. Rows are matched one for one, so two identical coffees on one day in the file and one already
     saved import one.
   * imported rows get source 'import' and go through the same rules and classification as synced ones
-    (classify.apply; the AI queue picks up what no rule files).
+    (classify.apply; the AI queue picks up what no rule files). A file has no Plaid category, so a row no rule
+    matches is filed under Other, except money coming in on an OFX row whose TRNTYPE says what it is (OFX_INCOME_HINTS:
+    a direct deposit, payroll or interest; not a generic CREDIT, which is also card payments and refunds): it is saved with the Plaid income code that type means, so it
+    files under Income like a synced paycheck, on every later classify.apply too. A rule still wins over the hint, and
+    an AI or user decision is never touched.
   * the account's balance is what you give it (an OFX file's ledger balance is offered): transactions never move a
     manual account's balance, so no total changes until rows are imported, and then only spending does.
 """
@@ -30,6 +34,18 @@ from .db import IMPORT_ITEM, now
 
 TARGET_KINDS = ("bank", "credit_card")
 MAX_ROWS = 20_000
+
+# OFX TRNTYPE -> the Plaid personal_finance_category (primary, detailed) a money-in row of that type is saved with.
+# classify.apply() files it like a synced row: a matching rule first, else plaid_category_map (INCOME -> Income).
+# The detailed codes keep pay, interest and other income apart, so a finer income category later is one map row each.
+OFX_INCOME_HINTS = {
+    "DIRECTDEP": ("INCOME", "INCOME_WAGES"),
+    "DEP": ("INCOME", "INCOME_WAGES"),
+    "PAYROLL": ("INCOME", "INCOME_WAGES"),
+    "INT": ("INCOME", "INCOME_INTEREST_EARNED"),
+}
+# Not CREDIT: OFX uses it for any money in, so a card payment ("PAYMENT THANK YOU") or a
+# refund would count as income. A CREDIT row stays unhinted: Other (Needs review), or what a rule says.
 
 
 class ImportRefused(ValueError):
@@ -190,9 +206,26 @@ def _tid(account_id: int, row, n: int) -> str:
     return "imp_" + hashlib.sha256(basis.encode()).hexdigest()[:24]
 
 
+def _pfc_hint(row) -> tuple[str | None, str | None]:
+    """(pfc_primary, pfc_detailed) for an OFX row whose TRNTYPE is in OFX_INCOME_HINTS and that is money IN: the app's
+    amount < 0, i.e. the file's TRNAMT > 0. A DEP / INT ... row with TRNAMT <= 0 (money out) gets none, nor
+    does a CSV row (no TRNTYPE)."""
+    if row.amount >= 0:
+        return None, None
+    return OFX_INCOME_HINTS.get(row.trntype or "", (None, None))
+
+
+def _raw_json(filename: str, row) -> str:
+    raw = {"file": filename[:200], "line": row.line, "fitid": row.fitid}
+    if row.trntype:
+        raw["trntype"] = row.trntype
+    return json.dumps(raw)
+
+
 def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
-    """Import the file with these choices: new accounts first, then every new row (one transaction), then the rules and
-    the Plaid-category defaults (classify.apply). Returns what was added and skipped, per account."""
+    """Import the file with these choices: new accounts first, then every new row (one transaction; an OFX money-in row
+    with its TRNTYPE's income code, _pfc_hint), then the rules and the Plaid-category defaults (classify.apply). Returns
+    what was added and skipped, per account."""
     p = _parse(filename, raw, data, today)
     chosen = data.get("targets") or {}
     plan = [(g, _target(conn, chosen.get(g["label"]) if isinstance(chosen, dict) else None, g)) for g in p["groups"]]
@@ -215,11 +248,10 @@ def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, 
                 seen[k] += 1
                 conn.execute(
                     "INSERT INTO transactions (transaction_id, account_id, item_id, date, name, amount, iso_currency, pending, "
-                    "raw_json, removed, first_seen_at, updated_at, source, import_id, fitid) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'import', ?, ?)",
+                    "pfc_primary, pfc_detailed, raw_json, removed, first_seen_at, updated_at, source, import_id, fitid) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?, 'import', ?, ?)",
                     (_tid(account_id, row, seen[k]), f"manual:{account_id}", IMPORT_ITEM, row.date, row.description[:300],
-                     round(row.amount, 2), None, json.dumps({"file": filename[:200], "line": row.line, "fitid": row.fitid}),
-                     ts, ts, import_id, row.fitid))
+                     round(row.amount, 2), None, *_pfc_hint(row), _raw_json(filename, row), ts, ts, import_id, row.fitid))
         results.append({"label": g["label"], "account": {"id": account_id, "name": name}, "new": len(new), "skipped": skipped})
     classify.apply(conn)
     dates = sorted(r.date for g, _ in plan for r in g["rows"])

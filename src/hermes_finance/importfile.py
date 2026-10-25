@@ -90,6 +90,7 @@ class Row:
     account: str | None  # the account label from the file (a CSV "Account" column, or the OFX account's label)
     fitid: str | None    # OFX FITID (None for CSV)
     line: int            # 1-based data row number (CSV) / transaction index in its statement (OFX)
+    trntype: str | None = None  # OFX TRNTYPE, upper-case ("DIRECTDEP", "DEBIT", ...); None for CSV
 
 
 @dataclass
@@ -812,8 +813,9 @@ def _statement(stmt: ET.Element) -> OfxStatement:
                                   field="amount", row=i)
         description = next((v for v in (values.get("NAME"), values.get("PAYEE/NAME"), values.get("MEMO")) if v), "")
         fitid = values.get("FITID")
+        trntype = values.get("TRNTYPE", "").strip().upper() or None
         rows.append(Row(posted, " ".join(_unescape(description).split()), _cents(-amount), label,
-                        _unescape(fitid) if fitid else None, i))   # OFX TRNAMT is negative for money out
+                        _unescape(fitid) if fitid else None, i, trntype))   # OFX TRNAMT is negative for money out
     return OfxStatement(label, last4, "credit_card" if card else "bank", subtype, currency,
                         None if balance is None else _cents(balance), _ofx_date(dtasof), rows)
 

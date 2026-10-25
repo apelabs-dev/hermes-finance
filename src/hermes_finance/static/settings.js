@@ -18,6 +18,8 @@
   async function save(values, after) {
     try {
       const r = await post('/api/prefs', values);
+      if (Object.keys(values).some((key) => key.startsWith('ai.')))
+        document.dispatchEvent(new CustomEvent('hf-prefs', {detail: r.prefs}));
       saved();
       if (after) after(r);
       return r;

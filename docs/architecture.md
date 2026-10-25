@@ -112,7 +112,7 @@ Conventions every query relies on:
 | `valuation.py`, `photos.py`, `usage.py`, `cdp_client.py` | Car and home values; their pictures; the monthly call caps; the local Chrome client for Carfax |
 | `logos.py`, `alpaca.py` | Bank and holding logos; the read-only Alpaca account |
 | `tooldefs.py`, `mcp_server.py`, `mcp_state.py` | The agent tools; the MCP server; pending actions |
-| `chat.py`, `bridge.py` | The Ask panel's loop; its bridge to Hermes |
+| `chat.py`, `bridge.py`, `aisession.py` | The Ask panel's loop; its bridge to Hermes; the session id OpenCode endpoints require |
 | `cronpipe.py` | The plugin's daily and weekly pre-run steps |
 | `redact.py`, `report.py`, `qr.py` | Secret scrubbing; status and plain-text tables; a stdlib QR code for the authenticator set-up |
 | `backup.py`, `doctor.py` | Backup and restore of the database; `finance doctor` |

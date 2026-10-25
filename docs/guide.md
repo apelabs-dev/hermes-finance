@@ -172,7 +172,7 @@ type: on a credit card, a purchase is positive and a card payment is negative. I
 |---|---|
 | `items` | One row per Item ever exchanged (never deleted). `status` (`active` / `login_required` / `error`), `error_code`, `error_message`, `cursor`, `products` (JSON), `txn_update_status`, `created_at`, `last_sync_at`, `removed_at`. `access_token` is here but hidden from `finance query`. Use `v_items` for a token-free view. |
 | `accounts` | name, official_name, mask, type/subtype, current/available balance, credit_limit, currency. |
-| `transactions` | Full Plaid fields + `raw_json`. `pfc_*` = Plaid personal_finance_category. `removed=1` means Plaid removed it; the row is kept but excluded from views. |
+| `transactions` | Full Plaid fields + `raw_json`. `pfc_*` = Plaid personal_finance_category (on an imported OFX money-in row, the income code its `TRNTYPE` means: `INCOME_WAGES` or `INCOME_INTEREST_EARNED`; the type itself is in `raw_json`). `removed=1` means Plaid removed it; the row is kept but excluded from views. |
 | `categories` | Rent & Utilities, Groceries, Eating Out, Transport, Shopping, Subscriptions, Entertainment, Health, Travel, Income (`is_income`), Transfers (`is_transfer`), Fees, Other. `monthly_cap` is the budget (NULL = none). |
 | `plaid_category_map` | Plaid PFC code (detailed or primary) → category. Detailed wins, e.g. `FOOD_AND_DRINK_GROCERIES` → Groceries, but other `FOOD_AND_DRINK` → Eating Out. Card/loan payments and transfers → Transfers. Unknown → Other. Plaid has no "subscription" category, so Subscriptions is filled by rules/AI. |
 | `classifications` | One row per transaction: `category_id`, `source` (`plaid`/`rule`/`ai`/`user`), `confidence`, `note`, `rule_id`. |
@@ -281,7 +281,7 @@ still creates a run (`queued_groups = 0`, `groups: []`).
 ```
 
 - `spend` is positive for money out. `current` counts the rows' categories now, `pfc` their Plaid
-  detailed codes.
+  detailed codes (an imported row's: its OFX type's income code, else none).
 - `rule_field` / `rule_pattern` is what a `rule` decision matches: the group's most common
   `merchant_name`, else `name` (the same choice as `set-category --make-rule`).
 - Up to 5 raw `names`, 3 `accounts` and 8 `samples`: the cheapest and dearest rows (refunds, outliers),
@@ -653,7 +653,7 @@ and the connections footer with **Add account** and **Settings**. Settings holds
 security, the AI provider, Connect other agents (MCP), Sync & alerts, Valuations, Region (currency and locale for every
 amount and date), Appearance (dark / light / system) and Data (export CSV, backup, import); everything saves as it
 changes. Add account → **Import a file** reads a bank's CSV (the columns are matched in a preview), OFX or QFX into a
-manual account; rows already there are skipped. The look: Inter (self-hosted), 15px body, icon card titles,
+manual account; rows already there are skipped. Imported rows go through your rules like synced ones; one no rule matches lands in Other (Needs review), except money coming in on an OFX / QFX row whose type says what it is: a direct deposit, deposit or payroll, or interest is filed under Income (a generic credit is not: it is also card payments and refunds). The look: Inter (self-hosted), 15px body, icon card titles,
 rings, bars, sparklines and category badges, no glows and no motion (charts draw once).
 
 - **Overview**: left to spend + daily allowance, on-pace projection (and how it's made), month-to-date vs

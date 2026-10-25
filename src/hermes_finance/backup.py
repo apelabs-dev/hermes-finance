@@ -25,7 +25,8 @@ from . import config, db
 STRIPPED_TOKEN = "removed-from-backup"
 # What a backup takes out (and so what has to be set up again after restoring one)
 STRIPPED_TABLES = ("auth_sessions", "auth_recovery_codes", "auth_failures", "auth_users", "mcp_tokens")
-STRIPPED_SETTINGS = ("access.last_proxy", "mcp.last_used")
+# (ai.opencode_session is per install: a restored copy makes its own, aisession.py)
+STRIPPED_SETTINGS = ("access.last_proxy", "mcp.last_used", "ai.opencode_session")
 # Tables a hermes-finance database always has; a file without them is something else
 REQUIRED_TABLES = {"items", "accounts", "transactions", "settings"}
 # The tables whose rows make a database "not empty" (a fresh one has only seeded categories and defaults)

@@ -102,7 +102,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from . import access, api, bridge, config, mcp_state, prefs, redact, secretstore, tooldefs, usage
+from . import access, aisession, api, bridge, config, mcp_state, prefs, redact, secretstore, tooldefs, usage
 from .money import money
 
 log = logging.getLogger(__name__)
@@ -311,11 +311,12 @@ class _Connection(http.client.HTTPConnection):
         self.sock = _Wire(self.raw, self.deadline)
 
 
-def _post(url: str, key: str | None, body: dict[str, Any], timeout: float) -> dict[str, Any]:
+def _post(url: str, key: str | None, body: dict[str, Any], timeout: float,
+          extra: dict[str, str] | None = None) -> dict[str, Any]:
     """POST JSON to an OpenAI-compatible endpoint (http.client over a _Wire, no proxy), all of it within `timeout`
     seconds from now: the lookup, connecting, TLS, sending, the answer's headers and its body (not `timeout` for each
     socket read: a reply trickling in never outlasts it). An answer bigger than MAX_RESPONSE, cut off or garbled isn't
-    used. ChatError with one friendly line on any failure."""
+    used. `extra`: more request headers (aisession.headers). ChatError with one friendly line on any failure."""
     deadline = time.monotonic() + timeout
     parts = urlsplit(url)
     try:
@@ -324,7 +325,7 @@ def _post(url: str, key: str | None, body: dict[str, Any], timeout: float) -> di
         port = -1
     if parts.scheme not in ("http", "https") or not parts.hostname or port == -1:
         raise ChatError("The AI provider's address in Settings isn't an http(s) URL.", 400)
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    headers = {**(extra or {}), "Content-Type": "application/json", "Accept": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
     target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
@@ -560,7 +561,8 @@ def _isolated(step: str, name: str, args: Any, path: Path, day: date, deadline: 
         out = _worker_exchange(proc, ask, deadline)
     finally:
         if proc.poll() is None:   # still running, so never reaped: its pid and its group are still its own
-            with contextlib.suppress(ProcessLookupError):
+            # (gone, or a zombie-only group: macOS refuses a killpg there with EPERM rather than ESRCH)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()           # (SIGKILL can't be caught or ignored)
         proc.stdin.close()
@@ -956,6 +958,7 @@ def _api_turn(conn, b, history, path, today, deadline, owner: str | None = None)
     busy = conn.execute("PRAGMA busy_timeout").fetchone()[0]   # (conn is the route's: given back as it was)
     conn.execute("PRAGMA busy_timeout = 0")                    # _reserve / _write wait for the lock, by the clock
     try:
+        extra = _write(deadline, conn, aisession.headers, b["url"])   # an OpenCode host's session id, once a turn
         for _ in range(MAX_ROUNDS):
             body = {"model": b["model"], "messages": messages, "tools": tools, "tool_choice": "auto",
                     bound: MAX_OUTPUT_TOKENS}
@@ -963,7 +966,7 @@ def _api_turn(conn, b, history, path, today, deadline, owner: str | None = None)
                 body["usage"] = {"include": True}      # OpenRouter reports the request's cost in usage.cost
             res = _reserve(conn, today, b["cap"], deadline)
             try:
-                resp = _post(f"{b['url']}/chat/completions", key, body, deadline - time.monotonic())
+                resp = _post(f"{b['url']}/chat/completions", key, body, deadline - time.monotonic(), extra)
             except ChatError as e:
                 if e.status == 504:
                     _write(settle, conn, usage.ai_finish, res, "timeout", None, *_worst(body))

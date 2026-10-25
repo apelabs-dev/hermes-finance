@@ -17,8 +17,9 @@
 (window.HF_EXT = window.HF_EXT || []).push((HF) => {
   'use strict';
   const {h, fill, icon, glyph, api, post, money, money2, plural, budgetRing, ibadge, RGB, refresh, loadCounts} = HF;
-  const mode = document.body.dataset.ask;
-  if (mode !== 'api' && mode !== 'hermes') return;   // AI off: no Ask at all
+  let mode = document.body.dataset.ask;
+  const enabled = () => mode === 'api' || mode === 'hermes';
+  let settingsToken = 0;
   const KEY = 'hf.chat.v1';
   // Read-only page data, never model-generated suggestions. Dates in questions are explicit so a selected past
   // month cannot be confused with today's bills (or with the same month in another year). A chip label must fit on
@@ -177,17 +178,49 @@
   const chips = h('div', {class: 'chchips', role: 'group', 'aria-label': 'Suggestions'});
   const send = h('button', {class: 'btn sm', type: 'button', id: 'chsend'}, icon('send'), 'Send');
   const brain = document.body.dataset.askBrain || (mode === 'hermes' ? 'via Hermes' : 'via API');
+  const brainBadge = h('span', {class: 'brain'});
+  function setBrain(label) {
+    brainBadge.title = mode === 'hermes' ? 'Answers come from your Hermes model' : `Answers come from ${label.replace(/^via /, '')}`;
+    fill(brainBadge, icon(mode === 'hermes' ? 'sparkles' : 'cpu'), label);
+  }
+  setBrain(brain);
   fill(panel,
     h('div', {class: 'chh'}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('sparkles')),
       h('div', {class: 'grow'}, h('div', {class: 'chtl'}, h('h2', {id: 'chat-title'}, 'Ask'),
-        h('span', {class: 'brain', title: mode === 'hermes' ? 'Answers come from your Hermes model' : `Answers come from ${brain.replace(/^via /, '')}`},
-          icon(mode === 'hermes' ? 'sparkles' : 'cpu'), brain))),
+        brainBadge)),
       h('button', {class: 'ib', type: 'button', 'aria-label': 'Close', onclick: () => close()}, icon('x'))),
     msgs,
     h('div', {class: 'chfoot'},
       chips,
       h('div', {class: 'chrow'}, input, send)));
-  document.body.append(askBtn, panel);
+  if (enabled()) document.body.append(askBtn, panel);
+  else askBtn.hidden = true;
+
+  // Settings saves in place. Keep one controller and one set of listeners across mode changes.
+  document.addEventListener('hf-prefs', async (e) => {
+    const token = ++settingsToken;
+    mode = e.detail.ai.mode;
+    if (enabled()) document.body.dataset.ask = mode;
+    else delete document.body.dataset.ask;
+    if (!enabled()) {
+      close();
+      stopWatching();
+      askBtn.hidden = true;
+      askBtn.remove();
+      panel.remove();
+      delete document.body.dataset.askBrain;
+      return;
+    }
+    if (!askBtn.isConnected) document.body.append(askBtn, panel);
+    askBtn.hidden = !panel.hidden;
+    setBrain(mode === 'hermes' ? 'via Hermes' : 'via API');
+    try {
+      const state = await api('/api/chat');   // metadata only; the server owns provider/model labels
+      if (token !== settingsToken || !enabled()) return;
+      document.body.dataset.askBrain = state.label;
+      setBrain(state.label);
+    } catch (e) { /* keep the mode label if metadata is temporarily unavailable */ }
+  });
 
   // ---- drawing ------------------------------------------------------------------------------------------------------
   function stat(s) {
@@ -274,6 +307,7 @@
     } catch (e) { /* drawn as they were */ }
   }
   async function open() {
+    if (!enabled() || !panel.hidden) return;
     panel.hidden = false;
     askBtn.hidden = true;
     askBtn.setAttribute('aria-expanded', 'true');
@@ -304,7 +338,7 @@
   // ---- asking ----------------------------------------------------------------------------------------------------------
   async function ask(text) {
     const q = String(text || '').trim();
-    if (!q || busy) return;
+    if (!enabled() || !q || busy) return;
     const questionContext = classifyQuestion(q);
     LOG.push({role: 'user', content: q});
     store();
