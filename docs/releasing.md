@@ -8,7 +8,7 @@ remain development-only; `scripts/sync_release.py` is standalone and also ships 
 ## Policy and baseline
 
 The existing `v0.2.0` prerelease points at
-`5e002326164d5bea37379dace78b436ca894dd3a`. Do not recreate it. The manifest starts
+`2b65046b1221d4cfb983091196ab77590d9ca38a`. Do not recreate it. The manifest starts
 at `0.2.0`; both bootstrap and last-release boundaries point to that commit.
 Release Please discovers subsequent releases normally; the boundary remains the
 oldest commit it needs to search, not a forced version.

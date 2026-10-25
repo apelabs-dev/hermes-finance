@@ -123,7 +123,7 @@ def test_release_config_and_all_version_updaters():
     assert config['release-type'] == 'python'
     assert config['include-component-in-tag'] is False
     assert config['include-v-in-tag'] is True
-    assert config['bootstrap-sha'] == config['last-release-sha'] == '5e002326164d5bea37379dace78b436ca894dd3a'
+    assert config['bootstrap-sha'] == config['last-release-sha'] == '2b65046b1221d4cfb983091196ab77590d9ca38a'
     assert config['bump-minor-pre-major'] and not config['bump-patch-for-minor-pre-major']
     assert not config['prerelease']
     sections = {s['type']: s for s in config['changelog-sections']}
