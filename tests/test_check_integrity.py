@@ -109,7 +109,7 @@ def test_real_lock_serializes_processes_and_prints_owner_immediately(tmp_path):
         owned.append(holder)
         assert line(holder) == "held"
         owner = json.loads(path.read_text())
-        assert owner == {"pid": holder.pid, "branch": subprocess.check_output(["git", "-C", str(check.ROOT), "branch", "--show-current"], text=True).strip(), "worktree": str(check.ROOT)}
+        assert owner == {"pid": holder.pid, "branch": subprocess.check_output(["git", "-C", str(check.ROOT), "branch", "--show-current"], text=True).strip() or "(detached)", "worktree": str(check.ROOT)}
         waiter = subprocess.Popen([sys.executable, "-c", waiter_code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         owned.append(waiter)
         assert line(waiter) == f"waiting for check lock held by pid {holder.pid} ({owner['branch']}, {owner['worktree']})"
