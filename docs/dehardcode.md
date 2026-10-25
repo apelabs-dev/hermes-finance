@@ -65,8 +65,11 @@ on a hit, 0 when clean, 2 on bad usage. The rules:
 
 What it lets through, each a committed, reasoned decision in `scripts/dehardcode.py`:
 
-- `ALLOWED_PUBLIC`: exact public strings masked before matching, each with its reason. It's empty: no shipped file
-  names the repository's own URL, so the owner's login is a private word everywhere.
+- `ALLOWED_PUBLIC`: exact public strings masked before matching, each with its reason. It's empty.
+- The repository's own URL (`github.com/<owner>/<repo>`) is masked at runtime, because Release Please writes compare
+  and commit links into CHANGELOG.md. It comes from CI's `GITHUB_REPOSITORY`, `HERMES_FINANCE_PUBLIC_URL`, or a git
+  remote of the scanned checkout (a clone's `origin`; in a development checkout, add a `public` remote). It is never
+  written in a tracked file. The owner's login anywhere else, or in another repository's URL, is still a private word.
 - `RELEASE_EXEMPT`: a path pattern, a rule, a regex the hit must match, and the reason (for example the tests'
   synthetic Plaid tokens). `tests/test_release_scan.py` checks that each one covers its own case and nothing wider.
 

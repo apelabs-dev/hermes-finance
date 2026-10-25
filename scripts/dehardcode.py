@@ -162,10 +162,39 @@ def check(paths: Sequence[str], read, matcher: Matcher) -> List[Tuple[str, int, 
 #   email          an email address outside the reserved/placeholder domains (PLACEHOLDER_DOMAINS)
 #   long-id        a 17-20 digit number (a Discord snowflake, an account id) that isn't obviously made up
 #   hex-id         a standalone 12-hex id (a cron job id) that isn't obviously made up
-# The exact public strings masked before matching, each with its reason. Nothing else is allowed by text. None today:
-# no shipped file names the repository's own URL (the README's clone command says <owner>), so its owner's login is a
-# private word everywhere.
+# The exact public strings masked before matching, each with its reason. Nothing else is allowed by text. None today.
+# The repository's own URL is the one runtime mask (own_repo_slugs): the release tooling writes it into CHANGELOG.md
+# (compare and commit links), and once the repo is reachable at that URL the owner's login is public there anyway.
+# The mask is the exact `github.com/<owner>/<repo>` string, read at runtime and never written in a tracked file, so
+# the login alone stays a private word everywhere else.
 ALLOWED_PUBLIC: dict = {}
+# Where the repository's own URL comes from (each optional): CI's GITHUB_REPOSITORY (`owner/repo`), the development
+# checkout's HERMES_FINANCE_PUBLIC_URL (as scripts/sync_release.py uses), and the scanned checkout's git remotes.
+REPO_SLUG_ENV = ("GITHUB_REPOSITORY", "HERMES_FINANCE_PUBLIC_URL")
+_GITHUB_URL = re.compile(r"(?:^|[/@:])github\.com[/:]([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$")
+
+
+def _slug_of(value: str) -> Optional[str]:
+    """`github.com/owner/repo` from an `owner/repo` pair or a GitHub https/ssh URL, else None."""
+    value = value.strip()
+    m = _GITHUB_URL.search(value)
+    if m:
+        return f"github.com/{m.group(1)}/{m.group(2)}"
+    m = re.fullmatch(r"([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)", value)
+    return f"github.com/{m.group(1)}/{m.group(2)}" if m else None
+
+
+def own_repo_slugs(base: Optional[Path] = None, env: Optional[dict] = None) -> Set[str]:
+    """The repository's own `github.com/<owner>/<repo>` strings, from the environment and `base`'s git remotes."""
+    env = os.environ if env is None else env
+    found = [env.get(k, "") for k in REPO_SLUG_ENV]
+    if base is not None and (base / ".git").exists():
+        try:   # every remote of the scanned checkout: a clone's origin, a development checkout's `public` remote
+            out = _git(base, "config", "--get-regexp", r"^remote\..*\.url$").decode("utf-8", "replace")
+            found += [line.split(" ", 1)[1] for line in out.splitlines() if " " in line]
+        except Exception:
+            pass
+    return {s for s in (_slug_of(v) for v in found if v) if s}
 # Placeholder user names an example path may use (/home/you/..., /home/<user>/...): never a real account
 PLACEHOLDER_USERS = {"you", "<you>", "me", "<me>", "user", "<user>", "username", "<username>", "$user", "${user}",
                      "name", "<name>", "owner", "jane", "someone", "example", "...", "…", "*", "runner"}
@@ -242,15 +271,16 @@ def synthetic_hex(s: str) -> bool:
             or not re.search(r"[a-f]", s))
 
 
-def _mask_public(text: str) -> str:
-    for s in ALLOWED_PUBLIC:
+def _mask_public(text: str, masks: Iterable[str] = ()) -> str:
+    for s in [*ALLOWED_PUBLIC, *masks]:
         text = re.sub(re.escape(s), lambda m: "_" * len(m.group(0)), text, flags=re.I)
     return text
 
 
-def release_hits_in_text(text: str, words: Iterable[str]) -> List[Tuple[int, str, str]]:
-    """[(line, rule, matched text)] in `text` (a whole file: a binary decoded as latin-1, so each byte is one char)."""
-    text = _mask_public(text)
+def release_hits_in_text(text: str, words: Iterable[str], masks: Iterable[str] = ()) -> List[Tuple[int, str, str]]:
+    """[(line, rule, matched text)] in `text` (a whole file: a binary decoded as latin-1, so each byte is one char).
+    `masks`: the repository's own URL strings (own_repo_slugs), masked like ALLOWED_PUBLIC."""
+    text = _mask_public(text, masks)
     found: List[Tuple[int, str, str]] = []
 
     def add(pos: int, rule: str, s: str) -> None:
@@ -299,10 +329,12 @@ def release_exempt(rel: str, rule: str, s: str) -> Optional[str]:
     return None
 
 
-def release_scan_bytes(rel: str, data: bytes, words: Iterable[str]) -> List[Tuple[str, int, str, str]]:
+def release_scan_bytes(rel: str, data: bytes, words: Iterable[str],
+                       masks: Iterable[str] = ()) -> List[Tuple[str, int, str, str]]:
     """[(path, line, rule, matched text)] of one file's content, exemptions applied."""
     text = data.decode("latin-1") if is_binary(data) else data.decode("utf-8")
-    return [(rel, n, rule, s) for n, rule, s in release_hits_in_text(text, words) if release_exempt(rel, rule, s) is None]
+    return [(rel, n, rule, s) for n, rule, s in release_hits_in_text(text, words, masks)
+            if release_exempt(rel, rule, s) is None]
 
 
 def release_dir_files(base: Path) -> List[str]:
@@ -341,9 +373,10 @@ def tracked_files(root: Path) -> List[str]:
 
 def release_scan(base: Path, files: Sequence[str], words: Iterable[str]) -> List[Tuple[str, int, str, str]]:
     words = set(words)
+    masks = own_repo_slugs(base)
     hits = []
     for rel in files:
-        hits += release_scan_bytes(rel, (base / rel).read_bytes(), words)
+        hits += release_scan_bytes(rel, (base / rel).read_bytes(), words, masks)
     return hits
 
 
@@ -376,9 +409,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 out = _git(base, "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
                 files = [f for f in out.decode("utf-8", "replace").split("\0") if f and ships(f)]
                 words = private_words()
+                masks = own_repo_slugs(base)
                 hits = []
                 for rel in files:
-                    hits += release_scan_bytes(rel, _git(base, "show", f":{rel}"), words)
+                    hits += release_scan_bytes(rel, _git(base, "show", f":{rel}"), words, masks)
         for h in hits:
             print(format_release_hit(*h))
         print(f"release scan: {len(files)} files, {len(hits)} hit(s)", file=sys.stderr)

@@ -75,6 +75,36 @@ def test_placeholders_and_lookalikes_pass(text):
     assert rules(text, {WORD}) == [], text
 
 
+@pytest.mark.parametrize("value", ["{w}/hermes-finance", "https://github.com/{w}/hermes-finance.git",
+                                   J(["git", "@", "github.com:{w}/hermes-finance.git"]),   # ssh form, split: no email
+                                   "https://github.com/{w}/hermes-finance/"])
+def test_the_repos_own_url_comes_from_the_environment(value):
+    slugs = dehardcode.own_repo_slugs(None, {"GITHUB_REPOSITORY": value.format(w=WORD)})
+    assert slugs == {f"github.com/{WORD}/hermes-finance"}
+    assert dehardcode.own_repo_slugs(None, {}) == set()                                  # nothing set: no mask
+
+
+def test_the_repos_own_url_comes_from_the_scanned_clones_origin(tmp_path):
+    repo = tmp_path / "clone"
+    repo.mkdir()
+    assert _git(repo, "init", "-q").returncode == 0
+    assert dehardcode.own_repo_slugs(repo, {}) == set()                                  # no origin: no mask
+    assert _git(repo, "remote", "add", "origin", f"https://github.com/{WORD}/hermes-finance.git").returncode == 0
+    assert dehardcode.own_repo_slugs(repo, {}) == {f"github.com/{WORD}/hermes-finance"}
+
+
+def test_the_repos_own_url_is_masked_and_the_login_alone_still_hits():
+    """Release Please writes compare/commit links to the repo's own URL into CHANGELOG.md; that exact string is masked,
+    the owner's login anywhere else (and another repo of the same owner) is still a private word."""
+    own = {f"github.com/{WORD}/hermes-finance"}
+    link = J(["* fix ([df2aafb](https://github.com/", WORD, "/hermes-finance/commit/", "d" * 40, "))"])
+    assert rules(link, {WORD}) == ["private-word"]                                       # unmasked: a hit
+    assert [r for _, r, _ in dehardcode.release_hits_in_text(link, {WORD}, own)] == []   # the own URL: masked
+    assert [r for _, r, _ in dehardcode.release_hits_in_text(J(["by ", WORD]), {WORD}, own)] == ["private-word"]
+    other = J(["https://github.com/", WORD, "/other-repo"])
+    assert [r for _, r, _ in dehardcode.release_hits_in_text(other, {WORD}, own)] == ["private-word"]
+
+
 def test_allowed_public_is_empty_and_masks_exactly_what_it_lists(monkeypatch):
     assert dehardcode.ALLOWED_PUBLIC == {}                     # no shipped file names the repo's URL
     slug = f"{WORD}/hermes-finance"
