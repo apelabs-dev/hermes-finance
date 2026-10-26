@@ -487,8 +487,9 @@ def test_a_card_and_an_answer_in_time_are_published(app, provider, monkeypatch):
 def test_a_card_then_an_answer_trickling_in_ends_at_the_deadline_and_withdraws_the_card(app, provider, monkeypatch):
     """The turn form of the reproduction: the first answer records a card, the second trickles in past the deadline. The
     turn answers 504 at its deadline, the card is withdrawn (never listed, never decidable), and the request that timed
-    out is charged its worst case."""
-    monkeypatch.setattr(chat, "TIMEOUT", 2.0)
+    out is charged its worst case. (5 s, not 2: a slow CI runner hadn't recorded the card by 2 s, so there was none to
+    withdraw. The trickled answer alone takes 157 bytes x DRIP = 6.3 s at least, so the deadline still always hits.)"""
+    monkeypatch.setattr(chat, "TIMEOUT", 5.0)
     base_url(f"{provider}/tooldrip-a")
     start = time.monotonic()
     s, r = ask(app, "Raise Shopping?")
