@@ -960,31 +960,100 @@ def extend_history(conn: sqlite3.Connection, today: date) -> int:
     return n
 
 
-def apply_assets(conn: sqlite3.Connection, rename: RenameMap, today: date) -> int:
+PHOTOS_SRC = ROOT / "demo" / "photos"
+ESTIMATE_DRIFT = {"vehicle": 0.009, "property": -0.0035}   # a month back: a car was worth ~0.9% more, a building ~0.35% less
+ESTIMATE_WOBBLE = (0.0, 0.0, -0.003, 0.002, -0.004, 0.003, 0.0, -0.002, 0.004, -0.001, 0.002, -0.003)
+
+
+def estimate_history(kind: str, value: float, today: date) -> list[tuple[date, float]]:
+    """The demo's monthly Carfax / Redfin checks, oldest first, ending today on the frozen value: a car loses a little
+    every month and a building gains a little (ESTIMATE_DRIFT), with a small fixed wobble so the line isn't straight (none a month back:
+    the page's change since the last check is the drift alone, never $0). Same input, same points (a build is reproducible)."""
+    step = 25 if kind == "vehicle" else 1000
+    out = []
+    for k in range(HISTORY_DAYS // 30, -1, -1):
+        day = today - timedelta(days=30 * k)
+        x = value if k == 0 else value * (1 + ESTIMATE_DRIFT[kind] * k + ESTIMATE_WOBBLE[k % len(ESTIMATE_WOBBLE)])
+        out.append((max(day, history_start(today)), float(round(x / step) * step) if k else float(value)))
+    return out
+
+
+def apply_assets(conn: sqlite3.Connection, rename: RenameMap, today: date, db_path: Path) -> int:
     """The demo's cars and properties: real cars without a VIN and Los Angeles landmarks (demo_assets.json), each worth
-    the one real valuation frozen there. The generator's own estimates for them (its Carfax / Redfin rows, its VIN
-    decodes, its provider notes) described other things, so they go; the frozen value is the account's value ("Your
-    value", value_source 'user': the app shows no provider for it). Returns how many accounts got a frozen value."""
+    the one real valuation frozen there. The generator's own estimates, VIN decodes, provider notes and pictures for
+    them described other things, so they go. In their place, so the car / property pages show what the app does:
+    - the estimate: a car's Carfax check (trade-in = the frozen value; private sale / dealer retail above it; its
+      odometer and the model's specs from demo_assets.json), a landmark's Redfin Estimate (= the frozen value), checked
+      monthly over the history (estimate_history) and followed (value_source 'estimate'), so the value, net worth and
+      the value chart all end on the frozen value;
+    - the picture: the real Wikimedia Commons photo demo_photos_pull.py froze (a cut-out car, a landmark photo), with
+      its credit, licence and source page.
+    Returns how many accounts got a frozen value."""
+    from hermes_finance import photos
+    folder = photos.images_dir(db_path)
+    factory, conn.row_factory = conn.row_factory, sqlite3.Row   # manual / photos / valuation read rows by name
+    try:
+        return _apply_assets(conn, rename, today, folder)
+    finally:
+        conn.row_factory = factory
+
+
+def _apply_assets(conn: sqlite3.Connection, rename: RenameMap, today: date, folder: Path) -> int:
+    from hermes_finance import manual, photos, valuation
     n = 0
     with conn:
         for acc, a in rename.assets.items():
+            old = photos.key_for(manual.get(conn, acc, include_archived=True))
+            if old:
+                conn.execute("DELETE FROM asset_images WHERE key = ?", (old,))
             conn.execute("DELETE FROM asset_valuations WHERE account_id = ?", (acc,))
             conn.execute("DELETE FROM api_calls WHERE account_id = ?", (acc,))
-            if "make" in a:
+            car = "make" in a
+            if car:
                 conn.execute("UPDATE manual_accounts SET name = ?, vehicle_year = ?, vehicle_make = ?, vehicle_model = ?, "
-                             "vehicle_trim = ?, vin = NULL, vin_decoded = NULL WHERE id = ?",
-                             (f"{a['year']} {a['make']} {a['model']}", a["year"], a["make"], a["model"], a["trim"], acc))
+                             "vehicle_trim = ?, vin = NULL, vin_decoded = NULL, mileage = ?, mileage_as_of = ?, "
+                             "zip_code = ?, vehicle_condition = 'good' WHERE id = ?",
+                             (f"{a['year']} {a['make']} {a['model']}", a["year"], a["make"], a["model"], a["trim"],
+                              a.get("mileage"), (today - timedelta(days=21)).isoformat() if a.get("mileage") else None,
+                              a.get("zip"), acc))
             else:
                 conn.execute("UPDATE manual_accounts SET name = ?, address = ? WHERE id = ?", (a["name"], a["address"], acc))
+            row = manual.get(conn, acc, include_archived=True)
             v = a.get("valuation")
             if v:
-                conn.execute("UPDATE manual_accounts SET balance = ?, balance_as_of = ?, value_source = 'user' WHERE id = ?",
-                             (v["value"], today.isoformat(), acc))
+                kind = row["kind"]
+                points = estimate_history(kind, v["value"], today)
+                conn.execute("UPDATE manual_accounts SET balance = ?, balance_as_of = ?, value_source = 'estimate' "
+                             "WHERE id = ?", (v["value"], today.isoformat(), acc))
                 conn.execute("DELETE FROM manual_balance_history WHERE manual_account_id = ?", (acc,))
-                for d in (history_start(today), today):   # the one frozen value, held flat over the history
-                    conn.execute("INSERT INTO manual_balance_history (manual_account_id, date, balance) VALUES (?, ?, ?)",
-                                 (acc, d.isoformat(), v["value"]))
+                for i, (d, x) in enumerate(points):
+                    miles = round(a["mileage"] - 950 * (len(points) - 1 - i)) if car and a.get("mileage") else None
+                    if car:
+                        details = {"trade_in": x, "private_sale": float(round(x * 1.09 / 25) * 25),
+                                   "dealer_retail": float(round(x * 1.19 / 25) * 25), "records": 9 + i // 3,
+                                   "carfax_odometer": miles, "trim": a["trim"], "condition": "good", "zip": a.get("zip"),
+                                   "display_status": "Displayable", "specs": a.get("specs") or {}}
+                    else:
+                        details = {"name": a["address"].split(",")[0], "via": "https", "photo_url": None}
+                    at = f"{d.isoformat()}T19:00:00Z"   # noon on the US west coast: the same local day
+                    conn.execute("INSERT INTO asset_valuations (account_id, value, source, miles, subject, fetched_at, "
+                                 "raw_json, details_json) VALUES (?, ?, ?, ?, ?, ?, '{}', ?)",
+                                 (acc, x, "carfax" if car else "redfin", miles, valuation.subject(row), at,
+                                  json.dumps(details)))
+                    conn.execute("INSERT INTO api_calls (provider, account_id, trigger, at, day, status, outcome) "
+                                 "VALUES (?, ?, 'daily', ?, ?, 200, 'ok')", ("carfax" if car else "redfin", acc, at,
+                                                                             d.isoformat()))
+                    conn.execute("INSERT OR REPLACE INTO manual_balance_history (manual_account_id, date, balance) "
+                                 "VALUES (?, ?, ?)", (acc, d.isoformat(), x))
                 n += 1
+            p = a.get("photo")
+            key = photos.key_for(row)
+            if p and key:
+                name = photos.file_name(key, Path(p["file"]).suffix.lstrip("."))
+                photos._write(folder, name, (PHOTOS_SRC / p["file"]).read_bytes())
+                photos._save(conn, key, row["kind"], "ready", source="commons", file=name, cutout=p["cutout"],
+                             width=p["width"], height=p["height"], credit=p["credit"], credit_url=p["credit_url"],
+                             artist=p["artist"], license=p["license"], note=p["title"])
         conn.execute("DELETE FROM vin_decodes")
     return n
 
@@ -1118,7 +1187,7 @@ def build(out: Path, today: date, keep: Path | None = None, seed: int = 0, salt:
         rename = RenameMap(conn, tmp_paths)   # read from the generated DB, before anything else is changed
         scaled = sanitize_db(conn, today, now, tmp_paths)
         bank_logos = apply_bank_logos(conn, rename)
-        valued = apply_assets(conn, rename, today)
+        valued = apply_assets(conn, rename, today, db_path)
         goal_looks = apply_goal_looks(conn)
         conn.close()
         log = {"generated_s": round(time.monotonic() - t0, 2), "scaled_rows": scaled, "renamed": rename.summary(),

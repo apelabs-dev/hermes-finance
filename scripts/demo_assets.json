@@ -1,5 +1,5 @@
 {
-  "about": "Demo v2 (t_d31fda2a): the demo's cars and properties. Real, popular cars (no VIN) and famous public / commercial Los Angeles landmarks (never a home). Each valuation was pulled ONCE by scripts/demo_valuations_pull.py and is frozen here; build_demo.py only reads this file and never calls an API.",
+  "about": "Demo v2 (t_d31fda2a): the demo's cars and properties. Real, popular cars (no VIN) and famous public / commercial Los Angeles landmarks (never a home). Each valuation was pulled ONCE by scripts/demo_valuations_pull.py and is frozen here; build_demo.py only reads this file and never calls an API. Each car / landmark also has a real Wikimedia Commons photo (scripts/demo_photos_pull.py, demo/photos/), and for the cars an odometer and the published specs of that model; the Carfax / Redfin rows and the value history the demo shows are built around the frozen value (build_demo.apply_assets) and say so in the demo's banner (synthetic data).",
   "vehicles": [
     {
       "year": 2020,
@@ -15,6 +15,25 @@
         "zip": "90027",
         "mean": 17593,
         "date": "2026-10-25"
+      },
+      "photo": {
+        "file": "2020-subaru-outback.png",
+        "cutout": true,
+        "width": 1000,
+        "height": 534,
+        "title": "File:2020 Subaru Outback AWD, front.jpg",
+        "artist": "Kevauto",
+        "license": "CC BY-SA 4.0",
+        "credit_url": "https://commons.wikimedia.org/wiki/File:2020_Subaru_Outback_AWD,_front.jpg",
+        "credit": "Photo: Kevauto, CC BY-SA 4.0 · Wikimedia Commons"
+      },
+      "mileage": 61240,
+      "specs": {
+        "engineName": "2.5L H4 182hp",
+        "driveType": "AWD",
+        "fuelType": "GASOLINE",
+        "bodyType": "4 DOOR WAGON",
+        "segmentationDesc": "MIDSIZE SUV"
       }
     },
     {
@@ -31,6 +50,25 @@
         "zip": "90028",
         "mean": 24989,
         "date": "2026-10-25"
+      },
+      "photo": {
+        "file": "2020-ford-mustang.png",
+        "cutout": true,
+        "width": 1000,
+        "height": 659,
+        "title": "File:2020 Ford Mustang 5.0 GT V8 in Shadow Black, front right, 06-23-2024.jpg",
+        "artist": "Ethan Llamas",
+        "license": "CC BY-SA 4.0",
+        "credit_url": "https://commons.wikimedia.org/wiki/File:2020_Ford_Mustang_5.0_GT_V8_in_Shadow_Black,_front_right,_06-23-2024.jpg",
+        "credit": "Photo: Ethan Llamas, CC BY-SA 4.0 · Wikimedia Commons"
+      },
+      "mileage": 32870,
+      "specs": {
+        "engineName": "5.0L V8 460hp",
+        "driveType": "RWD",
+        "fuelType": "GASOLINE",
+        "bodyType": "2 DOOR COUPE",
+        "segmentationDesc": "SPORTS CAR"
       }
     }
   ],
@@ -53,6 +91,17 @@
         "low": 2998000,
         "high": 5520000,
         "date": "2026-10-25"
+      },
+      "photo": {
+        "file": "griffith-observatory.jpg",
+        "cutout": false,
+        "width": 1400,
+        "height": 933,
+        "title": "File:Griffith Observatory 2012 01.jpg",
+        "artist": "Mike Peel",
+        "license": "CC BY-SA 4.0",
+        "credit_url": "https://commons.wikimedia.org/wiki/File:Griffith_Observatory_2012_01.jpg",
+        "credit": "Photo: Mike Peel, CC BY-SA 4.0 · Wikimedia Commons"
       }
     },
     {
@@ -64,6 +113,17 @@
         "low": 444000,
         "high": 699000,
         "date": "2026-10-25"
+      },
+      "photo": {
+        "file": "the-broad.jpg",
+        "cutout": false,
+        "width": 1400,
+        "height": 794,
+        "title": "File:The Broad Museum Preview (21658765245) (cropped).jpg",
+        "artist": "Eric Garcetti",
+        "license": "CC BY 2.0",
+        "credit_url": "https://commons.wikimedia.org/wiki/File:The_Broad_Museum_Preview_(21658765245)_(cropped).jpg",
+        "credit": "Photo: Eric Garcetti, CC BY 2.0 · Wikimedia Commons"
       }
     },
     {
@@ -75,6 +135,17 @@
         "low": 589000,
         "high": 1019000,
         "date": "2026-10-25"
+      },
+      "photo": {
+        "file": "capitol-records-building.jpg",
+        "cutout": false,
+        "width": 1400,
+        "height": 1050,
+        "title": "File:Capitol Records Building LA - panoramio.jpg",
+        "artist": "Gfox228",
+        "license": "CC BY 3.0",
+        "credit_url": "https://commons.wikimedia.org/wiki/File:Capitol_Records_Building_LA_-_panoramio.jpg",
+        "credit": "Photo: Gfox228, CC BY 3.0 · Wikimedia Commons"
       }
     }
   ],

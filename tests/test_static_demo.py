@@ -214,6 +214,36 @@ def test_cars_and_landmarks_show_their_frozen_real_valuations(built):
             assert m['address'] == want[name]['address']
 
 
+def test_car_and_landmark_pages_show_a_photo_and_their_estimates(built):
+    """The demo's car / landmark pages showed "Finding a photo…" forever and "not checked yet" in every estimate row: the
+    build dropped the generator's pictures and estimates and put nothing in their place. Each page now has the real
+    Commons photo demo_photos_pull.py froze (its file in the build, its credit and source page) and a year of monthly
+    Carfax / Redfin checks ending on the frozen value, which the account follows."""
+    import build_demo
+    _, dist = built
+    core = json.loads((dist / 'demo/data/core.json').read_text())['core']
+    manual = core['/api/manual']
+    manual = manual['accounts'] if isinstance(manual, dict) else manual
+    frozen = {f"{a['year']} {a['make']} {a['model']}": a for a in build_demo.VEHICLES}
+    frozen.update({a['name']: a for a in build_demo.PROPERTIES})
+    pages = [core[f"/api/manual/{m['id']}/detail"] for m in manual if m['kind'] in ('vehicle', 'property')]
+    assert len(pages) == len(frozen)
+    for d in pages:
+        a = frozen[d['name']]
+        photo = d['photo']
+        assert photo['status'] == 'ready' and photo['kind'] == ('cutout' if d['kind'] == 'vehicle' else 'photo'), d['name']
+        assert (dist / photo['url'].lstrip('/').split('?')[0]).is_file(), d['name']
+        assert photo['credit'] == a['photo']['credit'] and photo['credit'].endswith('Wikimedia Commons'), d['name']
+        assert photo['credit_url'].startswith('https://commons.wikimedia.org/wiki/File:'), d['name']
+        assert d['value']['following'] and d['value']['amount'] == a['valuation']['value'], d['name']
+        assert d['value']['change'] and d['value']['change']['amount'] != 0, d['name']
+        assert all(r['value'] for r in d['table']) and not any(r.get('empty') for r in d['table']), d['name']
+        assert len(d['history']) >= 12 and d['history'][-1]['value'] == a['valuation']['value'], d['name']
+        if d['kind'] == 'vehicle':
+            assert [r[0] for r in d['specs']][:2] == ['Engine', 'Drive'], d['name']
+            assert d['details']['mileage'] == a['mileage'], d['name']
+
+
 def test_no_bill_is_late_on_the_build_day_and_history_covers_a_year(built):
     """t_d31fda2a: the generator's last cycle left some monthly bills unpaid, so the demo opened on 'late' bills. The build
     now records their payment on the due day (pay_late_bills) and backfills a year of weekly balances (extend_history),
