@@ -18,7 +18,8 @@ No owner value is written in this file. They come from outside the repo (A), fro
     .private-words, both untracked), read at run time. Case-insensitive, every file.
  C. this machine: the login, the home directory, the full name from pwd, the host name. Every file.
  D. shapes, in every text file: e-mail addresses (example.com / .org / .net allowed), VINs, US street addresses (an
-    Example / Sample / Demo street allowed), a ZIP after a state code (00000 allowed), tailnet host names (*.ts.net; the
+    Example / Sample / Demo street or a landmark of scripts/demo_assets.json allowed), a ZIP after a state code (00000
+    or a listed landmark's allowed), tailnet host names (*.ts.net; the
     placeholder tailnet label "tailnet" allowed), Tailscale 100.64/10 addresses, finance.db paths and SQLite files, Plaid
     access / public tokens, unmasked MCP tokens, API keys, 17-20 digit (Discord-sized) ids, /Users/ and /home/ paths.
     PNGs: no text chunk at all (metadata).
@@ -59,6 +60,11 @@ TEXT_EXT = {".html", ".js", ".css", ".json", ".txt", ".md", ".csv", ".svg", ".we
 GENERIC = {"Mobile Deposit", "ONLINE PAYMENT, THANK YOU"}
 KEEP = {"Alpaca"}   # the app's own Alpaca integration (alpaca.py), not a person's bank
 ALLOWED_EMAIL = re.compile(r"@example\.(com|org|net)$", re.I)
+# the demo's properties are famous public / commercial Los Angeles landmarks (never a home), listed in
+# scripts/demo_assets.json: their published street addresses and ZIPs are allowed, exactly as listed, nothing else
+LANDMARKS = [p["address"] for p in json.loads((ROOT / "scripts" / "demo_assets.json").read_text())["properties"]]
+LANDMARK_STREETS = {a.split(",")[0] for a in LANDMARKS}
+LANDMARK_ZIPS = {m.group(0) for a in LANDMARKS for m in re.finditer(r"\b[A-Z]{2}\s+\d{5}\b", a)}
 SHAPES = [   # (rule, regex, allowed(match) -> bool)
     ("e-mail address", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"),
      lambda m: bool(ALLOWED_EMAIL.search(m.group(0)))),
@@ -67,8 +73,10 @@ SHAPES = [   # (rule, regex, allowed(match) -> bool)
     ("street address", re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][a-z]+\s+){1,3}(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|"
                                   r"Blvd|Boulevard|Ln|Lane|Way|Ct|Court|Pl|Place|Pkwy|Parkway|Hwy|Highway|Ter|Terrace|Cir|Circle|"
                                   r"Trl|Trail)\b\.?"),
-     lambda m: bool(re.search(r"\b(Example|Sample|Demo)\b", m.group(0)))),
-    ("ZIP after a state", re.compile(r"\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b"), lambda m: m.group(0).endswith("00000")),
+     lambda m: bool(re.search(r"\b(Example|Sample|Demo)\b", m.group(0)))
+     or m.group(0).rstrip(".") in LANDMARK_STREETS),
+    ("ZIP after a state", re.compile(r"\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b"),
+     lambda m: m.group(0).endswith("00000") or m.group(0) in LANDMARK_ZIPS),
     ("tailnet host name", re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b", re.I),
      lambda m: m.group(0).lower().split(".")[-3] == "tailnet"),
     ("Tailscale address", re.compile(r"(?<![\d.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(?![\d.])"), lambda m: False),
@@ -290,6 +298,21 @@ def amount_res(cents: int) -> list[re.Pattern]:
     return [re.compile(rf"(?<![\d.,]){wc}(?:\.0+)?(?![.\d])")] if len(w) >= 4 else []
 
 
+def fixed_amounts_shown(dist: Path, today: date) -> list[tuple[str, int]]:
+    """Rule F's generator half alone: (file, cents) for each distinctive generator fixed amount a generated file shows.
+    A sum of scaled amounts can land on one by chance; build_demo.py checks with this and builds the variant again with
+    another salt rather than publish it (the full canary still runs F, unchanged)."""
+    _, fixed_cents = generator_values(today)
+    compiled = [(c_, r) for c_ in sorted(fixed_cents) for r in amount_res(c_)]
+    shown = []
+    for p in sorted(dist.rglob("*")):
+        rel = p.relative_to(dist).as_posix()
+        if p.is_file() and not rel.startswith("static/") and p.suffix in (".json", ".csv", ".html", ".js", ".css"):
+            text = p.read_text(errors="replace")
+            shown += [(rel, c_) for c_, r in compiled if r.search(text)]
+    return shown
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dist", type=Path)
@@ -298,21 +321,30 @@ def main(argv=None) -> int:
     ap.add_argument("--no-private", action="store_true", help="run without a private token list (still exits 3)")
     ap.add_argument("--today", type=date.fromisoformat, default=None, help="the build's day (default: read from the demo)")
     ap.add_argument('--synthetic-only', action='store_true', help='public synthetic checks only; NOT publication approval')
+    ap.add_argument('--fixed-amounts', action='store_true',
+                    help="only rule F's generator fixed amounts, counted, not shown (build_demo.py's salt check)")
     args = ap.parse_args(argv)
+    if args.fixed_amounts:
+        meta = json.loads((args.dist / "demo/data/core.json").read_text())["meta"]
+        shown = fixed_amounts_shown(args.dist.resolve(), args.today or date.fromisoformat(meta["today"]))
+        print(f"demo_canary: {len(shown)} generator fixed amount(s) shown in {len({f for f, _ in shown})} file(s)")
+        return 1 if shown else 0
     if args.synthetic_only:
         if args.private or args.private_amounts or args.no_private:
             ap.error('--synthetic-only cannot be combined with private scan options')
         os.environ['HERMES_FINANCE_PRIVATE_FILE'] = '/nonexistent'
         os.environ.pop('HERMES_FINANCE_TEST_PRIVATE', None)
     dist = args.dist.resolve()
-    if not (dist / "index.html").is_file() or not (dist / "demo" / "data" / "core.json").is_file():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from demo_combine import data_dir                                     # noqa: PLC0415  (a combined weekly dist too)
+    if not (dist / "index.html").is_file() or not (data_dir(dist) / "core.json").is_file():
         print(f"demo_canary: {args.dist} is not a built demo (no index.html / demo/data/core.json)")
         return 2
     for p in args.private + ([args.private_amounts] if args.private_amounts else []):
         if not p.is_file():
             print(f"demo_canary: {p} not found")
             return 2
-    meta = json.loads((dist / "demo" / "data" / "core.json").read_text())["meta"]
+    meta = json.loads((data_dir(dist) / "core.json").read_text())["meta"]
     today = args.today or date.fromisoformat(meta["today"])
     private = load_private(args.private)
     if not private and not args.no_private and not args.synthetic_only:

@@ -1,5 +1,7 @@
 """Read-only demo contracts, using the real synthetic builder and JavaScript router."""
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,12 +13,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import demo_parity
 
+# The weekly pipeline (scripts/demo_weekly.sh) runs these on each variant: its seed and its day.
+SEED, TODAY = os.environ.get('HF_DEMO_SEED', '0'), os.environ.get('HF_DEMO_TODAY', '2026-10-24')
+MONTH = TODAY[:7]
+
 
 @pytest.fixture(scope='module')
 def built(tmp_path_factory):
     tmp = tmp_path_factory.mktemp('static-demo')
     dist = tmp / 'dist'
-    subprocess.run([sys.executable, str(ROOT / 'scripts/build_demo.py'), '--today', '2026-10-24',
+    subprocess.run([sys.executable, str(ROOT / 'scripts/build_demo.py'), '--today', TODAY, '--seed', SEED,
                     '--out', str(dist), '--no-canary'], check=True, capture_output=True)
     return tmp, dist
 
@@ -31,7 +37,7 @@ def route(built, posts=(), gets=()):
 
 
 def test_money_writes_are_refused_and_gets_unchanged(built):
-    gets = ['/api/budgets?month=2026-10', '/api/overview?month=2026-10', '/api/categories']
+    gets = [f'/api/budgets?month={MONTH}', f'/api/overview?month={MONTH}', '/api/categories']
     before = route(built, gets=gets)['gets']
     posts = [('/api/budgets/cap', {'category': 'Groceries', 'monthly_cap': 1}),
              ('/api/budgets/rollover', {'category': 'Groceries', 'enabled': True}),
@@ -44,8 +50,8 @@ def test_money_writes_are_refused_and_gets_unchanged(built):
 
 def test_frozen_group_budgets_not_client_recomputation(built):
     _, dist = built
-    month = json.loads((dist / 'demo/data/m/2026-10.json').read_text())
-    answer = route(built, gets=['/api/budgets?month=2026-10'])['gets']['/api/budgets?month=2026-10']
+    month = json.loads((dist / f'demo/data/m/{MONTH}.json').read_text())
+    answer = route(built, gets=[f'/api/budgets?month={MONTH}'])['gets'][f'/api/budgets?month={MONTH}']
     assert answer == [200, month['budgets']]
     assert any(g['budget'] is not None for g in month['budgets']['groups'])
 
@@ -67,20 +73,28 @@ def test_assets_are_byte_identical_and_no_database(built):
     assert "connect-src 'self'" in html
 
 
-def test_exactly_four_frozen_tool_answers(built):
+def test_frozen_ask_presets_answer_their_questions(built):
+    """t_d31fda2a (Ask v2, was test_exactly_four_frozen_tool_answers): ask.json holds 12 core presets built from the real
+    tools at build time, each with its traces; the shim answers each preset's question with that preset's reply, and
+    anything it can't match with a friendly reply naming 3 suggested questions (no longer the 'AI chat is off' line)."""
+    import demo_ask
     _, dist = built
-    answers = json.loads((dist / 'demo/data/ask.json').read_text())
-    assert list(answers) == ['How much did I spend on dining last month?',
-                             'Am I on track with my budgets this month?',
-                             'What bills are due in the next 7 days?',
-                             'How has my net worth changed this year?']
-    for q, answer in answers.items():
-        assert answer['traces'] and 'Canned demo answer' in answer['reply']
-        assert all(t['tool'].startswith('finance_') and t['result'] for t in answer['traces'])
-        got = route(built, [('/api/chat', {'messages': [{'role': 'user', 'content': q}]})])['posts'][0]
-        assert got == [200, answer]
-    got = route(built, [('/api/chat', {'messages': [{'role': 'user', 'content': 'something else'}]})])['posts'][0]
-    assert got[1]['reply'] == 'AI chat is off in the demo — install it to use your own model.'
+    ask = json.loads((dist / 'demo/data/ask.json').read_text())
+    assert ask['version'] == 2 and len(ask['core']) == 12 and set(ask['core']) <= set(ask['presets'])
+    for k, p in ask['presets'].items():
+        assert p['traces'] and all(t['tool'].startswith('finance_') for t in p['traces']), k
+        assert p['reply'] and p['blocks'], k
+    posts = [('/api/chat', {'messages': [{'role': 'user', 'content': ask['presets'][k]['question']}]}) for k in ask['core']]
+    got = route(built, posts + [('/api/chat', {'messages': [{'role': 'user', 'content': 'something else'}]})])['posts']
+    for k, (status, body) in zip(ask['core'], got):
+        p = ask['presets'][k]
+        assert status == 200 and body['reply'] == demo_ask.render(p['reply']), k
+        assert body['sources'] == [demo_ask.render(x) for x in p['sources']] and body['stats'] == p['stats'], k
+        assert 'Canned demo answer' not in body['reply'] and '{{' not in body['reply'], k
+    status, body = got[-1]
+    assert status == 200 and body['reply'] == ask['unmatched']['reply']
+    assert len(ask['unmatched']['suggestions']) == 3 and set(ask['unmatched']['suggestions']) <= set(ask['presets'])
+    assert 'AI chat is off' not in body['reply']
 
 
 def test_public_scan_cannot_read_ambient_owner_file(built, tmp_path):
@@ -117,3 +131,98 @@ def test_builder_scrubs_alpaca_provider_credentials(monkeypatch, tmp_path):
     assert 'APCA_API_SECRET_KEY' not in isolated
     assert 'OTHER_ACCESS_TOKEN' not in isolated
     assert not Path(isolated['FINANCE_SECRETS_FILE']).exists()
+
+
+def test_goal_icons_survive_the_name_scrub(built):
+    """A real merchant named like an icon key (Target -> 'target') must not rename the goal icon set."""
+    from hermes_finance import goals
+    _, dist = built
+    core = json.loads((dist / 'demo/data/core.json').read_text())
+    pages = core.get('core', core)
+    seen = 0
+    for key, body in pages.items():
+        if key.startswith('/api/goals') and isinstance(body, dict) and 'appearance' in body:
+            assert body['appearance']['icons'] == list(goals.ICONS), key
+            seen += 1
+            for g in (body.get('goals') or []) + (body.get('archived') or []):
+                # t_d31fda2a: a picker icon, so the edit sheet shows it selected (the legacy defaults are not offered)
+                assert g.get('icon') in goals.ICONS, (key, g.get('icon'))
+                assert g.get('colour') in goals.COLOURS, (key, g.get('colour'))
+    assert seen
+
+
+def test_no_placeholder_names_remain(built):
+    """t_d31fda2a: the Contoso / Northwind family and the plain "Example ..." stand-ins are gone from everything the
+    build generates (the frozen answers, the page, the CSV, the demo's own scripts and every file name)."""
+    import build_demo
+    _, dist = built
+    hits = []
+    for p in sorted(dist.rglob('*')):
+        rel = p.relative_to(dist).as_posix()
+        if build_demo.RETIRED_NAMES.search(rel):
+            hits.append((rel, 'file name'))
+        if not p.is_file() or rel.startswith('static/') or p.suffix not in ('.json', '.html', '.csv', '.js', '.css'):
+            continue
+        for m in build_demo.RETIRED_NAMES.finditer(p.read_text(errors='replace')):
+            hits.append((rel, m.group(0)))
+    assert not hits, hits[:20]
+    names = json.loads((dist / 'demo/data/core.json').read_text())['core']['/api/accounts']
+    assert {i['name'] for i in names['institutions']} - {'Alpaca'} <= set(sum(build_demo.INSTITUTIONS.values(), []))
+
+
+def test_every_merchant_and_institution_shown_has_a_logo(built):
+    """t_d31fda2a: every connected institution carries a logo and every transaction with a merchant points at that
+    merchant's same-origin logo, which the dist serves. (A manual account's provider that isn't a connected bank shows
+    its kind's badge, as in the app.)"""
+    import build_demo
+    _, dist = built
+    core = json.loads((dist / 'demo/data/core.json').read_text())['core']
+    insts = core['/api/accounts']['institutions']
+    assert insts and all(i['logo'] for i in insts), [i['name'] for i in insts if not i['logo']]
+    for i in insts:
+        assert (dist / f"api/institutions/{i['institution_id']}/logo").is_file(), i['name']
+    rows = json.loads((dist / 'demo/data/transactions.json').read_text())['rows']
+    named = [r for r in rows if r.get('merchant_name')]
+    assert len(named) > 500
+    missing = sorted({r['merchant_name'] for r in named if not r['logo_url']})
+    assert not missing, missing
+    for url in {r['logo_url'] for r in named}:
+        assert url.startswith(build_demo.MERCHANT_LOGOS), url
+        assert (dist / url.lstrip('/')).is_file(), url
+
+
+def test_cars_and_landmarks_show_their_frozen_real_valuations(built):
+    """t_d31fda2a: the demo's cars are real cars without a VIN and its properties are Los Angeles landmarks, each worth
+    the one valuation scripts/demo_valuations_pull.py froze (with its source and date) in demo_assets.json."""
+    import build_demo
+    _, dist = built
+    for a in build_demo.VEHICLES + build_demo.PROPERTIES:
+        v = a['valuation']
+        assert v and v['value'] > 0 and v['source'].startswith(('MarketCheck', 'RentCast')), a
+        assert re.fullmatch(r'\d{4}-\d{2}-\d{2}', v['date']), a
+    core = json.loads((dist / 'demo/data/core.json').read_text())['core']
+    manual = core['/api/manual']
+    manual = manual['accounts'] if isinstance(manual, dict) else manual
+    shown = {m['name']: m for m in manual if m['kind'] in ('vehicle', 'property')}
+    want = {f"{a['year']} {a['make']} {a['model']}": a for a in build_demo.VEHICLES}
+    want.update({a['name']: a for a in build_demo.PROPERTIES})
+    assert set(shown) == set(want)
+    for name, m in shown.items():
+        assert m['balance'] == want[name]['valuation']['value'], name
+        assert not m.get('vin'), name
+        if m['kind'] == 'property':
+            assert m['address'] == want[name]['address']
+
+
+def test_no_bill_is_late_on_the_build_day_and_history_covers_a_year(built):
+    """t_d31fda2a: the generator's last cycle left some monthly bills unpaid, so the demo opened on 'late' bills. The build
+    now records their payment on the due day (pay_late_bills) and backfills a year of weekly balances (extend_history),
+    so every bill is upcoming from today and the net-worth history has more than a few points."""
+    _, dist = built
+    core = json.loads((dist / 'demo/data/core.json').read_text())
+    today = core['meta']['today']
+    items = core['core']['/api/recurring']['items']
+    assert items and {i['status'] for i in items} <= {'upcoming', 'due_soon'}
+    assert all(i['next_expected'] >= today for i in items)
+    month = json.loads((dist / f'demo/data/m/{today[:7]}.json').read_text())
+    assert all(b['next_expected'] >= today for b in month['overview']['upcoming'])

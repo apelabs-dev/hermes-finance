@@ -35,6 +35,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "src" / "hermes_finance" / "static"
 DEMO_SRC = ROOT / "demo"
+DEMO_FILES = ("shim.js", "demo.css", "loader.js", "ask.js")   # demo-only code; static/ stays byte-identical
+DEMO_LOGOS = DEMO_SRC / "logos"   # invented logos for the fictional banks and merchants, plus Alpaca's own (t_4cb4d435)
+MERCHANT_LOGOS = "/api/merchant-logos/"
 KIND = "features"          # tests/gate_dbs.py: the fullest synthetic DB (every page and feature in use)
 MONEY_SCALE = 1.07         # every money value of the generated DB is multiplied by this (see sanitize_db)
 SHARE_SCALE = 1.03         # a holding's quantity is multiplied by this and its price by MONEY_SCALE / SHARE_SCALE
@@ -221,10 +224,26 @@ def freeze_clock(now: datetime) -> None:
 
 # --- 2. the generator, then the sanitizer ----------------------------------------------------------------------------
 
-def generate(path: Path, today: date) -> None:
+GENERATOR_SEED = 4   # tests/demo_data.py build()'s own default: seed 0 is the generator's usual DB
+SEEDS = range(7)     # the weekly variants (demo_weekly.sh): one per weekday, Monday 0
+SALTS = range(5)     # a variant whose figures show a generator fixed amount (by chance) is built again with the next
+                     # salt (demo_canary.py --fixed-amounts); the same seed and day still build the same bytes
+
+
+def generate(path: Path, today: date, seed: int = 0, salt: int = 0) -> None:
+    """The synthetic DB. `seed` 1-6 re-seeds the generator's discretionary spending (how many payments a merchant gets
+    each month and their amounts), so a variant has the same structure, accounts, bills and names with a different mix
+    of amounts; seed 0 is the usual DB. `salt` re-seeds it again (see SALTS)."""
     sys.path.insert(0, str(ROOT / "tests"))
+    import demo_data
     import gate_dbs
-    gate_dbs.build(KIND, path, today)
+    real = demo_data.build
+    if seed or salt:
+        demo_data.build = lambda conn, today=None, seed_=None: real(conn, today, seed=GENERATOR_SEED + 101 * seed + 1009 * salt)
+    try:
+        gate_dbs.build(KIND, path, today)
+    finally:
+        demo_data.build = real
     from hermes_finance import db
     conn = db.connect(path)
     gate_dbs.add_group_budgets(conn)
@@ -388,45 +407,58 @@ def sanitize_db(conn: sqlite3.Connection, today: date, now: datetime, tmp_paths:
 # --- the rename map ------------------------------------------------------------------------------------------------------
 
 INSTITUTIONS = {   # by what the institution is to the account holder (a connected bank, a manual account's kind)
-    "bank": ["Woodgrove Bank", "Contoso Bank", "Fabrikam Credit Union", "Northwind Savings", "Tailspin Trust", "Relecloud Bank"],
-    "loan": ["Litware Lending", "Lucerne Finance"], "credit_card": ["Adatum Card Services", "Margie's Card Co"],
-    "investment": ["Proseware Investments"]}
-MERCHANTS = {   # by Plaid's detailed category: obviously fictional names (the Contoso / Northwind family and plain Example)
-    "FOOD_AND_DRINK_GROCERIES": ["Acme Grocery", "Northwind Market", "Contoso Fresh"],
-    "FOOD_AND_DRINK_RESTAURANT": ["Fabrikam Burrito", "Tailspin Grill", "Proseware Eats", "Corner Diner", "Wingtip Bistro"],
-    "FOOD_AND_DRINK_COFFEE": ["Fourth Coffee"],
-    "GENERAL_MERCHANDISE_ONLINE_MARKETPLACES": ["Northwind Online"],
-    "GENERAL_MERCHANDISE_SUPERSTORES": ["Globex Superstore"],
-    "TRANSPORTATION_GAS": ["Initech Fuel"],
-    "TRANSPORTATION_TAXIS_AND_RIDE_SHARES": ["Litware Rides"],
-    "TRANSPORTATION_PARKING": ["Example Parking"],
-    "MEDICAL_PHARMACIES_AND_SUPPLEMENTS": ["Lamna Pharmacy"],
-    "MEDICAL_DENTAL_CARE": ["Lamna Dental"],
-    "ENTERTAINMENT_TV_AND_MOVIES": ["Relecloud Cinemas", "Relecloud Streaming"],
-    "ENTERTAINMENT_MUSIC_AND_AUDIO": ["Tunewave Music"],
-    "TRAVEL_FLIGHTS": ["Blue Yonder Airlines"],
-    "RENT_AND_UTILITIES_RENT": ["Example Rentals"],
-    "RENT_AND_UTILITIES_GAS_AND_ELECTRICITY": ["Contoso Gas", "Example Power"],
-    "RENT_AND_UTILITIES_TELEPHONE": ["Example Wireless"],
-    "RENT_AND_UTILITIES_WATER": ["Example City Water & Power"],
-    "RENT_AND_UTILITIES_INTERNET_AND_CABLE": ["Example Internet"],
-    "GENERAL_SERVICES_INSURANCE": ["Woodgrove Insurance"],
-    "GENERAL_SERVICES_OTHER_GENERAL_SERVICES": ["Example AI", "Example Cloud", "Example Domains", "Example Tools",
-                                                "Example Tools Pro"],
+    "bank": ["Otterly Bank", "Harbor & Pine Bank", "Moonbeam Credit Union", "Stackwell Savings", "Copperleaf Trust",
+             "Kitebird Bank"],
+    "loan": ["Lendlark", "Summit & Sail Finance"], "credit_card": ["Orbit Card Co", "Prism Card Services"],
+    "investment": ["Ridgeline Investments"]}
+# when every pool above is used up (an institution then shows its colour and initials: it has no logo)
+INSTITUTION_OVERFLOW = ["Bluebell Bank", "Tidewater Trust", "Lanternfish Savings", "Quarry Hill Credit Union"]
+MERCHANTS = {   # by Plaid's detailed category: invented names, each with its own invented logo in demo/logos (t_d31fda2a)
+    "FOOD_AND_DRINK_GROCERIES": ["Leaf & Ladle Market", "Basket Bros", "Sunny Crate Grocers"],
+    "FOOD_AND_DRINK_RESTAURANT": ["Burrito Galaxy", "Ember & Oak Grill", "Noodle Thunder", "Midnight Diner Co",
+                                  "Wingspan Bistro"],
+    "FOOD_AND_DRINK_COFFEE": ["Bean Voyage"],
+    "GENERAL_MERCHANDISE_ONLINE_MARKETPLACES": ["Parcel Panda"],
+    "GENERAL_MERCHANDISE_SUPERSTORES": ["Hyperbox Superstore"],
+    "TRANSPORTATION_GAS": ["Zapfuel"],
+    "TRANSPORTATION_TAXIS_AND_RIDE_SHARES": ["Zoomly Rides"],
+    "TRANSPORTATION_PARKING": ["Spotfinder Parking"],
+    "MEDICAL_PHARMACIES_AND_SUPPLEMENTS": ["Pillbox & Co"],
+    "MEDICAL_DENTAL_CARE": ["Brightbite Dental"],
+    "MEDICAL_OTHER_MEDICAL": ["Pillbox & Co", "Brightbite Dental"],   # (the generator files its pharmacy and dentist here)
+    "ENTERTAINMENT_TV_AND_MOVIES": ["Popcorn Palace Cinemas", "Glowbox Streaming"],
+    "ENTERTAINMENT_MUSIC_AND_AUDIO": ["Bassline Music"],
+    "TRAVEL_FLIGHTS": ["Skylark Airways"],
+    "RENT_AND_UTILITIES_RENT": ["Nestwell Rentals"],
+    "RENT_AND_UTILITIES_GAS_AND_ELECTRICITY": ["Pilot Light Gas", "Voltage Valley Power"],
+    "RENT_AND_UTILITIES_TELEPHONE": ["Chirp Wireless"],
+    "RENT_AND_UTILITIES_WATER": ["Riverbend Water & Power"],
+    "RENT_AND_UTILITIES_INTERNET_AND_CABLE": ["Fiberfox Internet"],
+    "GENERAL_SERVICES_INSURANCE": ["Shieldwell Insurance"],
+    "GENERAL_SERVICES_OTHER_GENERAL_SERVICES": ["Neuronest AI", "Cumulus Cloud", "Domainly", "Toolsmith", "Toolsmith Pro"],
 }
+# a merchant its category's pool has no name left for (a tracked bill, a second stationer): the next of these, in order
+MERCHANT_OVERFLOW = ["Tagline Thrift", "Threadhaus Boutique", "Corner Pocket Goods", "Lumen Lane Shop",
+                     "Velvet Fox Outfitters", "Pebble & Pine Supply", "Kiwi Kite Co", "Mango Mondays"]
+# placeholder names the demo once used (Microsoft's sample-company family and plain "Example"): none may be shown
+RETIRED_NAMES = re.compile(r"(?<![A-Za-z0-9.@/])(?:example(?![.-](?:com|org|net)\b)|contoso|northwind|fabrikam|woodgrove|"
+                           r"tailspin|relecloud|litware|lucerne|adatum|margie's|proseware|wingtip|lamna|fourth coffee|"
+                           r"blue yonder|tunewave|acme|globex|initech|roadrunner)(?![A-Za-z0-9])", re.I)
 ACCOUNT_NAMES = {   # (type, subtype) of a Plaid account, or a manual account's kind
     ("depository", "checking"): ["Everyday Checking", "Bills Checking"],
     ("depository", "savings"): ["High-Yield Savings", "Emergency Vault"],
     ("investment", "brokerage"): ["Brokerage", "Robo Portfolio"],
     ("credit", "credit card"): ["Cashback Card", "Travel Rewards Card", "Double Rewards Card"],
     "credit_card": ["Premium Card", "Store Card"], "loan": ["Auto Loan", "Personal Loan"],
-    "investment": ["Employer 401(k)"], "property": ["Lakeview Home", "Hillside Retreat", "Downtown Loft"],
+    "investment": ["Employer 401(k)"],
     "bank": ["Cash Account"], "other_asset": ["Collectibles"], "other_liability": ["Family Loan"],
 }
-MAKES, MODELS = ["Acme Motors", "Globex Auto"], ["Roadrunner", "Commuter"]
-ADDRESSES = ["100 Example Way, Springfield, ST 00000", "200 Sample Rd, Lakeview, ST 00000",
-             "300 Example Ave, Rivertown, ST 00000"]
-PERSON, EMPLOYER = "Sam Example", "000000 EXAMPLE CORP"
+# real cars (no VIN) and Los Angeles landmarks (never a home), with their frozen real valuations (t_d31fda2a)
+ASSETS_FILE = ROOT / "scripts" / "demo_assets.json"
+ASSETS = json.loads(ASSETS_FILE.read_text())
+VEHICLES = ASSETS["vehicles"]
+PROPERTIES = ASSETS["properties"]
+PERSON, EMPLOYER = "Robin Fernwood", "000000 PIXELFORGE STUDIOS"
 TICKER, SECURITY = "DEMO", "Demo Growth Fund"
 VIN = "DEMO-VIN-{:04d}"
 KEEP_INSTITUTIONS = {"Alpaca"}   # the app's own Alpaca integration (alpaca.py), not a person's bank
@@ -456,6 +488,9 @@ class RenameMap:
         self.images: dict[str, str] = {}
         self.provenance: dict[str, str] = {}   # stand-in -> what kind of value it replaced (for the report)
         banks = {k: iter(v) for k, v in INSTITUTIONS.items()}
+        overflow_banks = iter(INSTITUTION_OVERFLOW)
+        overflow = iter(MERCHANT_OVERFLOW)
+        taken: set[str] = set()   # a pool name is used once (two categories may share one, e.g. the pharmacy)
 
         def put(orig, new, kind):
             if orig and orig.strip() and orig not in self.names and orig != new:
@@ -470,8 +505,7 @@ class RenameMap:
         for name, kind in insts:
             if name and name not in KEEP_INSTITUTIONS and name not in self.names:
                 pool = banks.get(kind, banks["bank"])
-                put(name, next(pool, None) or next(banks["bank"], None) or f"Example Institution {len(self.names)}",
-                    "institution")
+                put(name, next(pool, None) or next(banks["bank"], None) or next(overflow_banks), "institution")
         # accounts
         pools: dict = {}
         for r in conn.execute("SELECT account_id, name, type, subtype, mask FROM accounts ORDER BY rowid"):
@@ -480,16 +514,16 @@ class RenameMap:
         # merchants: by detailed category, oldest first
         seen = conn.execute("""SELECT merchant_name, pfc_detailed, MIN(date) AS first FROM transactions
                                WHERE merchant_name IS NOT NULL GROUP BY merchant_name ORDER BY pfc_detailed, first, merchant_name""")
-        used: dict[str, int] = {}
         for r in seen:
             if r["merchant_name"] in self.names:   # a lender that is also a merchant: one stand-in
                 continue
-            pool = MERCHANTS.get(r["pfc_detailed"] or "", [])
-            i = used.get(r["pfc_detailed"], 0)
-            used[r["pfc_detailed"]] = i + 1
-            put(r["merchant_name"], pool[i] if i < len(pool) else f"Example Merchant {len(self.names) + 1}", "merchant")
+            pool = [n for n in MERCHANTS.get(r["pfc_detailed"] or "", []) if n not in taken]
+            new = pool[0] if pool else next(overflow)
+            taken.add(new)
+            put(r["merchant_name"], new, "merchant")
         for r in conn.execute("SELECT DISTINCT merchant FROM tracked_bills"):
-            put(r["merchant"], f"Example Merchant {len(self.names) + 1}", "merchant")
+            if r["merchant"] and r["merchant"] not in self.names:
+                put(r["merchant"], next(overflow), "merchant")
         # a statement line that doesn't contain its merchant's name (e.g. an abbreviation): the stand-in, upper case
         for r in conn.execute("SELECT DISTINCT name, merchant_name FROM transactions WHERE merchant_name IS NOT NULL"):
             name, merchant = r["name"], r["merchant_name"]
@@ -503,27 +537,29 @@ class RenameMap:
             m = P2P.match(r["name"] or "")
             if m:
                 put(m["who"], PERSON, "person")
-        # manual accounts: names by kind; vehicles by make / model; addresses; VINs
+        # manual accounts: names by kind; vehicles: a real car each (demo_assets.json); properties: a landmark each
         mpools: dict = {}
-        makes, models, addrs = iter(MAKES), iter(MODELS), iter(ADDRESSES)
+        cars, places = iter(VEHICLES), iter(PROPERTIES)
+        self.assets: dict[int, dict] = {}   # manual account id -> its demo_assets.json entry (apply_assets)
         for r in conn.execute("SELECT * FROM manual_accounts ORDER BY id"):
             if r["kind"] == "vehicle":
-                if r["vehicle_make"] and r["vehicle_make"] not in self.names:
-                    put(r["vehicle_make"], next(makes, "Example Motors"), "vehicle make")
-                if r["vehicle_model"] and r["vehicle_model"] not in self.names:
-                    put(r["vehicle_model"], next(models, "Model X"), "vehicle model")
+                car = next(cars)   # (a third vehicle needs a third car in demo_assets.json: no invented fallback)
+                self.assets[r["id"]] = car
+                put(r["name"], f"{car['year']} {car['make']} {car['model']}", "vehicle")
+                put(r["vehicle_make"], car["make"], "vehicle make")
+                put(r["vehicle_model"], car["model"], "vehicle model")
+            elif r["kind"] == "property":
+                place = next(places)
+                self.assets[r["id"]] = place
+                put(r["name"], place["name"], "manual account name")
             elif r["name"] not in self.names:
                 pool = mpools.setdefault(r["kind"], list(ACCOUNT_NAMES.get(r["kind"], ["Account"])))
                 put(r["name"], pool.pop(0) if pool else f"{r['kind'].title()} {r['id']}", "manual account name")
             if r["address"]:
-                fake = next(addrs, "400 Example Ct, Springfield, ST 00000")
-                unit = re.search(r"#\s*\w+", r["address"])
-                if unit:   # keep the unit (its "no record for unit N" note reads the same)
-                    street, _, rest = fake.partition(",")
-                    fake = f"{street} {unit.group(0)},{rest}"
+                fake = self.assets[r["id"]]["address"] if r["id"] in self.assets else PROPERTIES[0]["address"]
                 put(r["address"], fake, "address")
                 put(r["address"].split(",")[0], fake.split(",")[0], "street")
-                put(r["address"].split(",")[0].split("#")[0].strip(), fake.split(",")[0].split("#")[0].strip(), "street")
+                put(r["address"].split(",")[0].split("#")[0].strip(), fake.split(",")[0], "street")
             pattern = r["match_pattern"]
             if pattern and pattern not in self.names:   # the start of a renamed name (a lender's): that whole stand-in
                 whole = next((o for o in self.names if o.casefold().startswith(pattern.casefold())), None)
@@ -603,13 +639,17 @@ class RenameMap:
             return self.ids[k]
         return k if SCHEMA_KEY.fullmatch(k) else self.text(k)
 
-    def json(self, x):
+    VOCAB_FIELDS = frozenset({"icon", "icons", "colour", "colours"})   # the app's own word lists, never data
+
+    def json(self, x, field: str | None = None):
+        if field in self.VOCAB_FIELDS:   # a goal icon "target" is a glyph name, not the merchant Target
+            return x
         if isinstance(x, str):
             return self.text(x)
         if isinstance(x, list):
             return [self.json(v) for v in x]
         if isinstance(x, dict):
-            return {self.key(k): self.json(v) for k, v in x.items()}
+            return {self.key(k): self.json(v, k) for k, v in x.items()}
         return x
 
     def summary(self) -> dict[str, int]:
@@ -762,42 +802,12 @@ def export_csv(db_path: Path, today: date) -> bytes:
     return body
 
 
-ASK_QUESTIONS = (
-    'How much did I spend on dining last month?',
-    'Am I on track with my budgets this month?',
-    'What bills are due in the next 7 days?',
-    'How has my net worth changed this year?',
-)
-
-
 def canned_answers(db_path: Path, today: date) -> dict:
-    """Templates over real read tools, never a model. Freeze the complete actual traces."""
-    from hermes_finance import tooldefs, reads, insights
-    last = insights.add_months(today.strftime('%Y-%m'), -1)
-    specs = [('finance_spend', {'month': last, 'category': 'Eating Out'}, reads.spend_text),
-             ('finance_budget_status', {'month': today.strftime('%Y-%m')}, reads.budget_status_text),
-             ('finance_bills', {'next': '7d'}, reads.bills_text),
-             ('finance_networth', {'history': True}, None)]
-    out = {}
-    for question, (name, arguments, formatter) in zip(ASK_QUESTIONS, specs):
-        result = tooldefs.run_read(name, arguments, db_path, today)
-        trace = {'tool': name, 'arguments': arguments, 'result': result}
-        if formatter:
-            text = formatter(result)
-        else:
-            points = [p for p in result['history'] if f'{today.year}-01-01' <= p['date'] <= today.isoformat()]
-            if points:
-                first, final = points[0], points[-1]
-                change = round(final['net'] - first['net'], 2)
-                text = (f"Net worth: ${first['net']:,.2f} on {first['date']} to ${final['net']:,.2f} on {final['date']}. "
-                        f"Change: ${change:,.2f}. The comparison uses the first available snapshot this year; "
-                        'it does not assume a January 1 balance.')
-            else:
-                text = 'No net worth snapshots are available this year.'
-        out[question] = {'reply': 'Canned demo answer — synthetic data, no model call.\n\n' + text,
-                         'sources': [f'Canned demo answer · {name} ' + json.dumps(arguments, sort_keys=True)],
-                         'stats': [], 'cards': [], 'traces': [trace]}
-    return out
+    """Ask v2 (t_d31fda2a): preset questions answered by the real read tools at build time, never a model
+    (scripts/demo_ask.py)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import demo_ask
+    return demo_ask.build_answers(db_path, today)
 
 
 # --- 4. dist/ ---------------------------------------------------------------------------------------------------------------
@@ -828,6 +838,9 @@ def page_html(db_path: Path, today: date, build_id: str, now: datetime) -> str:
         raise RuntimeError("index.html: the shim or its stylesheet could not be placed")
     styles = re.findall(r'<link rel="stylesheet" href="([^"]+)">', page)
     scripts = re.findall(r'<script src="([^"]+)" defer></script>', page)
+    if "/static/app.js" not in scripts:
+        raise RuntimeError("index.html: no deferred /static/app.js to load the demo's Ask v2 before")
+    scripts.insert(scripts.index("/static/app.js"), f"/demo/ask.js?v={build_id}")   # an HF_EXT, so before app.js
     page = re.sub(r'<link rel="stylesheet" href="[^"]+">', '', page)
     page = re.sub(r'<script src="[^"]+" defer></script>', '', page)
     loader = ('<script src="/demo/loader.js" defer data-styles="' + html_module.escape(json.dumps(styles), quote=True)
@@ -843,11 +856,186 @@ HEADERS = f"""/*
   X-Robots-Tag: noindex
 /api/institutions/*
   Content-Type: image/png
+/api/merchant-logos/*
+  Content-Type: image/png
 /api/securities/*
   Content-Type: image/png
 /demo/data/*
   Cache-Control: no-cache
 """
+
+
+def logo_slug(name: str) -> str:
+    """'Example City Water & Power' -> 'example-city-water-power': a logo's file name in demo/logos."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower().replace("&", " ")).strip("-")
+
+
+def demo_logo(name) -> bytes | None:
+    if not isinstance(name, str) or not name:
+        return None
+    p = DEMO_LOGOS / f"{logo_slug(name)}.png"
+    return p.read_bytes() if p.is_file() else None
+
+
+# A year of history before the generator's own two weeks of balances (t_d31fda2a): without it the net worth line starts
+# 13 days ago at the cash alone and jumps by every car and property on the day their value was set.
+HISTORY_DAYS = 364
+
+
+def history_start(today: date) -> date:
+    return today - timedelta(days=HISTORY_DAYS)
+
+
+def pay_late_bills(conn: sqlite3.Connection, db_path: Path, today: date) -> int:
+    """The fixture leaves some bills weeks late on purpose (a gate state). The demo's household pays its bills: each
+    late one gets its payment on the day it was expected, a copy of its last charge (same account, amount and
+    category), so "bills in the next 7 days" lists what is actually coming. Returns how many payments were added."""
+    from hermes_finance import tooldefs
+    n = 0
+    for _ in range(12):   # a bill more than one cycle late gets one payment per pass
+        conn.commit()
+        late = [b for b in tooldefs.run_read("finance_bills", {"next": "7d"}, db_path, today)["items"]
+                if b["status"] == "late"]
+        if not late:
+            return n
+        with conn:
+            for b in late:
+                # (a bill without a merchant, e.g. a person paid by Zelle, is known by its statement line)
+                row = conn.execute("SELECT * FROM transactions WHERE (merchant_name = ? OR (merchant_name IS NULL AND "
+                                   "lower(name) = lower(?))) AND pending = 0 AND amount > 0 "
+                                   "ORDER BY date DESC, transaction_id DESC LIMIT 1", (b["merchant"], b["merchant"])).fetchone()
+                if row is None or b["next_expected"] > today.isoformat():
+                    raise RuntimeError(f"pay_late_bills: no charge to copy for a late bill ({b['key']})")
+                tid = f"{row['transaction_id']}-paid-{b['next_expected']}"
+                raw = json.loads(row["raw_json"] or "{}")
+                raw.update(transaction_id=tid, date=b["next_expected"], authorized_date=b["next_expected"])
+                cols = list(row.keys())
+                vals = {**dict(zip(cols, row)), "transaction_id": tid, "date": b["next_expected"],
+                        "authorized_date": b["next_expected"], "raw_json": json.dumps(raw), "fitid": None}
+                conn.execute(f"INSERT INTO transactions ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                             [vals[c] for c in cols])
+                n += 1
+    raise RuntimeError("pay_late_bills: bills still late after 12 passes")
+
+
+def extend_history(conn: sqlite3.Connection, today: date) -> int:
+    """Weekly balances back to history_start(): a bank account's balance is walked back through its own transactions
+    (cash: a charge was money out, so the balance before it was higher), never below zero; a card, a loan and an
+    investment account keep their first balance (the fixture's card charges and payments don't net out). A manual
+    account's first value also stands at history_start(). Returns how many rows were added."""
+    start, n = history_start(today), 0
+    with conn:
+        for acc, kind in conn.execute("SELECT account_id, type FROM accounts WHERE type IN "
+                                      "('depository', 'investment', 'credit', 'loan') ORDER BY account_id").fetchall():
+            first = conn.execute("SELECT date, current, available, iso_currency FROM balance_snapshots WHERE account_id = ? "
+                                 "AND current IS NOT NULL ORDER BY date LIMIT 1", (acc,)).fetchone()
+            if first is None:
+                continue
+            d0 = date.fromisoformat(first[0])
+            flows = dict(conn.execute("SELECT date, SUM(amount) FROM transactions WHERE account_id = ? AND pending = 0 "
+                                      "AND removed = 0 AND date <= ? GROUP BY date", (acc, first[0])).fetchall())
+            bal, day = first[1], d0
+            while True:
+                if kind == "depository":
+                    bal = max(0.0, bal + flows.get(day.isoformat(), 0.0))   # the end of the day before `day`
+                day -= timedelta(days=1)
+                if day < start:
+                    break
+                if (d0 - day).days % 7 == 0:
+                    avail = None if first[2] is None else round(first[2] + (bal - first[1]), 2)
+                    n += conn.execute("INSERT OR IGNORE INTO balance_snapshots (account_id, date, current, available, "
+                                      "iso_currency) VALUES (?, ?, ?, ?, ?)",
+                                      (acc, day.isoformat(), round(bal, 2), avail, first[3])).rowcount
+        for mid, d, bal in conn.execute("SELECT manual_account_id, MIN(date), balance FROM manual_balance_history "
+                                        "GROUP BY manual_account_id").fetchall():
+            if d > start.isoformat():
+                n += conn.execute("INSERT OR IGNORE INTO manual_balance_history (manual_account_id, date, balance) "
+                                  "VALUES (?, ?, ?)", (mid, start.isoformat(), bal)).rowcount
+    return n
+
+
+def apply_assets(conn: sqlite3.Connection, rename: RenameMap, today: date) -> int:
+    """The demo's cars and properties: real cars without a VIN and Los Angeles landmarks (demo_assets.json), each worth
+    the one real valuation frozen there. The generator's own estimates for them (its Carfax / Redfin rows, its VIN
+    decodes, its provider notes) described other things, so they go; the frozen value is the account's value ("Your
+    value", value_source 'user': the app shows no provider for it). Returns how many accounts got a frozen value."""
+    n = 0
+    with conn:
+        for acc, a in rename.assets.items():
+            conn.execute("DELETE FROM asset_valuations WHERE account_id = ?", (acc,))
+            conn.execute("DELETE FROM api_calls WHERE account_id = ?", (acc,))
+            if "make" in a:
+                conn.execute("UPDATE manual_accounts SET name = ?, vehicle_year = ?, vehicle_make = ?, vehicle_model = ?, "
+                             "vehicle_trim = ?, vin = NULL, vin_decoded = NULL WHERE id = ?",
+                             (f"{a['year']} {a['make']} {a['model']}", a["year"], a["make"], a["model"], a["trim"], acc))
+            else:
+                conn.execute("UPDATE manual_accounts SET name = ?, address = ? WHERE id = ?", (a["name"], a["address"], acc))
+            v = a.get("valuation")
+            if v:
+                conn.execute("UPDATE manual_accounts SET balance = ?, balance_as_of = ?, value_source = 'user' WHERE id = ?",
+                             (v["value"], today.isoformat(), acc))
+                conn.execute("DELETE FROM manual_balance_history WHERE manual_account_id = ?", (acc,))
+                for d in (history_start(today), today):   # the one frozen value, held flat over the history
+                    conn.execute("INSERT INTO manual_balance_history (manual_account_id, date, balance) VALUES (?, ?, ?)",
+                                 (acc, d.isoformat(), v["value"]))
+                n += 1
+        conn.execute("DELETE FROM vin_decodes")
+    return n
+
+
+# Each demo goal's look, from the goal picker's own set (goals.ICONS / COLOURS). The generator makes its goals the way an API
+# caller would, without a look, so they get the app's legacy defaults (pencil / split / handcoins), which the picker
+# doesn't offer: its edit sheet would show no icon selected. A goal not named here gets the picker's default.
+GOAL_LOOKS = {"Rainy day": ("shield-check", "#5fc6e8"), "New laptop": ("briefcase", "#8ea8ff"),
+              "Concert tickets": ("heart", "#ff8fb1"), "Trip to Lisbon": ("plane", "#c792ea"),
+              "Monthly savings": ("sprout", "#4fd1a5")}
+PAYOFF_LOOK = ("car", "#f5b454")
+
+
+def apply_goal_looks(conn: sqlite3.Connection) -> int:
+    """Every demo goal gets an icon and colour from the picker. Returns how many goals changed."""
+    from hermes_finance import goals
+    n = 0
+    with conn:
+        for gid, kind, name, icon, colour in conn.execute("SELECT id, kind, name, icon, colour FROM goals").fetchall():
+            look = PAYOFF_LOOK if kind == "payoff" else GOAL_LOOKS.get(name, ("piggy-bank", goals.COLOURS[0]))
+            if icon not in goals.ICONS or name in GOAL_LOOKS or kind == "payoff":
+                conn.execute("UPDATE goals SET icon = ?, colour = ? WHERE id = ?", (*look, gid))
+                n += (icon, colour) != look
+        assert all(r[0] in goals.ICONS for r in conn.execute("SELECT icon FROM goals"))
+    return n
+
+
+def apply_bank_logos(conn: sqlite3.Connection, rename: RenameMap) -> int:
+    """Each bank's logo is the invented one for the name the demo shows (Alpaca keeps its own); a bank without one keeps
+    its colour and initials. Returns how many banks got one."""
+    n = 0
+    with conn:
+        for r in conn.execute("SELECT institution_id, name FROM institutions").fetchall():
+            png = demo_logo(rename.names.get(r[1], r[1]))
+            if png:
+                conn.execute("UPDATE institutions SET logo_png = ?, logo_source = 'site' WHERE institution_id = ?",
+                             (png, r[0]))
+                n += 1
+    return n
+
+
+def with_merchant_logos(x, used: set):
+    """A renamed payload with each merchant row's logo_url pointed at the demo's own logo for that merchant (same
+    origin; the page's safeImg takes only /api/merchant-logos/<slug>.png). Rows without one keep their initials."""
+    if isinstance(x, list):
+        return [with_merchant_logos(v, used) for v in x]
+    if not isinstance(x, dict):
+        return x
+    y = {k: with_merchant_logos(v, used) for k, v in x.items()}
+    if "logo_url" in y and not y["logo_url"]:
+        for k in ("merchant_name", "merchant", "seed", "name"):
+            slug = logo_slug(y[k]) if isinstance(y.get(k), str) else ""
+            if slug and (DEMO_LOGOS / f"{slug}.png").is_file():
+                y["logo_url"] = f"{MERCHANT_LOGOS}{slug}.png"
+                used.add(slug)
+                break
+    return y
 
 
 def write_dist(out: Path, base: dict, rename: RenameMap, html: str, csv_bytes: bytes, build_id: str, now: datetime) -> list[Path]:
@@ -869,10 +1057,13 @@ def write_dist(out: Path, base: dict, rename: RenameMap, html: str, csv_bytes: b
         write(root.lstrip("/"), (STATIC / name).read_bytes())
     write("index.html", html)
     write("_headers", HEADERS)
-    for name in ("shim.js", "demo.css", "loader.js"):
+    for name in DEMO_FILES:
         write(f"demo/{name}", (DEMO_SRC / name).read_bytes())
+    used: set = set()
+
     def dump(x) -> str:
-        return json.dumps(rename.json(x), separators=(",", ":"), ensure_ascii=False, sort_keys=False)
+        return json.dumps(with_merchant_logos(rename.json(x), used), separators=(",", ":"), ensure_ascii=False,
+                          sort_keys=False)
     meta = {**base["meta"], "build": build_id, "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "money_scale": MONEY_SCALE}
     write("demo/data/core.json", dump({"meta": meta, "core": base["core"], "errors": base["errors"]}))
     for m, bundle in base["months"].items():
@@ -882,6 +1073,8 @@ def write_dist(out: Path, base: dict, rename: RenameMap, html: str, csv_bytes: b
     for rel, data in base["files"].items():
         write(rename.text(rel), data)
     write("api/export.csv", rename_csv(csv_bytes, rename))
+    for slug in sorted(used):
+        write(f"{MERCHANT_LOGOS.strip('/')}/{slug}.png", (DEMO_LOGOS / f"{slug}.png").read_bytes())
     return written
 
 
@@ -896,7 +1089,7 @@ def rename_csv(data: bytes, rename: RenameMap) -> bytes:
 
 # --- main -------------------------------------------------------------------------------------------------------------------
 
-def build(out: Path, today: date, keep: Path | None = None) -> dict:
+def build(out: Path, today: date, keep: Path | None = None, seed: int = 0, salt: int = 0) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="hf-demo-build-"))
     try:
         tmp_paths = safe_env(tmp)
@@ -911,20 +1104,30 @@ def build(out: Path, today: date, keep: Path | None = None) -> dict:
         (tmp / "data").mkdir()
         db_path = tmp / "data" / "finance.db"
         t0 = time.monotonic()
-        generate(db_path, today)
+        generate(db_path, today, seed, salt)
         from hermes_finance import db as hdb
         conn = hdb.connect(db_path)
-        rename = RenameMap(conn, tmp_paths)   # read from the generated DB, before anything is changed
+        paid = pay_late_bills(conn, db_path, today)
+        history = extend_history(conn, today)
+        rename = RenameMap(conn, tmp_paths)   # read from the generated DB, before anything else is changed
         scaled = sanitize_db(conn, today, now, tmp_paths)
+        bank_logos = apply_bank_logos(conn, rename)
+        valued = apply_assets(conn, rename, today)
+        goal_looks = apply_goal_looks(conn)
         conn.close()
-        log = {"generated_s": round(time.monotonic() - t0, 2), "scaled_rows": scaled, "renamed": rename.summary()}
+        log = {"generated_s": round(time.monotonic() - t0, 2), "scaled_rows": scaled, "renamed": rename.summary(),
+               "bank_logos": bank_logos, "frozen_valuations": valued,
+               "goal_looks": goal_looks, "late_bills_paid": paid, "history_rows": history}
         base = collect(db_path, today)
+        base["meta"]["seed"] = seed
+        if salt:
+            base["meta"]["salt"] = salt
         html = page_html(db_path, today, "", now)
         csv_bytes = export_csv(db_path, today)
         version = hashlib.sha256()
         for part in ('meta', 'core', 'months', 'transactions', 'ask'):
             version.update(json.dumps(rename.json(base[part]), sort_keys=True).encode())
-        for file in [*(STATIC / n for n in static_files()), *(DEMO_SRC / n for n in ('shim.js', 'demo.css', 'loader.js'))]:
+        for file in [*(STATIC / n for n in static_files()), *(DEMO_SRC / n for n in DEMO_FILES)]:
             version.update(file.read_bytes())
         build_id = version.hexdigest()[:12]
         html = page_html(db_path, today, build_id, now)
@@ -941,11 +1144,26 @@ def build(out: Path, today: date, keep: Path | None = None) -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def build_variant(out: Path, today: date, keep: Path | None = None, seed: int = 0) -> dict | None:
+    """build() with the first salt whose figures show no generator fixed amount (SALTS); None if every salt does."""
+    for salt in SALTS:
+        log = build(out, today, keep, seed, salt)
+        check = subprocess.run([sys.executable, str(ROOT / "scripts" / "demo_canary.py"), str(out), "--fixed-amounts"],
+                               env={k: v for k, v in os.environ.items() if not CREDENTIAL_RE.search(k)}, capture_output=True, text=True)
+        if check.returncode == 0:
+            return {**log, "salt": salt}
+        print(f"build_demo: seed {seed} salt {salt}: {check.stdout.strip() or check.stderr.strip()[-300:]}; building it again")
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", type=Path, default=ROOT / "dist" / "demo", help="output directory (replaced), default dist/demo/")
     ap.add_argument("--today", type=date.fromisoformat, default=None,
                     help="the demo's today (YYYY-MM-DD); default: the local date. The same day builds the same bytes")
+    ap.add_argument("--seed", type=int, choices=list(SEEDS), default=0,
+                    help="the weekly variant (0-6, picked by the visitor's weekday, Monday 0): re-seeds the generator's "
+                         "discretionary spending; 0 (the default) is the usual demo. The same seed and day build the same bytes")
     ap.add_argument("--no-canary", action="store_true", help="skip scripts/demo_canary.py (never for a publishable build)")
     ap.add_argument("--keep-db", type=Path, default=None,
                     help="also copy the sanitized synthetic DB and the rename map here (a private debugging aid: they "
@@ -967,9 +1185,13 @@ def main(argv: list[str] | None = None) -> int:
     if out == ROOT or out == ROOT / "src" or ROOT / "src" in out.parents:
         print(f"refusing to write the demo into {out}")
         return 2
-    log = build(out, today, args.keep_db)
+    log = build_variant(out, today, args.keep_db, args.seed)
+    if log is None:
+        print(f"build_demo: FAILED: no salt in {SALTS.start}-{SALTS.stop - 1} builds seed {args.seed} on {today} without a generator amount")
+        return 1
+    salt = log["salt"]
     shown = os.path.relpath(out)   # (as the builder would type it: no home directory in the log)
-    print(f"build_demo: {KIND} DB for {today} (pinned clock {today}T12:00:00Z), money x{MONEY_SCALE}, "
+    print(f"build_demo: {KIND} DB for {today}, seed {args.seed}{f' salt {salt}' if salt else ''} (pinned clock {today}T12:00:00Z), money x{MONEY_SCALE}, "
           f"generated in {log['generated_s']} s")
     print(f"build_demo: renamed {json.dumps(log['renamed'], sort_keys=True)}")
     print(f"build_demo: {log['months']} months, {log['files']} files, {log['bytes']:,} bytes -> {shown}"

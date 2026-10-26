@@ -23,3 +23,65 @@ html.hf-demo .panel, html.hf-demo .chat, html.hf-demo .txpanel, html.hf-demo .mo
 }
 
 html.hf-demo #chat .fchip { white-space: normal; text-align: left; min-height: 44px; font-size: 13px; }
+
+/* Ask v2 (demo/ask.js): an answer's blocks under its text, the word-by-word reveal, the live-AI switch. The app's own
+   variables, so both themes follow; text >= 13 px. */
+.hfd-blocks { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.hfd-h { font-size: 13px; font-weight: 650; color: var(--mut); margin: 0 0 6px; }
+.hfd-note { font-size: 13px; color: var(--mut); }
+.hfd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.hfd-row > .n, .hfd-row > b:first-child { min-width: 0; overflow-wrap: anywhere; }
+.hfd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.hfd-tile { background: var(--card2); border-radius: 12px; padding: 9px 11px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hfd-tile > span { font-size: 13px; color: var(--mut); }
+.hfd-tile > b { font-size: 17px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hfd-tile > b.ok { color: var(--ok); } .hfd-tile > b.warn { color: var(--warn); } .hfd-tile > b.bad { color: var(--bad); }
+:root[data-theme=light] .hfd-tile > b.ok { color: #08653f; }
+:root[data-theme=light] .hfd-tile > b.warn { color: #7d4a00; }
+:root[data-theme=light] .hfd-tile > b.bad { color: #a82424; }
+.hfd-bars, .hfd-cards, .hfd-goals, .hfd-chart { display: flex; flex-direction: column; gap: 9px; }
+.hfd-bar, .hfd-goal, .hfd-card { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.hfd-bar .grow, .hfd-goal .grow, .hfd-card .grow { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hfd-bar b, .hfd-card .end b, .hfd-goal .hfd-row > span { font-variant-numeric: tabular-nums; font-size: 14px; }
+.hfd-bar .n { font-size: 14px; }
+.hfd-track { height: 6px; border-radius: 99px; background: var(--card3); overflow: hidden; }
+.hfd-track > i { display: block; height: 100%; border-radius: 99px; background: var(--acc); }
+.hfd-track > i.neg { background: var(--bad); }
+.hfd-card { background: var(--card2); border-radius: 12px; padding: 9px 11px; }
+.hfd-card .grow > b { font-size: 14px; overflow-wrap: anywhere; }
+.hfd-card .end { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; }
+.hfd-line { width: 100%; height: 72px; display: block; }
+.hfd-line .stroke { fill: none; stroke: var(--acc); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.hfd-line .area { fill: var(--acc); opacity: .12; }
+.hfd-legend { display: flex; gap: 14px; font-size: 13px; color: var(--mut); }
+.hfd-legend > span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.hfd-legend .k0::before, .hfd-col .k0 { background: var(--acc); }
+.hfd-legend .k1::before, .hfd-col .k1 { background: var(--warn); }
+.hfd-cols { display: flex; gap: 6px; align-items: flex-end; }
+.hfd-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.hfd-col .bars { height: 84px; width: 100%; display: flex; gap: 2px; align-items: flex-end; justify-content: center; }
+.hfd-col .bars > i { flex: 0 1 12px; border-radius: 3px 3px 0 0; }
+.hfd-col > span { font-size: 13px; color: var(--mut); }
+
+/* the newest answer: its words appear, then the rest fades in; under reduced motion the fade alone */
+.msg.bot.hfd-typing .hfd-blocks, .msg.bot.hfd-typing .chstat, .msg.bot.hfd-typing .src { opacity: 0; }
+.msg.bot.hfd-typing p.hfd-wait { display: none; }
+.msg.bot.hfd-shown .hfd-blocks, .msg.bot.hfd-shown .chstat, .msg.bot.hfd-shown .src { animation: hfd-in 220ms var(--mo-in, ease-out); }
+.msg.bot.hfd-fade { animation: hfd-in 220ms ease-out; }
+@keyframes hfd-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* the live-AI switch above the chips */
+.hfd-liverow { display: flex; margin-bottom: 8px; }
+.hfd-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 2px; background: none; border: 0;
+  color: var(--mut); font-size: 13px; cursor: pointer; text-align: left; }
+.hfd-switch .knob { position: relative; flex: none; width: 30px; height: 18px; border-radius: 99px; background: var(--card3);
+  border: 1px solid var(--line2); transition: background 150ms; }
+.hfd-switch .knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--mut); transition: transform 150ms; }
+.hfd-switch[aria-checked=true] { color: var(--fg); }
+.hfd-switch[aria-checked=true] .knob { background: var(--acc); border-color: var(--acc); }
+.hfd-switch[aria-checked=true] .knob::after { transform: translateX(12px); background: #0c0e13; }
+.hfd-switch:hover { color: var(--fg); }
+@media (prefers-reduced-motion: reduce) {
+  .hfd-switch .knob, .hfd-switch .knob::after { transition: none; }
+}

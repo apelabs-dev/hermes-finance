@@ -166,10 +166,10 @@
 
 /* Transactions' single month/window control. Overview and Budgets retain the shared switcher. */
 .mon.txwindow { max-width: 100%; }
-.mon.txwindow button { min-width: 44px; min-height: 44px; flex: none; }
+.mon.txwindow button { flex: none; }   /* same 30px arrows as Overview/Budgets' pill */
 .mon.txwindow button[hidden] { display: none; }
-.mon.txwindow #monl { display: flex; gap: 6px; width: auto; height: auto; padding: 7px 10px; border-radius: 999px;
-  color: var(--fg); font-size: 14px; font-weight: 600; line-height: 1.4; }
+.mon.txwindow #monl { display: flex; align-items: center; gap: 6px; width: auto; height: auto; min-height: 30px; padding: 0 10px; border-radius: 999px;
+  color: var(--fg); font-size: 14.5px; font-weight: 600; line-height: 1.2; }
 .mon.txwindow #monl svg { flex: none; width: 14px; height: 14px; }
 .rgscrim { position: fixed; inset: 0; z-index: 90; background: rgba(3,5,9,.45); }
 .rgpicker { position: fixed; z-index: 91; top: var(--rg-top,78px); left: var(--rg-left,24px); width: 360px; max-width: calc(100vw - 24px);
@@ -205,7 +205,7 @@
     border-radius: 20px 20px 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
   .top .mon.txwindow { justify-content: center; }
   .mon.txwindow #monl { flex: 1; justify-content: center; white-space: normal; font-size: 13px; }
-  /* Ranges hide prev/next and show only the × on the right; mirror its 44px slot + 2px gap on the left
+  /* Ranges hide prev/next and show only the × on the right; mirror its 30px slot + 2px gap on the left
      so the label centres on the whole pill, not on the space left of the ×. */
-  .mon.txwindow:has(#rgclear) { padding-left: calc(3px + 46px); }
+  .mon.txwindow:has(#rgclear) { padding-left: calc(3px + 32px); }
 }

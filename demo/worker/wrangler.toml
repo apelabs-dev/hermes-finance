@@ -1,0 +1,26 @@
+name = "hermes-finance-demo-ai"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+# Top-level key: it must come before any [table], or TOML files it under that table (it sat under [vars] once and
+# the route silently never attached).
+routes = ["financing.apelabs.dev/ai/*"]   # zone inferred from the hostname (a bare zone name would be a private word)
+
+# Create the namespace once, then paste the id it prints below:
+#   npx wrangler kv namespace create DEMO_AI_KV
+[[kv_namespaces]]
+binding = "DEMO_AI_KV"
+id = "240246b15adf4f64a27759e02031d2b7"
+
+[vars]
+DEMO_ORIGIN = "https://financing.apelabs.dev"
+MODEL = "openrouter/free"
+GLOBAL_DAILY_CAP = "100"
+VISITOR_DAILY_CAP = "10"
+TURNSTILE_REQUIRED = "false"
+
+# Secrets are not stored in this file:
+#   OPENROUTER_KEY    set with `wrangler secret put OPENROUTER_KEY` (already done by the owner)
+#   TURNSTILE_SECRET  set the same way, only if TURNSTILE_REQUIRED is turned on
+
+# The demo page's CSP allows same-origin requests only (connect-src 'self'), so the page calls /ai/chat on its own
+# origin: this route is what puts the worker there. (The workers.dev URL keeps answering POST /chat for testing.)

@@ -24,6 +24,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 import cdp  # noqa: E402
+sys.path.insert(0, str(ROOT / "scripts"))
+import demo_combine  # noqa: E402
 
 PAGES = ("overview", "transactions", "budgets", "goals", "recurring", "accounts", "investments", "debt", "settings")
 OTHER_PAGES = ("recurring", "accounts", "investments", "debt", "settings", "asset/3", "asset/8")   # dark, no screenshot each
@@ -92,8 +94,11 @@ class Site:
 
 
 class Run:
-    def __init__(self, c: cdp.Chrome, site: Site, out: Path):
+    def __init__(self, c: cdp.Chrome, site: Site, out: Path, variant: int | None = None):
         self.c, self.site, self.out = c, site, out
+        # The build's own day (not the visitor's: the visitor_today flow checks that), and a combined dist's variant.
+        self.query = 'demo-today=build' + (f'&demo-variant={variant}' if variant is not None else '')
+        self.data = demo_combine.data_dir(Path(site.scratch.name) / 'site', variant)
         self.results: dict = {"checks": [], "pages": {}, "flows": {}, "requests_off_site": []}
         self.failed = 0
 
@@ -133,7 +138,7 @@ class Run:
             self.c.call("Emulation.setTouchEmulationEnabled", enabled=False)
 
     def open(self, hash_: str, fresh: bool = False) -> None:
-        url = f"{self.site.url}/{'?fresh=' + str(time.time()) if fresh else ''}#/{hash_}"
+        url = f"{self.site.url}/?{self.query}{'&fresh=' + str(time.time()) if fresh else ''}#/{hash_}"
         self.c.goto(url)
         self.until("document.getElementById('hf-demo-bar') && !document.querySelector('#page .skel') && "
                    "document.querySelector('#page > *') ? true : false", f"#/{hash_} drawn")
@@ -175,7 +180,7 @@ class Run:
             if u.netloc != urlsplit(self.site.url).netloc:
                 failures.append({'url': url, 'error': 'external resource'})
                 continue
-            if u.path.startswith('/api/') and u.path != '/api/export.csv' and not any(x in u.path for x in ('/logo', '/images/')):
+            if u.path.startswith('/api/') and u.path != '/api/export.csv' and not any(x in u.path for x in ('/logo', '/images/', '/api/merchant-logos/')):
                 failures.append({'url': url, 'error': 'unsnapshotted API anchor'})
                 continue
             try:
@@ -201,12 +206,13 @@ def main(argv=None) -> int:
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--viewports', default='desktop,phone', help='focused screenshot batch: desktop,phone')
     ap.add_argument('--flows-only', action='store_true', help='focused interaction batch without page screenshots')
+    ap.add_argument('--variant', type=int, choices=range(7), default=None, help="a combined weekly dist's variant (demo_combine.py)")
     args = ap.parse_args(argv)
     dist, out = args.dist.resolve(), args.out.resolve()
     if out == ROOT or ROOT in out.parents:
         ap.error('--out must be outside the repository')
     out.mkdir(parents=True, exist_ok=True)
-    core = json.loads((dist / 'demo/data/core.json').read_text())
+    core = json.loads((demo_combine.data_dir(dist, args.variant) / 'core.json').read_text())
     assets = ['asset/' + k.split('/')[3] for k in core['core'] if k.endswith('/detail')]
     pages = [*PAGES, *assets]
     site = c = run = None
@@ -215,7 +221,7 @@ def main(argv=None) -> int:
         # Never sweep/kill another worker's orphan processes; close only the Chrome we own.
         cdp._swept = True
         c = cdp.Chrome()
-        run = Run(c, site, out)
+        run = Run(c, site, out, args.variant)
         run.results.update(server_pid=site.proc.pid, server_command=site.proc.args, chrome_pgid=c.pgid,
                            scratch_copy=site.scratch.name, expected_pages=pages)
         for vp in args.viewports.split(','):
@@ -235,6 +241,7 @@ def main(argv=None) -> int:
                               and m['first']['top'] >= m['header']['bottom'] - 1, [m['bar'], m['header'], m['first']])
                     run.links(key); run.problems(key)
             flows(run, core, vp)
+            visitor_today(run, core, vp)
         manifest = [{'page': k, 'file': v['screenshot'], 'bytes': Path(v['screenshot']).stat().st_size}
                     for k, v in run.results['pages'].items()]
         run.results['screenshot_manifest'] = manifest
@@ -279,7 +286,9 @@ def flows(run, core, vp):
     run.check(f'{vp}: sync/connect/settings writes refused', result == [[403, {'error':'Not available in the demo'}]] * 4, result)
     # The actual transaction sheet, filter drawer and date controls remain usable.
     run.open('transactions', fresh=True)
-    run.tap("document.querySelector('#page tr[data-tid] [data-txopen],#page tr[data-tid] .txname,#page tr[data-tid] td:nth-child(2)')", 'transaction sheet')
+    # (the merchant's name: the middle of its cell can be a tag chip, which filters instead, as on seed 3's first row)
+    run.tap("(document.querySelector('#page tr[data-tid] .mt .t') || document.querySelector('#page tr[data-tid] [data-txopen],"
+            "#page tr[data-tid] .txname,#page tr[data-tid] td:nth-child(2)'))", 'transaction sheet')
     c.settled()
     run.check(f'{vp}: transaction sheet opens', run.js("!document.getElementById('txpanel').hidden || !!document.querySelector('#modal.on')"))
     run.shot(f'{vp}-flow-transaction-sheet')
@@ -288,7 +297,7 @@ def flows(run, core, vp):
     run.check(f'{vp}: all-time search and date ranges', data['all'] > data['range'] > 0 and data['search'] > 0
               and data['rangePeriod']['kind'] == 'range' and len(data['months']) > 1, {k:v for k,v in data.items() if k!='rows'})
     run.results['flows'][f'{vp}-transactions'] = {k:v for k,v in data.items() if k!='rows'}
-    run.js("(()=>{const e=document.querySelector('#page input.search');e.value='Fourth Coffee';e.dispatchEvent(new Event('input',{bubbles:true}));return true})()")
+    run.js("(()=>{const e=document.querySelector('#page input.search');e.value='Bean Voyage';e.dispatchEvent(new Event('input',{bubbles:true}));return true})()")
     run.until("document.getElementById('monl').textContent.includes('searching') && !!document.querySelector('#page tr[data-tid]')", 'automatic all-time search')
     run.check(f'{vp}: typing search switches to all history', run.js("document.getElementById('monl').textContent.includes('All time')"))
     run.shot(f'{vp}-flow-all-time-search')
@@ -316,22 +325,92 @@ def flows(run, core, vp):
     run.until(f"document.getElementById('monl').textContent!=={json.dumps(old_month)}", 'previous month loaded')
     run.check(f'{vp}: month navigation redraws overview', True)
     run.problems(f'{vp} transaction filters/months')
-    # Ask uses the real four suggestion buttons and the real chat renderer; replies match build-time tool output exactly.
+    # Ask v2 (t_d31fda2a): the starter chips, two answers streamed through the real chat renderer with their blocks, the
+    # follow-up chips, a question it can't match (a friendly reply with 3 suggestion chips), then the live-AI switch: the
+    # static server has no /ai/chat, so it falls back to the same demo answer with the busy note.
+    expected = json.loads((run.data / 'ask.json').read_text())
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import demo_ask
+    presets = expected['presets']
+    run.open('overview', fresh=True)
+    run.js("sessionStorage.removeItem('hf.chat.v1'); localStorage.removeItem('hf-demo.live-ai'); true")
     run.open('overview', fresh=True)
     run.tap("document.getElementById('askb')", 'Ask')
     run.until("!document.getElementById('chat').hidden", 'Ask panel')
-    expected = json.loads((Path(run.site.scratch.name) / 'site/demo/data/ask.json').read_text())
-    for i, (question, answer) in enumerate(expected.items()):
-        run.tap(f"[...document.querySelectorAll('#chat .fchip')].find(b=>b.textContent==={json.dumps(question)})", question)
-        run.until("!!document.querySelector('#chat .msg.bot')", 'canned response')
-        run.until(f"[...document.querySelectorAll('#chat .msg.bot')].some(e=>e.textContent.includes({json.dumps(answer['reply'].split(chr(10))[2][:70])}))", 'expected real-tool text')
+    chips = "[...document.querySelectorAll('#chat .chchips .fchip')].map(b=>b.textContent)"
+    starters = [presets[k]['question'] for k in expected['starters']]
+    run.until(f"JSON.stringify({chips})==={json.dumps(json.dumps(starters, separators=(',', ':')))}", 'starter chips')
+    run.check(f'{vp}: Ask shows the starter chips', True, starters)
+    bot = "[...document.querySelectorAll('#chat .msg.bot')]"
+    first = expected['starters'][0]
+    for i, pid in enumerate([first, presets[first]['next'][0]]):
+        q, n = presets[pid]['question'], i + 1
+        run.tap(f"[...document.querySelectorAll('#chat .fchip')].find(b=>b.textContent==={json.dumps(q)})", q)
+        run.until(f"{bot}.length>={n} && {bot}[{n - 1}].classList.contains('hfd-typing')", f'answer {n} streaming')
+        typing = run.js(f"{bot}[{n - 1}].querySelector(':scope > p:not(.src)').textContent.length")
+        run.until(f"{bot}[{n - 1}].classList.contains('hfd-shown')", f'answer {n} fully shown', timeout=20)
         c.settled()
-        run.check(f'{vp}: canned answer {i+1} has real trace label', run.js("document.getElementById('chat').innerText.includes('Canned demo answer')"))
-        run.shot(f'{vp}-flow-ask-{i+1}')
-    run.js("(()=>{const e=document.querySelector('#chat .chin');e.value='not a canned question';e.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return true})()")
-    run.until("document.getElementById('chat').innerText.includes('AI chat is off in the demo — install it to use your own model.')", 'exact off message')
-    run.check(f'{vp}: other Ask input gives exact off message', True)
+        text = run.js(f"[...{bot}[{n - 1}].querySelectorAll(':scope > p:not(.src)')].map(p=>p.textContent).join(String.fromCharCode(10))")
+        want = demo_ask.render(presets[pid]['reply'])
+        run.check(f'{vp}: answer {n} ({pid}) streamed, then exactly the build-time reply', typing < len(want) and
+                  [x for x in text.split(chr(10)) if x] == [x for x in want.split(chr(10)) if x], [typing, len(want)])
+        blocks = run.js(f"{bot}[{n - 1}].querySelectorAll('.hfd-blocks > *').length")
+        run.check(f'{vp}: answer {n} draws its {len(presets[pid]["blocks"])} blocks', blocks == len(presets[pid]['blocks']), blocks)
+        nxt = [presets[k]['question'] for k in presets[pid]['next']]
+        run.until(f"JSON.stringify({chips})==={json.dumps(json.dumps(nxt, separators=(',', ':')))}", f'answer {n} follow-up chips')
+        run.shot(f'{vp}-flow-ask-{n}')
+    run.js("(()=>{const e=document.querySelector('#chat .chin');e.value='tell me a joke';e.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return true})()")
+    run.until(f"{bot}.length>=3 && {bot}[2].classList.contains('hfd-shown')", 'unmatched reply', timeout=20)
+    sugg = [presets[k]['question'] for k in expected['unmatched']['suggestions']]
+    run.until(f"JSON.stringify({chips})==={json.dumps(json.dumps(sugg, separators=(',', ':')))}", 'the 3 suggestion chips')
+    run.check(f'{vp}: other Ask input gives the friendly reply and 3 suggestions',
+              run.js(f"{bot}[2].textContent.includes({json.dumps(expected['unmatched']['reply'][:60])})"), sugg)
+    run.shot(f'{vp}-flow-ask-unmatched')
+    run.problems(f'{vp} ask')
+    run.tap("document.getElementById('hfd-live')", 'the live AI switch')
+    run.until("document.getElementById('hfd-live').getAttribute('aria-checked')==='true'", 'live AI on')
+    run.tap(f"[...document.querySelectorAll('#chat .fchip')].find(b=>b.textContent==={json.dumps(sugg[0])})", sugg[0])
+    run.until(f"{bot}.length>=4 && {bot}[3].classList.contains('hfd-shown')", 'live fallback answer', timeout=20)
+    c.settled()
+    pid = expected['unmatched']['suggestions'][0]
+    run.check(f'{vp}: live AI unavailable falls back to the demo answer with the busy note',
+              run.js(f"{bot}[3].textContent.includes({json.dumps(expected['live']['note'])}) && "
+                     f"{bot}[3].textContent.includes({json.dumps(demo_ask.render(presets[pid]['reply']).split(chr(10))[0][:60])})"))
+    run.shot(f'{vp}-flow-ask-live-fallback')
+    reqs = run.c.requests()
+    run.check(f'{vp}: the live call is one same-origin POST /ai/chat',
+              [(m, urlsplit(u).path) for m, u in reqs if '/ai/' in u] == [('POST', '/ai/chat')], reqs)
+    # The static server answers that POST 501 (the Worker isn't there); that one expected failure is all there is.
+    bad = [e['params']['response'] for e in run.c.events if e['method'] == 'Network.responseReceived'
+           and e['params']['response']['status'] >= 400 and urlsplit(e['params']['response']['url']).path != '/ai/chat']
+    probs = [x for x in run.c.problems() if not x.endswith('/ai/chat')]
+    run.check(f'{vp} ask live: no other HTTP or JS errors', not bad and not probs, (bad + probs) or None)
+    run.tap("document.getElementById('hfd-live')", 'the live AI switch, off again')
+    run.until("document.getElementById('hfd-live').getAttribute('aria-checked')==='false'", 'live AI off')
     run.problems(f'{vp} flows')
+
+def visitor_today(run, core, vp):
+    """t_d31fda2a: unasked, the demo's today is the visitor's: the page's clock is this machine's date, the Overview is on
+    this month, and every bill is still ahead of today."""
+    from datetime import date
+    today = date.today()
+    query = run.query
+    run.query = query.replace('demo-today=build', '').lstrip('&')
+    try:
+        run.open('overview', fresh=True)
+        got = run.js("(()=>{const d=new Date();return {day:[d.getFullYear(),d.getMonth()+1,d.getDate()],shift:HFDemo.shift,"
+                     "month:document.getElementById('monl').textContent}})()")
+        build_day = date.fromisoformat(core['meta']['today'])
+        months = (today.year - build_day.year) * 12 + today.month - build_day.month
+        run.check(f"{vp}: the demo's today is the visitor's today", got['day'] == [today.year, today.month, today.day] and
+                  got['shift'] == {'days': (today - build_day).days, 'months': months} and
+                  today.strftime('%B') in got['month'], got)
+        bills = run.js("(async()=>(await (await fetch('/api/recurring')).json()).items.map(i=>i.next_expected))()")
+        run.check(f'{vp}: every bill is due from the visitor\'s today on', bills and min(bills) >= today.isoformat(), min(bills or ['']))
+        run.shot(f'{vp}-flow-visitor-today')
+        run.problems(f'{vp} visitor today')
+    finally:
+        run.query = query
 
 
 if __name__ == '__main__':

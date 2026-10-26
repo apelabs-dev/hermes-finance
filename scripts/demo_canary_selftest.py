@@ -65,8 +65,11 @@ def main(argv=None) -> int:
             return main([str(args.dist), '--private', str(marker)])
     dist = args.dist.resolve()
     before = tree_hash(dist)
-    meta = json.loads((dist / "demo" / "data" / "core.json").read_text())["meta"]
-    month = f"demo/data/m/{meta['this_month']}.json"
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from demo_combine import data_dir   # (a combined weekly dist plants into its first variant)
+    data = data_dir(dist)
+    meta = json.loads((data / "core.json").read_text())["meta"]
+    month = f"{data.relative_to(dist).as_posix()}/m/{meta['this_month']}.json"
     gen, fixed = canary.generator_values(date.fromisoformat(meta["today"]))
     # Select A/B plants in the same fresh, scrubbed marker context as the canary children.
     # The parent's ambient private list must not choose a token the children never check.

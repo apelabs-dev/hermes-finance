@@ -5,9 +5,54 @@
 (() => {
   'use strict';
   const ME = document.currentScript;
-  const BUILD = ME.dataset.build, NOW = Date.parse(ME.dataset.now);
   const realFetch = window.fetch.bind(window), RealDate = window.Date;
-  const offset = NOW - RealDate.now();
+  // Demo v2 (t_d31fda2a). The weekly build (scripts/demo_weekly.sh, demo_combine.py) holds 7 variants, one per weekday
+  // (Monday 0), each built for its own day: a visitor gets their weekday's (?demo-variant=0-6 picks one). The demo's
+  // today is the visitor's today (?demo-today=YYYY-MM-DD or =build sets it): every date in every answer moves by the
+  // same number of days (SHIFT.days) and every month key by the months that moves the build day (SHIFT.months), the
+  // question moved back first, so each answer is the frozen one with its dates moved (scripts/demo_parity.py proves it).
+  const ASKED = new URL(location.href).searchParams;
+  const VARIANTS = ME.dataset.variants ? ME.dataset.variants.split(',') : null;
+  const VARIANT = !VARIANTS ? null : /^[0-6]$/.test(ASKED.get('demo-variant') || '') ? Number(ASKED.get('demo-variant')) :
+    (new RealDate().getDay() + 6) % 7;
+  const BUILD = ME.dataset.build, NOW = Date.parse(VARIANTS ? VARIANTS[VARIANT] : ME.dataset.now);
+  const DATA = VARIANT === null ? '/demo/data/' : `/demo/data/v${VARIANT}/`;
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const addMonths = (m, n) => { const k = Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1 + n; return `${String(Math.floor(k / 12)).padStart(4, '0')}-${String(k % 12 + 1).padStart(2, '0')}`; };
+  const addDays = (iso, n) => new RealDate(RealDate.parse(`${iso}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+  const BUILD_DAY = new RealDate(NOW).toISOString().slice(0, 10);
+  const SHIFT = {days: 0, months: 0};
+  {
+    const want = ASKED.get('demo-today') || '', here = new RealDate();
+    const day = want === 'build' ? BUILD_DAY : /^\d{4}-\d{2}-\d{2}$/.test(want) && Number.isFinite(RealDate.parse(want)) ? want :
+      new RealDate(RealDate.UTC(here.getFullYear(), here.getMonth(), here.getDate())).toISOString().slice(0, 10);
+    const days = Math.round((RealDate.parse(day) - RealDate.parse(BUILD_DAY)) / 864e5);
+    if (Math.abs(days) <= 366) {
+      const to = addDays(BUILD_DAY, days);
+      Object.assign(SHIFT, {days, months: (Number(to.slice(0, 4)) - Number(BUILD_DAY.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(BUILD_DAY.slice(5, 7))});
+    }
+  }
+  const DAY_RE = /^(\d{4}-\d{2}-\d{2})([T ].*)?$/, MONTH_RE = /^\d{4}-\d{2}$/;
+  const PROSE_RE = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2})\b/g;
+  function moveText(s, sign, prose) {   // one string, moved by SHIFT (sign -1: back)
+    const m = DAY_RE.exec(s);
+    if (m && Number.isFinite(RealDate.parse(m[1]))) return addDays(m[1], sign * SHIFT.days) + (m[2] || '');
+    if (MONTH_RE.test(s) && Number(s.slice(5)) >= 1 && Number(s.slice(5)) <= 12) return addMonths(s, sign * SHIFT.months);
+    if (!prose) return s;
+    return s.replace(PROSE_RE, (all, mon, d) => {   // "sent Oct 25": the nearest such day to the build day
+      const k = MONTHS.findIndex((x) => x.startsWith(mon)), y = Number(BUILD_DAY.slice(0, 4));
+      const near = [y - 1, y, y + 1].map((yy) => `${yy}-${String(k + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+        .filter((x) => Number.isFinite(RealDate.parse(x)) && new RealDate(RealDate.parse(x)).toISOString().slice(0, 10) === x)
+        .sort((a, b) => Math.abs(RealDate.parse(a) - RealDate.parse(BUILD_DAY)) - Math.abs(RealDate.parse(b) - RealDate.parse(BUILD_DAY)))[0];
+      if (!near) return all;
+      const x = addDays(near, sign * SHIFT.days);
+      return `${MONTHS[Number(x.slice(5, 7)) - 1].slice(0, 3)} ${Number(x.slice(8))}`;
+    });
+  }
+  const moved = (x, sign = 1, prose = true) => !SHIFT.days && !SHIFT.months ? x : Array.isArray(x) ? x.map((v) => moved(v, sign, prose)) :
+    x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [moveText(k, sign, prose), moved(v, sign, prose)])) :
+      typeof x === 'string' ? moveText(x, sign, prose) : x;
+  const offset = NOW + SHIFT.days * 864e5 - RealDate.now();
   function DemoDate(...args) {
     if (!new.target) return new RealDate(RealDate.now() + offset).toString();
     return args.length ? new RealDate(...args) : new RealDate(RealDate.now() + offset);
@@ -17,9 +62,6 @@
   DemoDate.parse = RealDate.parse; DemoDate.UTC = RealDate.UTC;
   window.Date = DemoDate;
   const REFUSAL = 'Not available in the demo';
-  const OFF = 'AI chat is off in the demo — install it to use your own model.';
-  const QUESTIONS = ['How much did I spend on dining last month?', 'Am I on track with my budgets this month?',
-    'What bills are due in the next 7 days?', 'How has my net worth changed this year?'];
   const KEY = 'hf-demo.display.v2', cache = new Map();
   let prefs = {}, HF = null;
   try { prefs = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (_) { /* storage unavailable */ }
@@ -29,7 +71,7 @@
   (window.HF_EXT = window.HF_EXT || []).push((h) => { HF = h; });
   const clone = (v) => JSON.parse(JSON.stringify(v));
   const load = (name) => {
-    if (!cache.has(name)) cache.set(name, realFetch(`/demo/data/${name}.json`).then((r) => {
+    if (!cache.has(name)) cache.set(name, realFetch(`${DATA}${name}.json`).then((r) => {
       if (!r.ok) throw new Error('Missing demo snapshot');
       return r.json();
     }));
@@ -108,6 +150,105 @@
     }
     return out;
   }
+  // ---- Ask v2 (t_d31fda2a): preset questions, answered at build time by the real read tools (scripts/demo_ask.py) ----
+  // A question is matched to a preset by its words (token overlap plus the build's synonyms; no model, no ML), the answer
+  // drawn by the app's own chat renderer, and demo/ask.js adds the answer's blocks and chips. With "Try live AI" on, a
+  // matched question also goes to the demo's worker (same origin, /ai/chat); any failure or a slow (8 s) answer falls
+  // back to the canned one, quietly, with a one-line note.
+  const LIVE_KEY = 'hf-demo.live-ai', ANSWERS_KEY = 'hf-demo.ask.v2', LIVE_MS = 8000;
+  // {{d:YYYY-MM-DD}} "Oct 26", {{D:..}} "Oct 26, 2026", {{m:YYYY-MM}} "October 2026", {{M:..}} "Oct 2026" (demo_ask.render)
+  function render(text) {
+    return String(text).replace(/\{\{([dDmM]):(\d{4}-\d{2}(?:-\d{2})?)\}\}/g, (_, kind, v) => {
+      if (kind === 'd' || kind === 'D') {
+        if (v.length !== 10) return v;
+        const x = addDays(v, SHIFT.days);
+        return `${MONTHS[Number(x.slice(5, 7)) - 1].slice(0, 3)} ${Number(x.slice(8))}${kind === 'D' ? `, ${x.slice(0, 4)}` : ''}`;
+      }
+      const mo = addMonths(v.slice(0, 7), SHIFT.months), name = MONTHS[Number(mo.slice(5)) - 1];
+      return `${kind === 'm' ? name : name.slice(0, 3)} ${mo.slice(0, 4)}`;
+    });
+  }
+  const renderDeep = (x) => Array.isArray(x) ? x.map(renderDeep) : x && typeof x === 'object' ?
+    Object.fromEntries(Object.entries(x).map(([k, v]) => [k, renderDeep(v)])) : typeof x === 'string' ? render(x) : x;
+  function words(text, m) {
+    let t = ` ${String(text).toLowerCase().replace(/[‘’]/g, "'").replace(/'s\b/g, '').replace(/[^a-z0-9$]+/g, ' ')} `;
+    for (const [phrase, concept] of Object.entries(m.phrases)) t = t.split(` ${phrase} `).join(` ${concept} `);
+    return t.trim().split(/\s+/).filter(Boolean).map((w) => (w.length > 3 && /ies$/.test(w) ? `${w.slice(0, -3)}y` : w));
+  }
+  function concepts(text, m) {
+    const by = new Map();
+    for (const [concept, list] of Object.entries(m.synonyms)) for (const w of list) by.set(w, [...(by.get(w) || []), concept]);
+    const out = new Set();
+    for (const w of words(text, m)) {
+      for (const v of [w, w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : null]) for (const c of (v && by.get(v)) || []) out.add(c);
+    }
+    return out;
+  }
+  // A merchant counts when its whole name is in the question, or its first word is (4+ letters, no other merchant's).
+  function merchantHit(text, name, all, m) {
+    const q = ` ${words(text, m).join(' ')} `, n = words(name, m);
+    if (!n.length) return false;
+    if (q.includes(` ${n.join(' ')} `)) return true;
+    const first = n[0], stop = new Set(m.stopwords);
+    return first.length >= 4 && !stop.has(first) && !Object.values(m.synonyms).some((l) => l.includes(first)) &&
+      all.filter((x) => words(x, m)[0] === first).length === 1 && q.includes(` ${first} `);
+  }
+  function match(text, ask) {
+    const m = ask.matcher, have = concepts(text, m);
+    const ids = Object.keys(ask.presets), names = ids.map((id) => ask.presets[id].merchant).filter(Boolean);
+    let best = null, score = 0;
+    for (const id of ids) {
+      const p = ask.presets[id], present = new Set(have);
+      if (p.merchant) { if (!merchantHit(text, p.merchant, names, m)) continue; present.add('merchant_name'); }
+      if (!p.need.some((alt) => alt.every((c) => present.has(c)))) continue;
+      const s = Object.entries(p.terms).reduce((n, [c, w]) => n + (present.has(c) ? w : 0), 0);
+      if (s > score) { best = id; score = s; }
+    }
+    return score >= m.threshold ? best : null;
+  }
+  const ANSWERS = new Map();   // reply text -> {preset, blocks, next | suggestions, live, at}: what demo/ask.js draws
+  try { for (const [k, v] of JSON.parse(sessionStorage.getItem(ANSWERS_KEY) || '[]')) ANSWERS.set(k, v); } catch (_) { /* none */ }
+  function remember(reply, extra) {
+    ANSWERS.delete(reply); ANSWERS.set(reply, {...extra, at: RealDate.now()});
+    while (ANSWERS.size > 40) ANSWERS.delete(ANSWERS.keys().next().value);
+    try { sessionStorage.setItem(ANSWERS_KEY, JSON.stringify([...ANSWERS])); } catch (_) { /* kept in memory */ }
+  }
+  const live = {
+    get: () => { try { return localStorage.getItem(LIVE_KEY) === '1'; } catch (_) { return false; } },
+    set: (on) => { try { if (on) localStorage.setItem(LIVE_KEY, '1'); else localStorage.removeItem(LIVE_KEY); } catch (_) { /* session only */ } },
+  };
+  async function liveReply(question, preset) {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), LIVE_MS);
+    try {
+      const r = await realFetch('/ai/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, signal: ctl.signal,
+        body: JSON.stringify({question: question.slice(0, 300), preset, variant: VARIANT, shift: SHIFT})});
+      if (r.status !== 200) return null;
+      const j = await r.json();
+      const text = j && typeof j.reply === 'string' ? j.reply.trim() : '';
+      return text && text.length <= 1500 ? render(text) : null;
+    } catch (_) { return null; } finally { clearTimeout(timer); }
+  }
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function chat(question) {
+    const ask = await load('ask'), id = match(question, ask);
+    const wait = typeof window.HFDemoAskDelay === 'number' ? window.HFDemoAskDelay : 650;   // "Looking at your numbers…"
+    if (!id) {
+      const u = ask.unmatched, out = {reply: render(u.reply), sources: u.sources.map(render), stats: [], cards: []};
+      if (wait) await pause(wait);
+      remember(out.reply, {preset: null, blocks: [], suggestions: u.suggestions, live: false});
+      return out;
+    }
+    const p = ask.presets[id];
+    const out = {reply: render(p.reply), sources: p.sources.map(render), stats: clone(p.stats), cards: []};
+    const extra = {preset: id, blocks: moved(renderDeep(p.blocks), 1, false), next: p.next, live: false};
+    if (live.get()) {
+      const text = await liveReply(question, id);
+      if (text) { out.reply = text; out.sources = [ask.live.source, ...out.sources]; extra.live = true; }
+      else out.sources = [...out.sources, ask.live.note];
+    } else if (wait) await pause(wait);
+    remember(out.reply, extra);
+    return out;
+  }
   function withPrefs(page) {
     for (const [k, v] of Object.entries(prefs)) {
       const [group, name] = k.split('.');
@@ -116,6 +257,14 @@
     return page;
   }
   async function route(method, url, body) {
+    if ((!SHIFT.days && !SHIFT.months) || !['GET', 'HEAD'].includes(method)) return answer(method, url, body);
+    const u = new URL(url, location.href), back = new URLSearchParams();
+    for (const [k, v] of u.searchParams) back.append(k, moveText(v, -1, false));
+    u.search = back.toString();
+    const [status, value] = await answer(method, u.href, body);
+    return [status, moved(value)];
+  }
+  async function answer(method, url, body) {
     try {
       const u = new URL(url, location.href), path = u.pathname, p = u.searchParams;
       if (u.origin !== location.origin) return refuse();
@@ -124,8 +273,7 @@
         try { d = body ? JSON.parse(body) : {}; } catch (_) { return refuse(); }
         if (method === 'POST' && path === '/api/chat') {
           const q = String(((d.messages || []).filter((m) => m.role === 'user').pop() || {}).content || '').trim();
-          const answers = await load('ask');
-          return [200, clone(answers[q] || {reply: OFF, sources: [], stats: [], cards: []})];
+          return [200, await chat(q)];
         }
         if (path === '/api/prefs') coreKeys = (await core()).meta.page_keys;
         if (method === 'POST' && path === '/api/prefs' && Object.keys(d).length &&
@@ -199,24 +347,17 @@
     const tag = document.createElement('strong'); tag.className = 'hfd-tag'; tag.textContent = 'Demo — synthetic data';
     const text = document.createElement('span'); text.className = 'hfd-text'; text.textContent = 'Read-only · no account or model connected';
     bar.append(tag, text); document.body.prepend(bar);
-    // Keep the real Ask UI, replacing its dynamic prompts with the four frozen examples.
     const prompts = () => {
       // Some product handlers add context to an API error. The demo refusal toast is an exact contract.
       const toast = document.getElementById('toast');
       if (HF && toast && toast.textContent.includes(REFUSAL) && toast.textContent.trim() !== REFUSAL) HF.toast(REFUSAL);
       for (const a of document.querySelectorAll('a[href]')) {
         const u = new URL(a.href, location.href);
+        if (VARIANT !== null && u.origin === location.origin && u.pathname === '/api/export.csv') a.href = `${DATA}export.csv`;
         if (u.origin !== location.origin || u.pathname.startsWith('/docs') || u.pathname === '/api/backup') {
           a.dataset.demoBlocked = '1'; a.href = '#'; a.removeAttribute('target');
         }
       }
-      const chips = document.querySelector('#chat .chchips');
-      if (!chips || chips.textContent === QUESTIONS.join('')) return;
-      chips.replaceChildren(...QUESTIONS.map((q) => {
-        const b = document.createElement('button'); b.type = 'button'; b.className = 'fchip'; b.textContent = q;
-        b.disabled = Boolean(chips.querySelector('button:disabled'));
-        b.addEventListener('click', () => HF.chat.ask(q)); return b;
-      }));
     };
     prompts();
     new MutationObserver(prompts).observe(document.body, {subtree: true, childList: true});
@@ -229,5 +370,6 @@
     document.addEventListener('submit', (e) => { if (e.target.hasAttribute('action')) { e.preventDefault(); refuse(); } }, true);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', banner, {once: true}); else banner();
-  window.HFDemo = {route, build: BUILD, now: NOW, store: () => ({prefs}), transactions};
+  window.HFDemo = {route, build: BUILD, now: NOW, variant: VARIANT, shift: SHIFT, store: () => ({prefs}), transactions,
+    ask: {match, render, answerFor: (reply) => ANSWERS.get(reply) || null, data: () => load('ask'), live, clock: () => RealDate.now()}};   // (answers' `at` is the real clock, not the demo's)
 })();

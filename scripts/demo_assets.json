@@ -1,0 +1,114 @@
+{
+  "about": "Demo v2 (t_d31fda2a): the demo's cars and properties. Real, popular cars (no VIN) and famous public / commercial Los Angeles landmarks (never a home). Each valuation was pulled ONCE by scripts/demo_valuations_pull.py and is frozen here; build_demo.py only reads this file and never calls an API.",
+  "vehicles": [
+    {
+      "year": 2020,
+      "make": "Subaru",
+      "model": "Outback",
+      "trim": "Premium",
+      "zip": "90027",
+      "valuation": {
+        "value": 16699,
+        "source": "MarketCheck active used listings (median asking price)",
+        "listings": 9,
+        "radius_miles": 50,
+        "zip": "90027",
+        "mean": 17593,
+        "date": "2026-10-25"
+      }
+    },
+    {
+      "year": 2020,
+      "make": "Ford",
+      "model": "Mustang",
+      "trim": "GT",
+      "zip": "90028",
+      "valuation": {
+        "value": 25000,
+        "source": "MarketCheck active used listings (median asking price)",
+        "listings": 7,
+        "radius_miles": 50,
+        "zip": "90028",
+        "mean": 24989,
+        "date": "2026-10-25"
+      }
+    }
+  ],
+  "spare_vehicles": [
+    {
+      "year": 2021,
+      "make": "Chevrolet",
+      "model": "Bolt EV",
+      "trim": "LT",
+      "zip": "90012"
+    }
+  ],
+  "properties": [
+    {
+      "name": "Griffith Observatory",
+      "address": "2800 E Observatory Rd, Los Angeles, CA 90027",
+      "valuation": {
+        "value": 4259000,
+        "source": "RentCast AVM (/v1/avm/value)",
+        "low": 2998000,
+        "high": 5520000,
+        "date": "2026-10-25"
+      }
+    },
+    {
+      "name": "The Broad",
+      "address": "221 S Grand Ave, Los Angeles, CA 90012",
+      "valuation": {
+        "value": 572000,
+        "source": "RentCast AVM (/v1/avm/value)",
+        "low": 444000,
+        "high": 699000,
+        "date": "2026-10-25"
+      }
+    },
+    {
+      "name": "Capitol Records Building",
+      "address": "1750 Vine St, Los Angeles, CA 90028",
+      "valuation": {
+        "value": 804000,
+        "source": "RentCast AVM (/v1/avm/value)",
+        "low": 589000,
+        "high": 1019000,
+        "date": "2026-10-25"
+      }
+    }
+  ],
+  "spare_properties": [
+    {
+      "name": "Walt Disney Concert Hall",
+      "address": "111 S Grand Ave, Los Angeles, CA 90012"
+    },
+    {
+      "name": "Bradbury Building",
+      "address": "304 S Broadway, Los Angeles, CA 90013"
+    },
+    {
+      "name": "Union Station",
+      "address": "800 N Alameda St, Los Angeles, CA 90012"
+    },
+    {
+      "name": "Hollywood Bowl",
+      "address": "2301 N Highland Ave, Los Angeles, CA 90068"
+    },
+    {
+      "name": "LACMA",
+      "address": "5905 Wilshire Blvd, Los Angeles, CA 90036"
+    }
+  ],
+  "calls": {
+    "marketcheck": 3,
+    "rentcast": 3
+  },
+  "tried": [
+    {
+      "item": "2019 Tesla Model 3 Standard Range Plus",
+      "why": "no listings",
+      "date": "2026-10-25"
+    }
+  ]
+}

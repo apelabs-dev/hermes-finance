@@ -379,6 +379,8 @@
   function safeImg(u) {
     if (typeof u !== 'string' || !u) return null;
     try {
+      // the public demo's own invented merchant logos (t_4cb4d435): same origin, one fixed folder, nothing else
+      if (/^\/api\/merchant-logos\/[a-z0-9-]+\.png$/.test(u)) return u;
       const url = new URL(u);
       const ok = url.protocol === 'https:' && IMG_HOSTS.has(url.hostname) && !url.port && !url.username && !url.password;
       return ok ? url.href : null;
