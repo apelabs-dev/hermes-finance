@@ -122,8 +122,8 @@ def test_import_a_csv_through_add_account(browser, full):
                        " go: [...document.querySelectorAll('#sheet .btn.w')].map((b) => b.textContent)})")
     assert sheet["cols"] == ["Posted Date", "Description", "Amount", "Account"] and sheet["rows"] == 6 and sheet["go"] == ["Import 37 rows"]
     browser.js("[...document.querySelectorAll('#sheet .btn.w')][0].click()")
-    browser.js("new Promise((r) => { const t = () => document.querySelector('#sheet .done') ? r(1) : setTimeout(t, 50); t(); })")
-    assert browser.js("document.querySelector('#sheet .done b').textContent") == "37 new rows"
+    browser.js("new Promise((r) => { const t = () => document.querySelector('#sheet .impdone') ? r(1) : setTimeout(t, 50); t(); })")
+    assert browser.js("document.querySelector('#sheet .impdone b').textContent") == "37 new rows"
     conn = db.connect(full.app.db_path)
     assert conn.execute("SELECT COUNT(*) FROM transactions WHERE source = 'import'").fetchone()[0] == 37
     assert browser.problems() == []

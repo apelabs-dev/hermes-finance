@@ -46,6 +46,7 @@ from hermes_finance.cdp_client import WebSocket, WebSocketTimeout  # the minimal
 
 CHROME_PATHS = ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome",
                 "/usr/bin/chromium", "/usr/bin/chromium-browser")
+NO_REDUCE = [{"name": "prefers-reduced-motion", "value": "no-preference"}]   # (Chrome() pins it, see there)
 BLOCKED = ["https://*", "*plaid.com*"]
 # Installed before any page script runs: JS errors, unhandled rejections and CSP violations land here.
 WATCH = """window.__errs = []; window.__csp = [];
@@ -1025,6 +1026,9 @@ class Chrome:
         for method in ("Page.enable", "Runtime.enable", "Log.enable", "Network.enable"):
             self.call(method)
         self.call("Network.setBlockedURLs", urls=BLOCKED)
+        # the host's own Reduce motion never decides a test (the macOS CI runner has it on: the sync ring and the
+        # count-up never ran there); a test about reduced motion asks for it with Emulation.setEmulatedMedia
+        self.call("Emulation.setEmulatedMedia", features=NO_REDUCE)
         self.call("Page.addScriptToEvaluateOnNewDocument", source=WATCH)
         self.call("Page.addScriptToEvaluateOnNewDocument", source=PEND)   # TEST-SPEED: settled() / goto()
         self.width = self.height = 0

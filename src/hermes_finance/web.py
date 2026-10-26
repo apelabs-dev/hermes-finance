@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import shutil
+import socketserver
 import threading
 import time
 from datetime import date
@@ -933,6 +934,12 @@ class _Server(ThreadingHTTPServer):
     # a page load asks for a couple of dozen files at once (TASK-18's and TASK-19's own scripts and styles);
     # socketserver's default backlog of 5 refused some of them (connection reset) while the first were answered
     request_queue_size = 64
+
+    def server_bind(self):
+        # HTTPServer's own asks socket.getfqdn() for the address: a reverse DNS lookup, which stalls for as long as
+        # the resolver takes to give up on a machine whose DNS doesn't answer for 127.0.0.1 (the name is never used)
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def make_server(app: App, host: str, port: int) -> ThreadingHTTPServer:

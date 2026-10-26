@@ -122,7 +122,7 @@ def tap(b, selector):
         return {{x:r.x+r.width/2,y:r.y+r.height/2}};}})()""")
     b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
     b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
-    b.settle()
+    b.settled()   # (not settle(): a fixed two frames; a loaded CI runner re-rendered after it)
 
 
 VK = {"Enter": 13, "Escape": 27, " ": 32, "Backspace": 8}
@@ -134,14 +134,14 @@ def key(b, name):
     b.call("Input.dispatchKeyEvent", type="keyDown", key=name, code=code, windowsVirtualKeyCode=VK[name],
            **({"text": text} if text else {}))
     b.call("Input.dispatchKeyEvent", type="keyUp", key=name, code=code, windowsVirtualKeyCode=VK[name])
-    b.settle()
+    b.settled()   # (not settle(): a fixed two frames; a loaded CI runner re-rendered after it)
 
 
 def typed(b, text):
     """Replace what the focused field holds (its value selected first) with `text`, as typed."""
     b.js("document.activeElement.select()")
     b.call("Input.insertText", text=text)
-    b.settle()
+    b.settled()   # (not settle(): a fixed two frames; a loaded CI runner re-rendered after it)
 
 
 def q(b, selector, expr="el.textContent.trim()"):

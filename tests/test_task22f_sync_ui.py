@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 
 import sync_scene
-from cdp import Chrome, Server, find_chrome
+from cdp import NO_REDUCE, Chrome, Server, find_chrome
 from hermes_finance import api, db, insights, prefs, syncnow
 from hermes_finance.web import App
 
@@ -391,7 +391,7 @@ def test_with_reduced_motion_the_border_is_lit_and_still(chrome, site):
             b.js("window.__go()")
             b.js(OPEN)
     finally:
-        b.call("Emulation.setEmulatedMedia", features=[])
+        b.call("Emulation.setEmulatedMedia", features=NO_REDUCE)
     assert b.problems() == []
 
 

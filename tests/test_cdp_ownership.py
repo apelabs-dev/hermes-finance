@@ -203,7 +203,10 @@ def test_two_stops_at_once_stop_a_chrome_once(private, monkeypatch):
     fd, closes, real_close = c.slot, [], os.close
 
     def counting_close(n):
-        if n == fd:
+        # only the slot's own release: once it is closed its number is free, and a pipe or lock opened meanwhile (the
+        # group-alive `ps`, the ledger's lock) can get it and be closed elsewhere: not a second close of the slot (CI
+        # saw exactly that, both from one thread)
+        if n == fd and sys._getframe(1).f_code is cdp._release_slot.__code__:
             closes.append(threading.get_ident())
         return real_close(n)
     monkeypatch.setattr(os, "close", counting_close)

@@ -44,7 +44,9 @@ def test_no_private_token_in_the_test_fixtures_and_generators():
 
 def test_the_gates_catch_a_planted_word_and_leave_a_lookalike():
     # made up, none of them anyone's; given the way a local install gives its own (the env var, the word file)
-    words = dehardcode.private_words({dehardcode.PRIVATE_ENV: "Zyxwvu, Qtsr Grove ,,"}, include_own=False)
+    # (and no word file: unnamed, it is this machine's default one, whose real words aren't this test's)
+    words = dehardcode.private_words({dehardcode.PRIVATE_ENV: "Zyxwvu, Qtsr Grove ,,",
+                                      dehardcode.PRIVATE_FILE_ENV: "/nonexistent/private-words"}, include_own=False)
     assert words == {"zyxwvu", "qtsr grove"}
     m = dehardcode.Matcher(words)
     assert [t for _, _, t in m.scan("a.py", "by Zyxwvu, near QTSR GROVE")] == ["Zyxwvu", "QTSR GROVE"]

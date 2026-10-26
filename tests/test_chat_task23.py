@@ -295,9 +295,10 @@ def test_a_garbled_answer_is_a_friendly_line(app, llm):
 
 
 def test_a_timeout_is_a_friendly_line_and_declines_a_card_it_recorded(app, llm, monkeypatch):
-    monkeypatch.setattr("hermes_finance.chat.TIMEOUT", 1.0)
+    # 3 s, not 1: the first round (the card recorded) has to fit inside it, and on a loaded CI runner it didn't
+    monkeypatch.setattr("hermes_finance.chat.TIMEOUT", 3.0)
     llm.script = [{"message": call_msg("finance_set_cap", {"category": "Other Shopping", "monthly_cap": 999})},
-                  {"message": answer("late"), "delay": 2.5}]
+                  {"message": answer("late"), "delay": 6.0}]
     s, r = ask(app, "Raise it")
     assert s == 504 and "took too long" in r["error"]
     assert [x[3] for x in pending_rows()] == ["rejected"]                  # nothing left waiting from a failed turn

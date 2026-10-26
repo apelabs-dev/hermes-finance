@@ -184,7 +184,13 @@ class H(BaseHTTPRequestHandler):
     def chunkhuge(self, n):                                # a valid chunked answer of 4 MiB, at once
         self.chunks(completion({"role": "assistant", "content": "x" * (4 << 20)}), 1 << 16)
 
-srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+class Srv(ThreadingHTTPServer):
+    def server_bind(self):   # no getfqdn(): its reverse lookup of 127.0.0.1 can stall past first_line()'s 20 s on CI
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+srv = Srv(("127.0.0.1", 0), H)
 srv.daemon_threads = True
 if len(sys.argv) > 3:                                      # TLS, with the test's throwaway certificate and key
     import ssl

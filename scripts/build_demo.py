@@ -485,6 +485,12 @@ class RenameMap:
         self.paths = {tmp_paths[k]: FAKE_PATHS[k] for k in FAKE_PATHS}
         self.paths[tmp_paths["tmp"]] = "~/hermes-finance"
         self.paths[str(Path.home())] = FAKE_HOME
+        # the app shows a path under the home folder as "~/...": map that spelling too, or a build dir under $HOME
+        # (CI's TMPDIR is ~/work/_temp) leaks its random name and a seed no longer builds the same bytes
+        home = str(Path.home())
+        for p, fake in list(self.paths.items()):
+            if p.startswith(home + os.sep):
+                self.paths.setdefault("~" + p[len(home):], fake)
         self.images: dict[str, str] = {}
         self.provenance: dict[str, str] = {}   # stand-in -> what kind of value it replaced (for the report)
         banks = {k: iter(v) for k, v in INSTITUTIONS.items()}

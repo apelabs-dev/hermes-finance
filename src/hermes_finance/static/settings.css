@@ -197,10 +197,12 @@ table.map { width: 100%; border-collapse: collapse; font-size: 14px; }
 .mapacct .grow { flex: 1 1 150px; }
 .mapacct .grow > b { white-space: normal; }
 .mapacct select.selv { margin-left: auto; max-width: 100%; }  /* the whole "Add as account: <name>" when it fits */
-.done { display: flex; align-items: center; gap: 18px; margin: 18px 0; }
-.done .ring .rin > svg { width: 26px; height: 26px; color: var(--ok); }
-.done b { display: block; font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
-.done span { font-size: 14px; color: var(--mut); }
+/* the import's finish panel. Not a bare .done: that also matched a reviewed category chip (button.catb.done) and gave
+   its Transactions row 18px margins (88px instead of 52px) and a grey label. */
+.impdone { display: flex; align-items: center; gap: 18px; margin: 18px 0; }
+.impdone .ring .rin > svg { width: 26px; height: 26px; color: var(--ok); }
+.impdone b { display: block; font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+.impdone span { font-size: 14px; color: var(--mut); }
 .sheet.wide { width: min(720px, 96vw); }
 
 /* ---- light theme: these screens' own colours ---- */

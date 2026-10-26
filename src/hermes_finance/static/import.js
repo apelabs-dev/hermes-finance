@@ -177,7 +177,7 @@
   function doneSheet(st, r) {
     const month = r.last.slice(0, 7);
     openSheet([head('Imported'),
-      h('div', {class: 'done'}, ring(1, OK, 72, 7, glyph('check', 2.6)), h('div', {}, h('b', {class: 'v'},
+      h('div', {class: 'impdone'}, ring(1, OK, 72, 7, glyph('check', 2.6)), h('div', {}, h('b', {class: 'v'},
         `${plural(r.new, 'new row')}${r.skipped ? `, ${plural(r.skipped, 'duplicate')} skipped` : ''}`),
       h('span', {}, `${st.filename} · ${range(r.first, r.last)}`))),
       h('div', {class: 'fg'}, r.accounts.map((a) => h('div', {}, h('span', {}, HF.acctName(a.account.name)), h('b', {}, `${a.new} new · ${a.skipped} skipped`)))),

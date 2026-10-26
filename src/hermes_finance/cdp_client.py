@@ -266,6 +266,9 @@ class Tab:
         if not self._network:
             self.call("Network.enable")
             self._network = True
+        # a background tab can be frozen (Chrome's memory saver; the loaded CI runner's did it every time): its fetch()
+        # and its own abort timer then never run, and the call waited out its whole timeout. Thawed first, it runs.
+        self.call("Page.setWebLifecycleState", state="active")
         self.events.clear()
         req = {"url": url, "method": method, "headers": headers or {}, "body": body, "timeout": int(timeout * 1000),
                "max": MAX_TEXT}
