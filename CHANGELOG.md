@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/arspesk/hermes-finance/compare/v0.2.1...v0.2.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* macOS Ask/lookup crash fixes, plugin credentials through Hermes, setup and card-payment fixes, motion and alert layout ([2ffc430](https://github.com/arspesk/hermes-finance/commit/2ffc43095765debb1e389eae1299903fd1da0e3b))
+* **release:** mask the repository's own URL in the release scan ([2c3c130](https://github.com/arspesk/hermes-finance/commit/2c3c130d9958b9221bc587d7150c3458ec62508e))
+
 ## [0.2.1](https://github.com/arspesk/hermes-finance/compare/v0.2.0...v0.2.1) (2026-10-25)
 
 
