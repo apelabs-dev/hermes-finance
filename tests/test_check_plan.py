@@ -413,14 +413,15 @@ def test_a_bills_file_runs_the_transaction_sheet_states_that_draw_its_bill_secti
 
 def test_the_chrome_budget_is_never_more_than_four():
     """This machine's rule is a ceiling: HF_CHROMES (or the gates' / check.py's own worker settings) above 4 still
-    means at most 4 headless Chromes (the slots) and at most 4 browser workers."""
+    means at most 4 headless Chromes (the slots) and at most 3 browser workers (one slot stays free of them for a
+    nested layout gate: test_the_browser_workers_leave_a_chrome_slot_free_for_a_nested_gate)."""
     code = ("import sys; sys.path[:0] = sys.argv[1:]; import check, cdp, run_gates; "
             "print(check.CHROMES, check.BROWSER_WORKERS, cdp.SLOTS, run_gates.CHROMES)")
     env = {**check.safe_env(), "HF_CHROMES": "9", "CHECK_BROWSER_WORKERS": "12", "GATES_CHROMES": "9", "HF_NO_CHROME": "1"}
     out = subprocess.run([sys.executable, "-c", code, str(ROOT / "scripts"), str(ROOT / "tests"), str(ROOT / "src")],
                          env=env, capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stderr[-2000:]
-    assert out.stdout.split() == ["4", "4", "4", "4"], out.stdout
+    assert out.stdout.split() == ["4", "3", "4", "4"], out.stdout
 
 
 # --- TEST-SPEED review round 2: B3 (ended only once gone), B4 (a pid signalled only while it is the run's), B5 (scope) --
@@ -1002,3 +1003,20 @@ def test_the_controls_gate_dbs_are_the_ones_check_asks_for():
     import audit_controls
     assert check.CONTROL_KINDS == audit_controls.KINDS
     assert set(check.CONTROL_KINDS) <= set(check.GATE_KINDS)
+
+
+@pytest.mark.parametrize("chromes, asked, want", [("4", None, 3), ("3", None, 2), ("2", None, 1), ("1", None, 1),
+                                                  ("4", "4", 3), ("4", "2", 2)])
+def test_the_browser_workers_leave_a_chrome_slot_free_for_a_nested_gate(chromes, asked, want):
+    """Nightly 40362432360's part 1 hung 2h30: with a browser worker per slot, two files holding a Chrome each while
+    their layout gates' pool threads waited for more took every slot. The workers leave one free (when there are 2+)."""
+    import os
+    env = {k: v for k, v in os.environ.items() if k not in ("HF_CHROMES", "CHECK_BROWSER_WORKERS")}
+    env["HF_CHROMES"] = chromes
+    if asked:
+        env["CHECK_BROWSER_WORKERS"] = asked
+    out = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, 'scripts'); import check; "
+                          "print(check.CHROMES, check.BROWSER_WORKERS)"], cwd=Path(__file__).resolve().parents[1],
+                         env=env, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == [chromes, str(want)]

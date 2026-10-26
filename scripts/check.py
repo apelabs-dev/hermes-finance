@@ -85,7 +85,11 @@ INHERITED_SCOPE = ("GATE_KINDS", "PYTEST_ADDOPTS")
 MAX_CHROMES = 4   # this Mac mini's rule: a ceiling, whatever HF_CHROMES says (tests/cdp.py's slots have it too)
 CHROMES = max(1, min(MAX_CHROMES, int(os.environ.get("HF_CHROMES") or MAX_CHROMES)))
 CPU_WORKERS = int(os.environ.get("CHECK_CPU_WORKERS") or min(8, max(2, (os.cpu_count() or 4) - 2)))
-BROWSER_WORKERS = max(1, min(CHROMES, int(os.environ.get("CHECK_BROWSER_WORKERS") or CHROMES)))
+# One Chrome slot always stays free of the browser workers' own: each worker can hold a Chrome for a whole file (a
+# module fixture) while a test in it runs a layout gate (audit_layout.audit, workers=2) whose pool threads need slots
+# of their own. With a worker per slot, two such files at once held every slot and their pools waited forever (cdp's
+# deadlock check can't see it: a pool thread holds no slot itself). Nightly 40362432360 hung part 1 for 2h30 so.
+BROWSER_WORKERS = max(1, min(max(1, CHROMES - 1), int(os.environ.get("CHECK_BROWSER_WORKERS") or CHROMES)))
 GATE_KINDS = ("full", "nocaps", "empty", "history-empty", "onepoint", "features")
 AUTH_KINDS = ("signin", "signin-setup")
 ALL_DBS = GATE_KINDS + AUTH_KINDS

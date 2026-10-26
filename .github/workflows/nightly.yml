@@ -31,7 +31,8 @@ jobs:
       HERMES_PLAID: "off"
       # part 1 runs the no-browser files alongside the browser ones: on the runner's 3 cores, 4 Chromes besides left
       # a page 3 frames a second (a 400 ms count-up seen at its ends only). Part 2's gates run alone: all 4.
-      HF_CHROMES: ${{ matrix.part == 1 && '2' || '4' }}
+      # (3 for part 1: check.py keeps one slot free of its browser workers, so 2 workers as before)
+      HF_CHROMES: ${{ matrix.part == 1 && '3' || '4' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
