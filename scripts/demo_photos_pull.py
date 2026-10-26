@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""One-off: pull ONE real, freely licensed photo for each demo car and landmark and freeze it in demo/photos/.
+"""One-off: pull ONE real, freely licensed photo for each demo car and landmark (demo/photos/) and each real ticker's logo
+(demo/logos/tickers/), and freeze them.
 
     uv run python scripts/demo_photos_pull.py [--only NAME] [--skip "File:..."] [--dry-run]
 
@@ -12,7 +13,10 @@ asked, once, by hand.
 - Landmarks: Wikimedia Commons, a photo whose title names the landmark (every word of its name), JPEG / PNG at least
   photos.MIN_WIDTH wide, a free licence (photos.LICENSE_RE, never NC / ND), landscape, no interior / night / aerial
   shot first. Saved as a 1400 px wide JPEG.
-- Only Commons is called (no key, no account); >= photos.API_PAUSE seconds between calls. An item that already has a
+- Tickers (--logos AAPL VTI ...): the logo the app itself caches for a holding (logos.fetch_image on logos.FMP_URL,
+  the same request and checks as logos.refresh_security_logos), saved as demo/logos/tickers/<TICKER>.png. build_demo puts each
+  one in security_logos for a ticker the demo holds.
+- Only Commons and the FMP image URL are called (no key, no account); >= photos.API_PAUSE seconds between calls. An item that already has a
   photo is never asked again (delete its "photo" entry to pull it again; --skip names a file not to take).
 """
 
@@ -32,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 ASSETS = ROOT / "scripts" / "demo_assets.json"
 PHOTOS = ROOT / "demo" / "photos"
+LOGOS = ROOT / "demo" / "logos" / "tickers"
 WIDTH = 1400
 CAR_WIDTH = 1000
 PLACE_LAST = ("interior", "inside", "night", "aerial", "detail", "sign", "plaque", "ceiling", "lobby", "stage", "concert",
@@ -115,7 +120,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", help="pull just this car / landmark (its name)")
     ap.add_argument("--skip", action="append", default=[], help="a Commons file title not to take")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--logos", nargs="+", metavar="TICKER", help="pull these tickers' logos instead of photos")
     args = ap.parse_args(argv)
+    if args.logos:
+        from hermes_finance import logos
+        LOGOS.mkdir(parents=True, exist_ok=True)
+        for t in (x.upper() for x in args.logos):
+            if (LOGOS / f"{t}.png").exists() or args.dry_run:
+                print(f"{t}: {'kept' if (LOGOS / f'{t}.png').exists() else 'would pull'}")
+                continue
+            png = logos.fetch_image(logos.http_get, logos.FMP_URL.format(t))
+            (LOGOS / f"{t}.png").write_bytes(png)
+            print(f"{t}: {len(png)} bytes")
+        return 0
     ua = "hermes-finance demo build (one-off photo pull; https://github.com/arspesk/hermes-finance)"
     data = json.loads(ASSETS.read_text())
     PHOTOS.mkdir(parents=True, exist_ok=True)

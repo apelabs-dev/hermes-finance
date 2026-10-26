@@ -1073,6 +1073,34 @@ GOAL_LOOKS = {"Rainy day": ("shield-check", "#5fc6e8"), "New laptop": ("briefcas
 PAYOFF_LOOK = ("car", "#f5b454")
 
 
+TICKER_LOGOS = DEMO_LOGOS / "tickers"   # each real ticker's logo as the app caches it (scripts/demo_photos_pull.py --logos)
+
+
+def apply_ticker_logos(conn: sqlite3.Connection) -> list[str]:
+    """Each real ticker the demo holds (a Plaid holding or an Alpaca position) gets the logo the app would have cached
+    for it (security_logos, source 'fmp'), from demo/logos/tickers/. Without it the holding shows letters ("AA") where
+    the app shows the company's logo. Returns the tickers that got one."""
+    from hermes_finance import alpaca
+    held = {r[0].upper() for r in conn.execute("SELECT ticker_symbol FROM holdings WHERE ticker_symbol IS NOT NULL")}
+    factory, conn.row_factory = conn.row_factory, sqlite3.Row   # alpaca reads rows by name
+    try:
+        snap = alpaca.counted(conn)
+        if snap is not None:
+            held |= {p["symbol"].upper() for p in alpaca.positions(snap)}
+    finally:
+        conn.row_factory = factory
+    done = []
+    with conn:
+        for t in sorted(held):
+            f = TICKER_LOGOS / f"{t}.png"
+            if f.is_file():
+                conn.execute("INSERT INTO security_logos (ticker, png, source, fetched_at) VALUES (?, ?, 'fmp', ?) "
+                             "ON CONFLICT(ticker) DO UPDATE SET png = excluded.png, source = excluded.source, "
+                             "fetched_at = excluded.fetched_at", (t, f.read_bytes(), "2026-10-26T00:00:00Z"))
+                done.append(t)
+    return done
+
+
 def apply_goal_looks(conn: sqlite3.Connection) -> int:
     """Every demo goal gets an icon and colour from the picker. Returns how many goals changed."""
     from hermes_finance import goals
@@ -1195,11 +1223,12 @@ def build(out: Path, today: date, keep: Path | None = None, seed: int = 0, salt:
         bank_logos = apply_bank_logos(conn, rename)
         valued = apply_assets(conn, rename, today, db_path)
         rename.index_images(conn)   # the photos apply_assets put in get their demo names too
+        ticker_logos = apply_ticker_logos(conn)
         goal_looks = apply_goal_looks(conn)
         conn.close()
         log = {"generated_s": round(time.monotonic() - t0, 2), "scaled_rows": scaled, "renamed": rename.summary(),
                "bank_logos": bank_logos, "frozen_valuations": valued,
-               "goal_looks": goal_looks, "late_bills_paid": paid, "history_rows": history}
+               "goal_looks": goal_looks, "ticker_logos": ticker_logos, "late_bills_paid": paid, "history_rows": history}
         base = collect(db_path, today)
         base["meta"]["seed"] = seed
         if salt:

@@ -256,3 +256,21 @@ def test_no_bill_is_late_on_the_build_day_and_history_covers_a_year(built):
     assert all(i['next_expected'] >= today for i in items)
     month = json.loads((dist / f'demo/data/m/{today[:7]}.json').read_text())
     assert all(b['next_expected'] >= today for b in month['overview']['upcoming'])
+
+
+def test_every_real_ticker_held_shows_its_logo(built):
+    """The Investments page showed letters ("AA", "VT") for AAPL and VTI: the build kept the made-up fund's logo but
+    nothing for a real ticker, where the app shows the logo it caches from FMP. Each real ticker the demo holds now ships
+    the logo demo_photos_pull.py --logos froze, byte for byte, at the URL the holdings row asks for."""
+    import build_demo
+    _, dist = built
+    core = json.loads((dist / 'demo/data/core.json').read_text())['core']
+    held = {h['ticker'] for h in core['/api/investments']['holdings'] if h.get('ticker') and ':' not in h['ticker']}
+    assert {'AAPL', 'VTI'} <= held
+    for t in held:
+        logo = dist / f'api/securities/{t}/logo'
+        assert logo.is_file(), f'{t}: no logo in the build'
+        assert logo.read_bytes()[:8] == b'\x89PNG\r\n\x1a\n', t
+        frozen = build_demo.TICKER_LOGOS / f'{t}.png'
+        if frozen.is_file():
+            assert logo.read_bytes() == frozen.read_bytes(), t
