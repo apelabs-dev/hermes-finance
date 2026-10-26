@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/arspesk/hermes-finance/compare/v0.2.2...v0.2.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* Transactions month pill matches the other pages; demo v2 build, live-AI worker and weekly rebuild ([e31162d](https://github.com/arspesk/hermes-finance/commit/e31162d9945d72fa31608a1e3bcc3b3d9be4fc8f))
+
 ## [0.2.2](https://github.com/arspesk/hermes-finance/compare/v0.2.1...v0.2.2) (2026-10-26)
 
 
