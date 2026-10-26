@@ -37,6 +37,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-m 'not live and not webkit'"
+# A test still running after 15 min writes every thread's stack to its log (pytest's own faulthandler; nothing stops or
+# fails): a hang names its test and its line instead of eating the CI job's time silently.
+faulthandler_timeout = 900
 markers = [
     "env_dependent(capability): requires an installed Hermes host capability; offline probes give explicit skip reasons",
     "webkit: optional WebKit browser checks (run explicitly with -m webkit)",

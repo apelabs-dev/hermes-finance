@@ -44,9 +44,13 @@ jobs:
           uv run python -c 'import sys; sys.path.insert(0, "tests"); import cdp; print(cdp.find_chrome() or sys.exit("no Chrome"))'
           "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
       - name: scripts/check.py full --part ${{ matrix.part }}
+        # A hung test held part 1 until the job's 150 min ran out (run 40362432360, 2h30 vs 29 min the run before): the
+        # job was cancelled, nothing uploaded, no trace of which test. The step's own bound ends a hang as a failure
+        # with time left to upload; check.py keeps its logs on any run that doesn't pass.
+        timeout-minutes: 110
         run: uv run python scripts/check.py full --part ${{ matrix.part }}
       - name: Upload the logs (check.py keeps them when a run fails)
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: check-logs-part-${{ matrix.part }}
