@@ -293,7 +293,7 @@ def flows(run, core, vp):
     run.check(f'{vp}: transaction sheet opens', run.js("!document.getElementById('txpanel').hidden || !!document.querySelector('#modal.on')"))
     run.shot(f'{vp}-flow-transaction-sheet')
     run.open('transactions', fresh=True)
-    data = run.js("""(async()=>{const all=await (await fetch('/api/transactions?limit=500&facets=1')).json();const range=await(await fetch('/api/transactions?since=2026-09-01&until=2026-09-30&limit=500')).json();const query=all.rows.find(r=>r.merchant).merchant;const search=await(await fetch('/api/transactions?'+new URLSearchParams({q:query,limit:500}))).json();return {all:all.total,range:range.total,rangePeriod:range.period,search:search.total,query,months:Object.keys(search.months),rows:search.rows};})()""")
+    data = run.js("""(async()=>{const all=await (await fetch('/api/transactions?limit=500&facets=1')).json();const range=await(await fetch('/api/transactions?since=2026-09-01&until=2026-09-30&limit=500')).json();const ms={};for(const r of all.rows){if(r.merchant)(ms[r.merchant]??=new Set()).add(String(r.date).slice(0,7));}const query=Object.entries(ms).sort((a,b)=>b[1].size-a[1].size)[0][0];const search=await(await fetch('/api/transactions?'+new URLSearchParams({q:query,limit:500}))).json();return {all:all.total,range:range.total,rangePeriod:range.period,search:search.total,query,months:Object.keys(search.months),rows:search.rows};})()""")
     run.check(f'{vp}: all-time search and date ranges', data['all'] > data['range'] > 0 and data['search'] > 0
               and data['rangePeriod']['kind'] == 'range' and len(data['months']) > 1, {k:v for k,v in data.items() if k!='rows'})
     run.results['flows'][f'{vp}-transactions'] = {k:v for k,v in data.items() if k!='rows'}

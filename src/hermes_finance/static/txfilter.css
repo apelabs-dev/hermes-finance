@@ -204,7 +204,8 @@
   .rgpicker { top: auto; right: 0; left: 0; bottom: 0; width: 100%; max-width: none; max-height: 90dvh;
     border-radius: 20px 20px 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
   .top .mon.txwindow { justify-content: center; }
-  .mon.txwindow #monl { flex: 1; justify-content: center; white-space: normal; font-size: 13px; }
+  .mon.txwindow #monl { flex: 1; justify-content: center; white-space: normal; }   /* a month: 14.5px, as Overview/Budgets */
+  .mon.txwindow:has(#rgclear) #monl { font-size: 13px; }   /* only a range's long "Custom range · Sep 1 – Sep 30" shrinks */
   /* Ranges hide prev/next and show only the × on the right; mirror its 30px slot + 2px gap on the left
      so the label centres on the whole pill, not on the space left of the ×. */
   .mon.txwindow:has(#rgclear) { padding-left: calc(3px + 32px); }
