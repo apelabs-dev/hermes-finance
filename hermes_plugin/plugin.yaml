@@ -1,5 +1,5 @@
 name: hermes-finance
-version: 0.2.3 # x-release-please-version
+version: 0.2.4 # x-release-please-version
 description: "Answers money questions from your local hermes-finance database (spending, budgets, transactions, net worth, bills, loans, investments, cash flow, goals, categorization rules; read-only), syncs your banks on request, and files transactions, adds rules, sets budget caps and tracks bills only after you approve each change."
 kind: standalone
 manifest_version: 2
