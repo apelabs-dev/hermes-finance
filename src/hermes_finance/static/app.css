@@ -444,7 +444,9 @@ a.lnk:hover, button.lnk:hover { text-decoration: underline; }
 .mchg.pos { color: var(--ok); }
 .mchg.bad { color: var(--bad); }
 .cw { position: relative; }
-.alerts { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+/* t_3d65332a: an even grid, not content-width chips wrapping into ragged rows: 2 columns on a desktop, 1 when narrow */
+.alerts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 10px;
+  margin-bottom: 16px; }
 .al { display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 8px 14px 8px 10px; border-radius: 14px;
   background: var(--card); border: 1px solid var(--line); color: inherit; text-decoration: none; }
 .al b { font-weight: 650; }
@@ -1083,7 +1085,7 @@ button.dl:hover { background: var(--card2); border-radius: 12px; }
   /* (TASK-22c: as wide as its text, up to 92vw: centred from left: 50%, it used to shrink to half the screen, so a
      sentence became a column of short lines) */
   .toast { left: 50%; bottom: 90px; flex-wrap: wrap; width: max-content; }
-  .alerts { flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .alerts { grid-template-columns: 1fr; gap: 8px; margin-bottom: 14px; }
   .fbar .bsel { margin-left: 0; }
   .search { flex: 1 1 100%; }
   .bsum { flex-direction: column; align-items: flex-start; gap: 14px; }

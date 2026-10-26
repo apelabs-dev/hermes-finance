@@ -10,6 +10,8 @@ APP_PYTHON=@@APP_PYTHON@@
 ARTIFACTS=@@ARTIFACTS@@
 @@DATA_DIR_LINE@@
 unset PYTHONHOME
+# Credentials come from the environment Hermes runs this job with; the app reads no key file.
+export HERMES_FINANCE_CREDENTIAL_SOURCE=hermes
 export PYTHONPATH="$APP_DIR/src" PYTHONDONTWRITEBYTECODE=1
 cd "$APP_DIR" || { echo "PRE-RUN ERROR: the finance app directory is missing: $APP_DIR"; exit 0; }
 if [ ! -x "$APP_PYTHON" ]; then

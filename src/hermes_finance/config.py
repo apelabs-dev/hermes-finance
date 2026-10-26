@@ -1,10 +1,17 @@
-"""Runtime configuration: Plaid credentials (from the Hermes .env file) and data paths."""
+"""Runtime configuration: Plaid credentials (from the Hermes .env file) and data paths.
+
+Hermes mode (catalog rule 11): under the Hermes plugin (it calls use_hermes_credentials() with Hermes's get_secret) and
+in its report jobs (their entry script sets HERMES_FINANCE_CREDENTIAL_SOURCE=hermes), the keys come from Hermes only:
+the provider, else the environment Hermes runs the job with. Then no key file is opened or even looked at (the env
+file, the secrets file, Alpaca's key file), and nothing falls back to them. Without either, the app reads its files
+as before."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from . import redact
 
@@ -21,6 +28,39 @@ SLOT_LIMIT = 10  # Plaid Trial plan: 10 Items for the life of the account; remov
 
 class ConfigError(Exception):
     pass
+
+
+# --- Hermes mode (catalog rule 11) -------------------------------------------------------------------------------------
+CREDENTIAL_SOURCE_ENV = "HERMES_FINANCE_CREDENTIAL_SOURCE"   # "hermes": the keys are in the environment Hermes set
+HERMES_CREDENTIALS = ("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV", "APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "APCA_ENV")
+PLAID_NOT_CONFIGURED = ("Plaid not configured in Hermes (hermes config set PLAID_CLIENT_ID <client id> and hermes config "
+                        "set PLAID_SECRET <secret>; PLAID_ENV defaults to production)")
+_provider: Callable[[str], str | None] | None = None
+
+
+def use_hermes_credentials(getter: Callable[[str], str | None] | None) -> None:
+    """Read every key through `getter` (the plugin's wrapper of Hermes's get_secret), process-wide; None: stop."""
+    global _provider
+    _provider = getter
+
+
+def hermes_credentials() -> bool:
+    """True when the keys come from Hermes (a provider is set, or HERMES_FINANCE_CREDENTIAL_SOURCE=hermes)."""
+    return _provider is not None or (os.environ.get(CREDENTIAL_SOURCE_ENV) or "").strip().lower() == "hermes"
+
+
+def hermes_value(name: str) -> str | None:
+    """A key from Hermes: the provider's answer, else (no provider) the environment. Blank, or a provider that raises:
+    None (never a fallback to a file or, with a provider, to the environment)."""
+    getter = _provider
+    if getter is not None:
+        try:
+            value = getter(name)
+        except Exception:
+            return None
+    else:
+        value = os.environ.get(name)
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 @dataclass(frozen=True)
@@ -61,7 +101,10 @@ def secrets_file_path() -> Path:
 
 
 def key_values() -> dict[str, str]:
-    """The env file's values with the secrets file's on top (either may be missing)."""
+    """The env file's values with the secrets file's on top (either may be missing). Hermes mode: Hermes's values."""
+    if hermes_credentials():
+        found = {name: hermes_value(name) for name in (*HERMES_CREDENTIALS, "AI_API_KEY")}
+        return {k: v for k, v in found.items() if v}
     values: dict[str, str] = {}
     for path in (env_file_path(), secrets_file_path()):
         if path.exists():
@@ -70,7 +113,16 @@ def key_values() -> dict[str, str]:
 
 
 def load_settings(path: Path | None = None) -> Settings:
-    """Plaid credentials: from `path` alone when given, else the env file with the secrets file on top."""
+    """Plaid credentials: from `path` alone when given, else the env file with the secrets file on top. Hermes mode:
+    from Hermes only (no file is read, not even `path`)."""
+    if hermes_credentials():
+        values = {k: hermes_value(k) for k in PLAID_KEYS}
+        if not values["PLAID_CLIENT_ID"] or not values["PLAID_SECRET"]:
+            raise ConfigError(PLAID_NOT_CONFIGURED)
+        settings = Settings(client_id=values["PLAID_CLIENT_ID"], secret=values["PLAID_SECRET"],
+                            env=values["PLAID_ENV"] or "production")
+        redact.register(settings.secret)
+        return settings
     if path is not None or not secrets_file_path().exists():
         path = path or env_file_path()
         if not path.exists():
@@ -113,6 +165,8 @@ OFF_WORDS = ("0", "false", "off", "no")
 
 
 def _env_values(path: Path | None = None) -> dict[str, str]:
+    if hermes_credentials():   # the switches only (not secrets), from the environment Hermes runs us with; no file
+        return {name: os.environ[name] for name in FREE_SOURCE_NAMES.values() if name in os.environ}
     path = path or env_file_path()
     return parse_env_file(path) if path.exists() else {}
 

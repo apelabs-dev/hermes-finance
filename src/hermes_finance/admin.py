@@ -216,10 +216,24 @@ def suggestions(conn: sqlite3.Connection, today: date) -> list[dict[str, Any]]:
     return out
 
 
+def other_spend(conn: sqlite3.Connection, today: date) -> float:
+    """The window's spend filed under Other (t_0db639c5). Imported debits land there until a rule or the user sorts
+    them, and `suggestions` skips Other (insights.NO_SUGGEST), so the wizard needs this number to say the spending is
+    uncategorized instead of claiming there was none."""
+    since = (today - timedelta(days=SUGGEST_DAYS)).isoformat()
+    spent = conn.execute(
+        "SELECT COALESCE(SUM(v.spend), 0) FROM v_transactions v JOIN categories c ON c.id = v.category_id "
+        "WHERE c.name = 'Other' AND v.date > ? AND v.date <= ?", (since, today.isoformat())).fetchone()[0]
+    return round(spent, 2)
+
+
 def setup_suggestions(app, conn, req):
     inst = conn.execute("SELECT institution_name FROM items WHERE removed_at IS NULL ORDER BY created_at").fetchall()
+    today = app.today()
     return _json(200, {"days": SUGGEST_DAYS, "banks": [r[0] for r in inst if r[0]],
-                       "categories": suggestions(conn, app.today())})
+                       "categories": suggestions(conn, today),
+                       # whether the window's spending is only in Other: step 6's copy turns on this, not a new row
+                       "other_spend": other_spend(conn, today)})
 
 
 # --- the Settings page ---------------------------------------------------------------------------------------------

@@ -98,7 +98,9 @@ def cmd_serve(args) -> int:
     elif acc.mode == "builtin":
         emit("built-in login: every page needs a sign-in" + ("" if login_ready else
              " (not set up yet: open the page on this computer to set it up)"))
-    if not keys:
+    if not keys and config.hermes_credentials():
+        emit("no Plaid keys yet: the keys come from Hermes here (hermes config set PLAID_CLIENT_ID and PLAID_SECRET)")
+    elif not keys:
         emit(f"no Plaid keys yet: open http://127.0.0.1:{app.port}/ to set up (they're saved in "
              f"{config.secrets_file_path()})")
     sys.stdout.flush()

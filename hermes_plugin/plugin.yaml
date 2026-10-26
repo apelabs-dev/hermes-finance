@@ -36,4 +36,34 @@ config_schema:
     type: str
     default: ""
     description: "Where a new daily or weekly report job is delivered when `hermes finance crons plan` gets no --deliver: one Hermes delivery target as PLATFORM:CHAT_ID (for example discord:<channel id>). Empty: plan asks for --deliver. Existing jobs keep their own destination."
+  PLAID_CLIENT_ID:
+    type: secret
+    env: PLAID_CLIENT_ID
+    label: "Plaid client ID"
+    description: "Optional. Only finance_sync and the report jobs use it; installing and every read tool need no key. Set it with `hermes config set PLAID_CLIENT_ID <value>` or here."
+  PLAID_SECRET:
+    type: secret
+    env: PLAID_SECRET
+    label: "Plaid secret"
+    description: "Optional. Only finance_sync and the report jobs use it; installing and every read tool need no key. Set it with `hermes config set PLAID_SECRET <value>` or here."
+  PLAID_ENV:
+    type: secret
+    env: PLAID_ENV
+    label: "Plaid environment"
+    description: "Optional: production or sandbox; empty: production. Only finance_sync and the report jobs use it. Set it with `hermes config set PLAID_ENV <value>` or here."
+  APCA_API_KEY_ID:
+    type: secret
+    env: APCA_API_KEY_ID
+    label: "Alpaca key ID"
+    description: "Optional: a live account's read-only key. Only the report jobs use it; installing and every read tool need no key. Set it with `hermes config set APCA_API_KEY_ID <value>` or here."
+  APCA_API_SECRET_KEY:
+    type: secret
+    env: APCA_API_SECRET_KEY
+    label: "Alpaca secret key"
+    description: "Optional. Only the report jobs use it; installing and every read tool need no key. Set it with `hermes config set APCA_API_SECRET_KEY <value>` or here."
+  APCA_ENV:
+    type: secret
+    env: APCA_ENV
+    label: "Alpaca environment"
+    description: "Optional: must be live; paper keys are refused. Only the report jobs use it. Set it with `hermes config set APCA_ENV live` or here."
 tags: [finance, budgeting, personal]

@@ -523,7 +523,7 @@ def test_no_new_chips_and_no_glow(dash):
     css = (STATIC / "app.css").read_text()
     js = (STATIC / "app.js").read_text()
     assert ".glow" not in css and "radial-gradient" not in css and "createRadialGradient" not in js
-    assert "C.defaults.animation = false" in js and ":hover { transform" not in css.replace("\n", " ")
+    assert "animation: S.animate ?" in js and ":hover { transform" not in css.replace("\n", " ")
 
 
 def test_budgets_ui_keeps_suggestions_quiet():

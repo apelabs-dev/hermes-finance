@@ -24,9 +24,10 @@ HINTS = {"DIRECTDEP": "INCOME_WAGES", "DEP": "INCOME_WAGES", "PAYROLL": "INCOME_
          "INT": "INCOME_INTEREST_EARNED"}
 
 
-def trn(trntype: str, amount: str, name: str, fitid: str, posted: str = "20260915") -> str:
+def trn(trntype: str, amount: str, name: str, fitid: str, posted: str = "20260915",
+        memo: str | None = None) -> str:
     return (f"<STMTTRN><TRNTYPE>{trntype}<DTPOSTED>{posted}<TRNAMT>{amount}<FITID>{fitid}<NAME>{name}"
-            f"</STMTTRN>")
+            f"{f'<MEMO>{memo}' if memo else ''}</STMTTRN>")
 
 
 def ofx(*trns: str, acctid: str = "9990001234") -> bytes:
@@ -37,6 +38,30 @@ def ofx(*trns: str, acctid: str = "9990001234") -> bytes:
             "<LEDGERBAL><BALAMT>1000.00<DTASOF>20260926</LEDGERBAL></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>").encode()
 
 
+def card_ofx(*trns: str, acctid: str = "0000111122229876") -> bytes:
+    """An OFX 1 (SGML) credit-card statement (CCSTMTRS) with these transactions."""
+    return (HEAD + "<OFX><SIGNONMSGSRSV1><SONRS><STATUS><CODE>0<SEVERITY>INFO</STATUS></SONRS></SIGNONMSGSRSV1>"
+            "<CREDITCARDMSGSRSV1><CCSTMTTRNRS><TRNUID>1<CCSTMTRS><CURDEF>USD<CCACCTFROM>"
+            f"<ACCTID>{acctid}</CCACCTFROM><BANKTRANLIST>{''.join(trns)}</BANKTRANLIST>"
+            "<LEDGERBAL><BALAMT>-100.00<DTASOF>20260926</LEDGERBAL></CCSTMTRS></CCSTMTTRNRS>"
+            "</CREDITCARDMSGSRSV1></OFX>").encode()
+
+
+def creditline_ofx(*trns: str, acctid: str = "9990001234") -> bytes:
+    """A bank statement whose ACCTTYPE is CREDITLINE: a card for the payment hint, a bank account for the target."""
+    return (HEAD + "<OFX><SIGNONMSGSRSV1><SONRS><STATUS><CODE>0<SEVERITY>INFO</STATUS></SONRS></SIGNONMSGSRSV1>"
+            "<BANKMSGSRSV1><STMTTRNRS><TRNUID>1<STMTRS><CURDEF>USD<BANKACCTFROM><BANKID>999999999"
+            f"<ACCTID>{acctid}<ACCTTYPE>CREDITLINE</BANKACCTFROM><BANKTRANLIST>{''.join(trns)}</BANKTRANLIST>"
+            "<LEDGERBAL><BALAMT>1000.00<DTASOF>20260926</LEDGERBAL></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>").encode()
+
+
+CARD_TARGET = {"new": {"name": "Rewards Card", "kind": "credit_card", "credit_limit": 5000}}
+
+
+def card_targets(label: str = "Credit card ••9876") -> dict:
+    return {label: CARD_TARGET}
+
+
 def mbp() -> bytes:
     """The onboarding acceptance file: two purchases and a direct deposit, inside the last 60 days of TODAY."""
     return ofx(trn("DEBIT", "-12.34", "ACCEPTANCE COFFEE", "ACC-1", "20260905"),
@@ -44,8 +69,9 @@ def mbp() -> bytes:
                trn("DIRECTDEP", "1000.00", "ACCEPTANCE PAYROLL", "ACC-3", "20260915"))
 
 
-def commit(conn, raw: bytes, filename: str = "acceptance.ofx") -> dict:
-    return importer.commit(conn, filename, raw, {}, TODAY)
+def commit(conn, raw: bytes, filename: str = "acceptance.ofx", targets: dict | None = None,
+           today: date = TODAY) -> dict:
+    return importer.commit(conn, filename, raw, {"targets": targets} if targets else {}, today)
 
 
 def row(conn, name: str) -> dict:
@@ -247,6 +273,29 @@ def test_acceptance_file_spending_and_income(app, conn):
     assert s == 200 and sug["categories"] == []
 
 
+def test_the_wizard_says_the_spending_is_uncategorized_not_missing(app, conn):
+    """t_0db639c5: step 6 read "No spending in the last 60 days yet" for an import-only user whose debits are all in
+    Other (skipped by insights.NO_SUGGEST). `other_spend` tells the page which sentence to use."""
+    s, sug = call(app, "GET", "/api/setup/suggestions")
+    assert s == 200 and (sug["categories"], sug["other_spend"]) == ([], 0.0)      # truly empty: no sentence is wrong
+    import_mbp(app)
+    s, sug = call(app, "GET", "/api/setup/suggestions")
+    # both purchases are in Other, and the deposit is Income: the window's Other spend is the purchases only
+    assert s == 200 and sug["categories"] == [] and sug["other_spend"] == 58.01
+
+
+def test_other_spend_is_window_only_and_ignores_rows_filed_elsewhere(app, conn):
+    import_mbp(app)
+    conn.execute("UPDATE transactions SET date = '2026-01-05' WHERE name = 'ACCEPTANCE COFFEE'")   # outside the 60 days
+    conn.commit()
+    s, sug = call(app, "GET", "/api/setup/suggestions")
+    assert s == 200 and sug["other_spend"] == 45.67
+    classify.add_rule(conn, "name", "ACCEPTANCE GROCER", "Groceries", created_from="user")
+    classify.apply(conn)
+    s, sug = call(app, "GET", "/api/setup/suggestions")
+    assert s == 200 and sug["other_spend"] == 0.0 and [c["category"] for c in sug["categories"]] == ["Groceries"]
+
+
 def test_acceptance_file_with_the_users_rules_suggests_their_budgets(app, conn):
     classify.add_rule(conn, "name", "ACCEPTANCE COFFEE", "Coffee", created_from="user")
     classify.add_rule(conn, "name", "ACCEPTANCE GROCER", "Groceries", created_from="user")
@@ -259,3 +308,85 @@ def test_acceptance_file_with_the_users_rules_suggests_their_budgets(app, conn):
         {"category": "Groceries", "spent": 45.67, "days": 60, "suggested": insights.round_cap(45.67 * 30 / 60), "cap": None},
         {"category": "Coffee", "spent": 12.34, "days": 60, "suggested": insights.round_cap(12.34 * 30 / 60), "cap": None}]
     assert [c["suggested"] for c in sug["categories"]] == [25.0, 25.0]
+
+
+# --- a credit-card statement's own payment line: a transfer, not Other ------------------------------------------------
+
+@pytest.fixture
+def oct_app(conn):
+    a = App(config.db_path(), lambda: None, "127.0.0.1", 8765)
+    a.today = lambda: date(2026, 10, 25)
+    return a
+
+
+def test_a_card_statements_payment_row_is_a_transfer(app, conn):
+    commit(conn, card_ofx(trn("DEBIT", "-58.01", "ACCEPTANCE MARKET", "CC-1", "20260905"),
+                          trn("CREDIT", "512.34", "PAYMENT THANK YOU", "CC-2", "20260920")),
+           "card.qfx", card_targets())
+    r = row(conn, "PAYMENT THANK YOU")
+    assert (r["pfc_primary"], r["pfc_detailed"]) == ("LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT")
+    assert (r["category"], r["category_source"], r["amount"]) == ("Transfers", "plaid", -512.34)
+    assert r["raw"]["trntype"] == "CREDIT"
+    assert numbers(app) == (58.01, 0.0, 58.01)     # the payment is out of spending
+
+
+def test_the_same_payment_on_a_bank_statement_stays_in_other(app, conn):
+    commit(conn, ofx(trn("DEBIT", "-58.01", "ACCEPTANCE MARKET", "B-1", "20260905"),
+                     trn("CREDIT", "512.34", "PAYMENT THANK YOU", "B-2", "20260920")))
+    r = row(conn, "PAYMENT THANK YOU")
+    assert (r["category"], r["pfc_primary"], r["pfc_detailed"]) == ("Other", None, None)
+    assert numbers(app) == (-454.33, 0.0, -454.33)    # still nets against spending
+
+
+def test_a_card_refund_stays_in_other(app, conn):
+    commit(conn, card_ofx(trn("DEBIT", "-58.01", "ACCEPTANCE MARKET", "C-1", "20260905"),
+                          trn("CREDIT", "24.99", "PIXEL BOOKS &amp; GAMES", "C-2", "20260914", memo="RETURN")),
+           "card.qfx", card_targets())
+    r = row(conn, "PIXEL BOOKS & GAMES")
+    assert (r["category"], r["pfc_primary"], r["pfc_detailed"]) == ("Other", None, None)
+    assert r["amount"] == -24.99
+    assert numbers(app) == (33.02, 0.0, 33.02)     # a refund still reduces spending
+
+
+@pytest.mark.parametrize("before", [True, False])
+def test_a_user_rule_wins_over_the_card_payment_hint(conn, before):
+    if before:
+        classify.add_rule(conn, "name", "PAYMENT THANK YOU", "Groceries", created_from="user")
+    commit(conn, card_ofx(trn("CREDIT", "512.34", "PAYMENT THANK YOU", "R-1", "20260920")),
+           "card.qfx", card_targets())
+    r = row(conn, "PAYMENT THANK YOU")
+    if before:
+        assert (r["category"], r["category_source"]) == ("Groceries", "rule")
+    else:
+        assert (r["category"], r["category_source"]) == ("Transfers", "plaid")
+        saved = classify.add_rule(conn, "name", "PAYMENT THANK YOU", "Groceries", created_from="user")
+        assert saved.refiled == 1
+    classify.apply(conn)
+    r = row(conn, "PAYMENT THANK YOU")
+    assert (r["category"], r["category_source"]) == ("Groceries", "rule")
+    assert r["pfc_detailed"] == "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"   # the hint is on the row, the rule decides
+
+
+def test_a_creditline_bank_statements_payment_row_is_a_transfer(conn):
+    commit(conn, creditline_ofx(trn("CREDIT", "250.00", "ONLINE PAYMENT", "CL-1", "20260920")),
+           "creditline.ofx", card_targets("Credit line ••1234"))
+    r = row(conn, "ONLINE PAYMENT")
+    assert (r["category"], r["category_source"], r["pfc_primary"], r["pfc_detailed"]) == (
+        "Transfers", "plaid", "LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT")
+
+
+def test_acceptance_a_card_payment_does_not_make_the_month_negative(oct_app, conn):
+    """The retest shape: October purchases and a paycheck, then the card's CREDIT PAYMENT THANK YOU."""
+    day = date(2026, 10, 25)
+    commit(conn, ofx(trn("DEBIT", "-12.34", "ACCEPTANCE COFFEE", "ACC-1", "20261020"),
+                     trn("DEBIT", "-45.67", "ACCEPTANCE GROCER", "ACC-2", "20261021"),
+                     trn("DIRECTDEP", "1000.00", "ACCEPTANCE PAYROLL", "ACC-3", "20261022")),
+           "acceptance.ofx", today=day)
+    commit(conn, card_ofx(trn("CREDIT", "512.34", "CREDIT PAYMENT THANK YOU", "ACC-4", "20261022")),
+           "card.qfx", card_targets(), today=day)
+    s, ov = call(oct_app, "GET", "/api/overview?month=2026-10")
+    assert s == 200
+    assert (ov["summary"]["mtd"], ov["summary"]["income"]) == (58.01, 1000.0)
+    assert tooldefs.run_read("finance_spend", {}, config.db_path(), day)["total"] == 58.01
+    assert (row(conn, "CREDIT PAYMENT THANK YOU")["category"],
+            row(conn, "CREDIT PAYMENT THANK YOU")["category_source"]) == ("Transfers", "plaid")

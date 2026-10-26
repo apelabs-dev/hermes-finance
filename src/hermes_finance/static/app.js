@@ -1247,7 +1247,8 @@
     C.defaults.font.size = 12.5;
     C.defaults.responsive = true;
     C.defaults.maintainAspectRatio = false;
-    C.defaults.animation = false;  // no motion: charts draw once, in place
+    // (t_acbcd9f4: no global `C.defaults.animation = false`: Chart.js resolves every animation's settings through that
+    // default, so a chart's own animation could never turn back on. chart() sets it per chart instead)
     Object.assign(C.defaults.plugins.tooltip, {backgroundColor: '#1d2331', borderColor: '#333c53', borderWidth: 1, padding: 11,
       bodyAlign: 'right', footerAlign: 'right', titleColor: '#eef0f6', bodyColor: '#d3d8e2', footerColor: '#9ba2b6', boxPadding: 4, usePointStyle: true,
       titleFont: {weight: '600', size: 13}, bodyFont: {size: 13}, footerFont: {size: 12.5, weight: '500'}});
@@ -1262,8 +1263,15 @@
       canvas.parentElement.replaceWith(msgBox('Chart unavailable', 'The chart library did not load. Reload the page.'));
       return null;
     }
+    // t_acbcd9f4: a chart grows in (400ms) after a page or month switch; a refresh in place and reduced motion draw it
+    // still, and hover and tooltips are always instant
+    config.options = {...config.options, animation: S.animate ? {duration: 400, easing: 'easeOutCubic'} : false,
+      transitions: {active: {animation: {duration: 0}}}};
     const c = new window.Chart(canvas, config);
     S.charts.push(c);
+    // a chart is built before its canvas is on the page, so its first draw is a resize (never animated): once it's
+    // attached, put it back at the baseline and grow it in
+    if (S.animate) requestAnimationFrame(() => { if (S.charts.includes(c) && c.canvas && c.canvas.isConnected) { c.reset(); c.update(); } });
     return c;
   }
 
@@ -1600,6 +1608,10 @@
     const switched = MONTH_PAGES.has(page) && page === S.page && S.month !== prevMonth;  // polish P3a: hero count-up
     finishCounts();
     const monthChanged = S.counts && S.counts.month !== S.month;
+    // t_acbcd9f4 (motion A): the bars refill and the charts grow on a page switch or a month switch (and the first
+    // load), not on a refresh in place after a write or a filter change on the same page
+    const moved = page !== S.page || switched;
+    S.animate = moved && !reducedMotion();
     S.cameFrom = S.page ? S.lastHash : null;  // the back arrow goes back in the app when you came from it
     S.lastHash = location.hash;
     S.page = page;
@@ -1625,11 +1637,13 @@
     destroyCharts();
     if (monthChanged) loadCounts();
     const tk = ++S.token;
+    document.body.classList.toggle('bars-done', !moved);
     COUNT.tk = switched ? tk : 0;
     window.scrollTo(0, 0);
     document.body.classList.toggle('board', BOARDS.has(page));  // first-run setup: no app chrome
     readInk();
-    RENDER[page](tk).then(() => {  // the bars have filled once: later renders don't animate them again
+    RENDER[page](tk).then(() => {  // the bars have filled: anything drawn later on this page doesn't animate them again
+      if (tk === S.token) S.animate = false;   // nor its charts: a toggle or drill redrawn in place stays still
       if (tk === S.token && !document.body.classList.contains('bars-done')) setTimeout(() => document.body.classList.add('bars-done'), 400);
     }).catch((e) => {
       if (tk === S.token) fill($('page'), errorCard(e, () => route()));
@@ -2922,6 +2936,8 @@
       items.push(h('a', {class: 'al ok', href: '#/accounts'}, ibadge('checkc', RGB.ok),
         h('span', {}, n ? `All ${plural(n, 'connection')} healthy` : 'No banks connected yet')));
     }
+    // t_3d65332a: a broken connection (it has a Reconnect button) comes first: it's the one that needs you
+    items.sort((a, b) => (b.tagName === 'DIV') - (a.tagName === 'DIV'));  // stable: the rest keep their order
     return h('div', {class: 'alerts'}, items);
   }
 

@@ -219,7 +219,8 @@ def _lookup(host: str, port: int, deadline: float) -> list[tuple]:
         raise TimeoutError(f"looking up {host} took too long") from None
     finally:
         if proc.poll() is None:   # still running, so never reaped: its pid and its group are still its own
-            with contextlib.suppress(ProcessLookupError):
+            # (gone, or a zombie-only group: macOS refuses a killpg there with EPERM rather than ESRCH)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()           # (SIGKILL can't be caught or ignored)
         proc.stdout.close()

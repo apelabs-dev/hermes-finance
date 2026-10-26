@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SCRIPT_DIR = "hermes-finance"   # the plugin's directory under $HERMES_HOME/scripts
-SCRIPT_VERSION = 1              # the entry script template's version (in its header and the plugin state)
+SCRIPT_VERSION = 2             # the entry script template's version (in its header and the plugin state)
 DAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")   # cron day-of-week 0..6
 TIME_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
 PROMPTS = Path(__file__).resolve().parent / "prompts"

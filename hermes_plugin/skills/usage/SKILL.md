@@ -19,6 +19,9 @@ below; never from memory, never estimated.
 - `finance_sync` pulls what the banks already sent (no approval needed; one sync a minute per bank) and says what
   changed. `refresh=true` first asks the banks for fresh data: only if the user allows it in Settings, and on a paid
   Plaid plan the user approves it (Plaid bills each refresh). New items land a few minutes later: sync again then.
+- If `finance_sync` says Plaid isn't configured in Hermes, tell the user to set the keys themselves with
+  `hermes config set PLAID_CLIENT_ID <client id>` and `hermes config set PLAID_SECRET <secret>` (and `PLAID_ENV`
+  if it isn't production), or in the Hermes Desktop's plugin settings. Never ask them to paste a key into the chat.
 - Net worth may carry a "Payment in transit" line: a card payment that left the bank but the card hasn't posted yet,
   counted as already paid. Mention it when it explains a change.
 - Dates are the local dates the banks report; "today" is the machine's local date.

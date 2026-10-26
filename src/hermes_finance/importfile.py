@@ -111,6 +111,7 @@ class OfxStatement:
     account_label: str               # e.g. "Checking ••1234": the type + the last 4 of ACCTID, never the full number
     account_last4: str | None
     kind: str                        # "bank" or "credit_card"
+    card: bool                       # the statement's own account is a card (CCSTMTRS, or a bank STMTRS with ACCTTYPE CREDITLINE)
     subtype: str | None              # checking | savings | money_market | cd for a bank statement, else None
     currency: str | None
     balance: float | None            # LEDGERBAL as an app balance (a card's balance owed as a POSITIVE number)
@@ -776,7 +777,7 @@ def _ofx_amount(text: str | None) -> Decimal | None:
 
 
 def _statement(stmt: ET.Element) -> OfxStatement:
-    card = stmt.tag == "CCSTMTRS"
+    cc = stmt.tag == "CCSTMTRS"
     acctid = accttype = currency = balamt = dtasof = None
     for path, tag, text in _leaves(stmt, _NOT_THE_STATEMENT):
         if tag == "ACCTID" and acctid is None and ("BANKACCTFROM" in path or "CCACCTFROM" in path):
@@ -790,13 +791,14 @@ def _statement(stmt: ET.Element) -> OfxStatement:
         elif tag == "DTASOF" and dtasof is None and "LEDGERBAL" in path:
             dtasof = text
     last4 = re.sub(r"[^0-9A-Za-z]", "", acctid or "")[-4:] or None
-    if card:
+    card = cc or accttype == "CREDITLINE"      # a credit-line bank statement is a card for the payment hint
+    if cc:
         name, subtype = "Credit card", None
     else:
         name, subtype = _ACCOUNT_TYPES.get(accttype or "", ("Bank account", None))
     label = f"{name} ••{last4}" if last4 else name
     balance = _ofx_amount(balamt)
-    if balance is not None and card:
+    if balance is not None and cc:
         balance = -balance          # OFX: what a card owes is negative; the app shows it owed as positive
 
     rows = []
@@ -816,7 +818,7 @@ def _statement(stmt: ET.Element) -> OfxStatement:
         trntype = values.get("TRNTYPE", "").strip().upper() or None
         rows.append(Row(posted, " ".join(_unescape(description).split()), _cents(-amount), label,
                         _unescape(fitid) if fitid else None, i, trntype))   # OFX TRNAMT is negative for money out
-    return OfxStatement(label, last4, "credit_card" if card else "bank", subtype, currency,
+    return OfxStatement(label, last4, "credit_card" if cc else "bank", card, subtype, currency,
                         None if balance is None else _cents(balance), _ofx_date(dtasof), rows)
 
 

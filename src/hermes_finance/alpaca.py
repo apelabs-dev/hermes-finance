@@ -13,6 +13,10 @@ one GET /v2/account on the live host first; only a 200 for an ACTIVE account is 
 counted or asked. The secret is never sent back, logged or exported. HERMES_ALPACA=off switches every request off (the
 tests and the gates set it; a process they start inherits it).
 
+Hermes mode (config.hermes_credentials(), catalog rule 11): the same three values come from Hermes (hermes config set
+APCA_API_KEY_ID / APCA_API_SECRET_KEY / APCA_ENV) and the key file is never opened or looked at. Connect and Remove are
+refused there (the keys are Hermes's), and a sync without keys does nothing: it never leaves saved snapshots out.
+
 `finance alpaca-sync` (the same daily run as `finance revalue`) saves one snapshot a day: the account's status, cash,
 equity = cash + the positions' market value, and each position (quantity, price, value). Net worth counts the latest
 snapshot, and only while Alpaca says the account is ACTIVE: any other status is shown as an error and counts nothing.
@@ -56,6 +60,10 @@ NAME = "Alpaca"
 SITE = "https://alpaca.markets"     # where its logo comes from (logos.site_icon, like a bank without a Plaid logo)
 ACTIVE = "ACTIVE"
 PAPER_MESSAGE = "That's a paper-trading key. Use your live account's key, or skip Alpaca"
+ALPACA_NOT_CONFIGURED = ("Alpaca not configured in Hermes (hermes config set APCA_API_KEY_ID <key id>, hermes config set "
+                         "APCA_API_SECRET_KEY <secret> and hermes config set APCA_ENV live); nothing to do")
+IN_HERMES = ("Alpaca's key is kept in Hermes here: set or remove it with hermes config set (APCA_API_KEY_ID, "
+             "APCA_API_SECRET_KEY, APCA_ENV live) or the Hermes Desktop's plugin settings")
 KEY_ID_RE = re.compile(r"[A-Za-z0-9]{8,64}")
 SECRET_RE = re.compile(r"[A-Za-z0-9/+=_-]{16,128}")
 
@@ -75,14 +83,22 @@ class Keys:
 
 
 def load_keys(path=None) -> Keys | None:
-    """The live keys from the key file, or None when there is no key file. Refused: a paper key, or keys missing."""
-    path = path or config.alpaca_key_path()
-    if not path.exists():
-        return None
-    values = config.parse_env_file(path)
+    """The live keys from the key file, or None when there is no key file. Refused: a paper key, or keys missing.
+    Hermes mode: from Hermes (None when neither key is set there), never from a file, with the same checks."""
+    if config.hermes_credentials():
+        values = {k: config.hermes_value(k) or "" for k in KEY_NAMES}
+        if not values["APCA_API_KEY_ID"] and not values["APCA_API_SECRET_KEY"]:
+            return None
+        where = "Hermes"
+    else:
+        path = path or config.alpaca_key_path()
+        if not path.exists():
+            return None
+        values = config.parse_env_file(path)
+        where = str(path)
     key_id, secret = (values.get("APCA_API_KEY_ID") or "").strip(), (values.get("APCA_API_SECRET_KEY") or "").strip()
     if not key_id or not secret:
-        raise Refused(f"{path} needs APCA_API_KEY_ID and APCA_API_SECRET_KEY")
+        raise Refused(f"{where} needs APCA_API_KEY_ID and APCA_API_SECRET_KEY")
     redact.register(secret)
     env = (values.get("APCA_ENV") or "").strip().lower()
     if env != "live":
@@ -225,6 +241,8 @@ def sync(conn: sqlite3.Connection, day: date, key_path=None, fetch_logo=None) ->
     except Refused as e:
         return {"ok": False, "action": "refused", "message": str(e)}
     if keys is None:
+        if config.hermes_credentials():   # where the keys come from changed: saved snapshots stay as they are
+            return {"ok": True, "action": "none", "message": ALPACA_NOT_CONFIGURED}
         if forget(conn):
             return {"ok": True, "action": "removed", "message": "no key file any more: Alpaca is no longer shown or counted"}
         return {"ok": True, "action": "none", "message": f"no key file ({config.alpaca_key_path()}): nothing to do"}
@@ -263,6 +281,8 @@ def _clean_key(key_id: Any, secret: Any) -> Keys:
 
 def write_key_file(keys: Keys, path: Path | None = None) -> Path:
     """The key file, 0600 in a 0700 folder, written atomically (a temp file in the same folder, then renamed over)."""
+    if config.hermes_credentials():
+        raise Refused(IN_HERMES)
     path = Path(path or config.alpaca_key_path())
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -288,6 +308,8 @@ def connect(conn: sqlite3.Connection, key_id: Any, secret: Any, day: date, path:
     is written and today's snapshot saved (its positions asked once). Returns {equity, cash, positions, status}; the
     secret is never in it. Refused (nothing written): a paper key (PK..., or a 401 from the live host), a key Alpaca
     doesn't accept, an account not ACTIVE."""
+    if config.hermes_credentials():
+        raise Refused(IN_HERMES)
     keys = _clean_key(key_id, secret)
     try:
         account = _get("GET", "/v2/account", keys)
@@ -319,6 +341,8 @@ def connect(conn: sqlite3.Connection, key_id: Any, secret: Any, day: date, path:
 
 def disconnect(conn: sqlite3.Connection, path: Path | None = None) -> dict[str, Any]:
     """Remove the key file and leave every snapshot out of every page and total."""
+    if config.hermes_credentials():
+        raise Refused(IN_HERMES)
     path = Path(path or config.alpaca_key_path())
     existed = path.exists()
     if existed:
@@ -328,7 +352,9 @@ def disconnect(conn: sqlite3.Connection, path: Path | None = None) -> dict[str, 
 
 
 def key_state(path: Path | None = None) -> dict[str, Any]:
-    """Whether a key file is there (never its contents)."""
+    """Whether a key file is there (never its contents). Hermes mode: whether Hermes has both keys (no file looked at)."""
+    if config.hermes_credentials():
+        return {"key_file": bool(config.hermes_value("APCA_API_KEY_ID") and config.hermes_value("APCA_API_SECRET_KEY"))}
     path = Path(path or config.alpaca_key_path())
     return {"key_file": path.exists()}
 

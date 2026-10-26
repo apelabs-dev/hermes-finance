@@ -653,7 +653,7 @@ and the connections footer with **Add account** and **Settings**. Settings holds
 security, the AI provider, Connect other agents (MCP), Sync & alerts, Valuations, Region (currency and locale for every
 amount and date), Appearance (dark / light / system) and Data (export CSV, backup, import); everything saves as it
 changes. Add account → **Import a file** reads a bank's CSV (the columns are matched in a preview), OFX or QFX into a
-manual account; rows already there are skipped. Imported rows go through your rules like synced ones; one no rule matches lands in Other (Needs review), except money coming in on an OFX / QFX row whose type says what it is: a direct deposit, deposit or payroll, or interest is filed under Income (a generic credit is not: it is also card payments and refunds). The look: Inter (self-hosted), 15px body, icon card titles,
+manual account; rows already there are skipped. Imported rows go through your rules like synced ones; one no rule matches lands in Other (Needs review), except money coming in on an OFX / QFX row whose type says what it is: a direct deposit, deposit or payroll, or interest is filed under Income (a generic credit is not: a bank statement's credit and a refund stay in Other, while a card statement's own payment line is filed as a transfer). The look: Inter (self-hosted), 15px body, icon card titles,
 rings, bars, sparklines and category badges, no glows and no motion (charts draw once).
 
 - **Overview**: left to spend + daily allowance, on-pace projection (and how it's made), month-to-date vs

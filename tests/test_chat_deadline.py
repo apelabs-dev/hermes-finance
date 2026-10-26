@@ -367,6 +367,45 @@ def test_a_lookup_that_hangs_is_killed_at_the_deadline_and_leaves_nothing_runnin
     assert marker not in processes()
 
 
+def test_a_lookup_group_macos_refuses_to_kill_still_ends_as_a_timeout(monkeypatch):
+    """_lookup's cleanup, like _isolated's: a child still running at the deadline is killed with its group, and on macOS
+    a group holding only an unreaped zombie refuses killpg with EPERM (errno 1), not ESRCH. That refusal must not
+    escape the cleanup as a PermissionError (a 500): the lookup still ends as its TimeoutError, and the child is gone
+    when the test ends, whether the cleanup succeeded or not."""
+    marker = f"hf-chat-deadline-lookup-eperm-{os.getpid()}-{time.monotonic_ns()}"
+    # (killpg is faked below, so the cleanup's wait() reaps the child when it ends by itself at 3 s)
+    monkeypatch.setattr(chat, "LOOKUP", f"import time; time.sleep(3)  # {marker}")
+    refused, procs = [], []
+    real_killpg, real_popen = os.killpg, subprocess.Popen   # (so this test can still kill the child it started)
+
+    def eperm(pgid, sig):
+        refused.append((pgid, sig))      # what macOS does when the group's only member is a zombie
+        raise PermissionError(1, "Operation not permitted")
+
+    def popen(*a, **k):
+        proc = real_popen(*a, **k)
+        procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(os, "killpg", eperm)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(chat.subprocess, "Popen", popen)
+    try:
+        with pytest.raises(TimeoutError):
+            chat._lookup("localhost", 80, time.monotonic() + 0.5)
+    finally:
+        for proc in procs:               # only what this test started, killed and reaped however it ended
+            if proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    real_killpg(proc.pid, signal.SIGKILL)
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=5)
+    assert len(procs) == 1 and refused == [(procs[0].pid, signal.SIGKILL)], (procs, refused)
+    assert marker not in processes()
+
+
 def test_an_outside_name_is_refused_by_the_test_guard_before_any_lookup(monkeypatch):
     """No test reaches a real resolver through the lookup child: the in-process getaddrinfo (conftest's guard) sees the
     name first and refuses it, and no child is started."""

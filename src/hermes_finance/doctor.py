@@ -123,6 +123,8 @@ def plaid(values: dict[str, str]) -> Check:
         missing.append("PLAID_ENV")
     if missing:
         what = " and ".join(missing) + (" (PLAID_ENV must be production or sandbox)" if "PLAID_ENV" in missing else "")
+        if config.hermes_credentials():   # no file is looked at: the keys are Hermes's
+            return Check("plaid", "missing", f"{what} not set in Hermes (hermes config set NAME VALUE)", keys, missing)
         return Check("plaid", "missing", f"{what} not set (env file {config.env_file_path()}, secrets file "
                      f"{config.secrets_file_path()})", keys, missing)
     if os.environ.get("HERMES_PLAID") == "off":
@@ -174,6 +176,15 @@ def alpaca_check() -> Check:
     keys = ["APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "APCA_ENV", "HERMES_ALPACA_KEY_FILE"]
     if (os.environ.get(alpaca.KILL_ENV) or "").strip().lower() == "off":   # first: the key file isn't touched at all
         return Check("alpaca", "off", f"disabled ({alpaca.KILL_ENV}=off)", keys)
+    if config.hermes_credentials():   # from Hermes; the key file isn't looked at
+        try:
+            k = alpaca.load_keys()
+        except alpaca.Refused:
+            return Check("alpaca", "error", "the key in Hermes is refused: it needs a live read-only key "
+                         "(APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_ENV=live)", keys)
+        if k is None:
+            return Check("alpaca", "missing", "not set in Hermes (hermes config set NAME VALUE)", keys, keys[:3])
+        return Check("alpaca", "ok", "key in Hermes", keys)
     path = config.alpaca_key_path()
     try:
         k = alpaca.load_keys(path)
@@ -229,9 +240,10 @@ def run() -> dict[str, Any]:
         conn.close()
     assert [c.name for c in checks] == [n for n, _ in INTEGRATIONS]
     missing = [c.name for c in checks if c.status in BAD]
+    files = ({"credentials": "Hermes"} if config.hermes_credentials() else
+             {"env_file": str(config.env_file_path()), "secrets_file": str(config.secrets_file_path())})
     return {"schema": SCHEMA, "ok": not missing, "missing": missing,
-            "integrations": [asdict(c) for c in checks],
-            "files": {"env_file": str(config.env_file_path()), "secrets_file": str(config.secrets_file_path()), **facts}}
+            "integrations": [asdict(c) for c in checks], "files": {**files, **facts}}
 
 
 def lines(report: dict[str, Any]) -> list[str]:

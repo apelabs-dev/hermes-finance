@@ -162,12 +162,15 @@ def check(paths: Sequence[str], read, matcher: Matcher) -> List[Tuple[str, int, 
 #   email          an email address outside the reserved/placeholder domains (PLACEHOLDER_DOMAINS)
 #   long-id        a 17-20 digit number (a Discord snowflake, an account id) that isn't obviously made up
 #   hex-id         a standalone 12-hex id (a cron job id) that isn't obviously made up
-# The exact public strings masked before matching, each with its reason. Nothing else is allowed by text. None today.
+# The exact public strings masked before matching, each with its reason. Nothing else is allowed by text. Each entry
+# masks itself here too, so the domain's private word still hits anywhere else (another subdomain included).
 # The repository's own URL is the one runtime mask (own_repo_slugs): the release tooling writes it into CHANGELOG.md
 # (compare and commit links), and once the repo is reachable at that URL the owner's login is public there anyway.
 # The mask is the exact `github.com/<owner>/<repo>` string, read at runtime and never written in a tracked file, so
 # the login alone stays a private word everywhere else.
-ALLOWED_PUBLIC: dict = {}
+ALLOWED_PUBLIC: dict = {
+    "financing.apelabs.dev": "the public read-only demo's hostname, linked from the README (owner-approved 2026-10-25)",
+}
 # Where the repository's own URL comes from (each optional): CI's GITHUB_REPOSITORY (`owner/repo`), the development
 # checkout's HERMES_FINANCE_PUBLIC_URL (as scripts/sync_release.py uses), and the scanned checkout's git remotes.
 REPO_SLUG_ENV = ("GITHUB_REPOSITORY", "HERMES_FINANCE_PUBLIC_URL")

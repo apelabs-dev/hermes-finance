@@ -11,10 +11,12 @@ import would do (preview) and does it (commit):
     saved import one.
   * imported rows get source 'import' and go through the same rules and classification as synced ones
     (classify.apply; the AI queue picks up what no rule files). A file has no Plaid category, so a row no rule
-    matches is filed under Other, except money coming in on an OFX row whose TRNTYPE says what it is (OFX_INCOME_HINTS:
-    a direct deposit, payroll or interest; not a generic CREDIT, which is also card payments and refunds): it is saved with the Plaid income code that type means, so it
-    files under Income like a synced paycheck, on every later classify.apply too. A rule still wins over the hint, and
-    an AI or user decision is never touched.
+    matches is filed under Other, except money coming in on an OFX row whose TRNTYPE says what it is
+    (OFX_INCOME_HINTS: a direct deposit, payroll or interest), which is saved with the Plaid income code that type
+    means, or a credit-card statement's own payment line (a CREDIT or PAYMENT row naming a payment), saved as
+    LOAN_PAYMENTS / LOAN_PAYMENTS_CREDIT_CARD_PAYMENT so it files under Transfers. A bank statement's generic
+    credit, a card refund and a CSV row stay Other. A rule still wins over either hint, and an AI or user decision
+    is never touched.
   * the account's balance is what you give it (an OFX file's ledger balance is offered): transactions never move a
     manual account's balance, so no total changes until rows are imported, and then only spending does.
 """
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from datetime import date
@@ -44,8 +47,11 @@ OFX_INCOME_HINTS = {
     "PAYROLL": ("INCOME", "INCOME_WAGES"),
     "INT": ("INCOME", "INCOME_INTEREST_EARNED"),
 }
-# Not CREDIT: OFX uses it for any money in, so a card payment ("PAYMENT THANK YOU") or a
-# refund would count as income. A CREDIT row stays unhinted: Other (Needs review), or what a rule says.
+# Not CREDIT: OFX uses it for any money in, so a card payment or a refund would count as income. A CREDIT row stays
+# unhinted: Other (Needs review), or what a rule says. The exception is a card statement's own payment line
+# (_pfc_hint): it is a transfer, not spending or income.
+CARD_PAYMENT_HINT = ("LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT")
+_CARD_PAYMENT_WORDS = re.compile(r"\b(?:PAYMENT|PAYMT|PMT)\b", re.IGNORECASE)
 
 
 class ImportRefused(ValueError):
@@ -79,13 +85,14 @@ def _parse(filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict
             for r in rows:
                 groups[r.account or label].append(r)
             out_groups = [{"label": k, "kind": "bank", "subtype": None, "balance": None, "balance_date": None,
-                           "institution": None, "rows": v} for k, v in groups.items()]
+                           "institution": None, "rows": v, "card": False} for k, v in groups.items()]
             info = {"headers": pv.headers, "sample": pv.sample, "mapping": mapping, "guess": pv.guess,
                     "date_format": date_format, "date_formats": pv.date_formats, "sign": sign, "delimiter": pv.delimiter}
         else:
             stmts = importfile.ofx_statements(raw)
             out_groups = [{"label": s.account_label, "kind": s.kind, "subtype": s.subtype, "balance": s.balance,
-                           "balance_date": s.balance_date, "institution": getattr(s, "institution", None), "rows": s.rows}
+                           "balance_date": s.balance_date, "institution": getattr(s, "institution", None),
+                           "rows": s.rows, "card": s.card}
                           for s in stmts]
             info = {}
     except importfile.ImportFileError as e:
@@ -206,13 +213,19 @@ def _tid(account_id: int, row, n: int) -> str:
     return "imp_" + hashlib.sha256(basis.encode()).hexdigest()[:24]
 
 
-def _pfc_hint(row) -> tuple[str | None, str | None]:
-    """(pfc_primary, pfc_detailed) for an OFX row whose TRNTYPE is in OFX_INCOME_HINTS and that is money IN: the app's
-    amount < 0, i.e. the file's TRNAMT > 0. A DEP / INT ... row with TRNAMT <= 0 (money out) gets none, nor
-    does a CSV row (no TRNTYPE)."""
+def _pfc_hint(row, card: bool) -> tuple[str | None, str | None]:
+    """(pfc_primary, pfc_detailed) for an OFX row that is money IN: the app's amount < 0, i.e. the file's TRNAMT > 0.
+    First its TRNTYPE's income code (OFX_INCOME_HINTS); then, on a card statement only, a CREDIT / PAYMENT row whose
+    description names a payment ("PAYMENT THANK YOU"): the card's own payment is a transfer, not income or spending.
+    A DEP / INT ... row with TRNAMT <= 0 (money out) gets none, nor does a CSV row (no TRNTYPE)."""
     if row.amount >= 0:
         return None, None
-    return OFX_INCOME_HINTS.get(row.trntype or "", (None, None))
+    hint = OFX_INCOME_HINTS.get(row.trntype or "")
+    if hint:
+        return hint
+    if card and row.trntype in ("CREDIT", "PAYMENT") and _CARD_PAYMENT_WORDS.search(row.description or ""):
+        return CARD_PAYMENT_HINT
+    return None, None
 
 
 def _raw_json(filename: str, row) -> str:
@@ -224,8 +237,8 @@ def _raw_json(filename: str, row) -> str:
 
 def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
     """Import the file with these choices: new accounts first, then every new row (one transaction; an OFX money-in row
-    with its TRNTYPE's income code, _pfc_hint), then the rules and the Plaid-category defaults (classify.apply). Returns
-    what was added and skipped, per account."""
+    with its TRNTYPE's income code, or a card payment's transfer code, _pfc_hint), then the rules and the
+    Plaid-category defaults (classify.apply). Returns what was added and skipped, per account."""
     p = _parse(filename, raw, data, today)
     chosen = data.get("targets") or {}
     plan = [(g, _target(conn, chosen.get(g["label"]) if isinstance(chosen, dict) else None, g)) for g in p["groups"]]
@@ -251,7 +264,7 @@ def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, 
                     "pfc_primary, pfc_detailed, raw_json, removed, first_seen_at, updated_at, source, import_id, fitid) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?, 'import', ?, ?)",
                     (_tid(account_id, row, seen[k]), f"manual:{account_id}", IMPORT_ITEM, row.date, row.description[:300],
-                     round(row.amount, 2), None, *_pfc_hint(row), _raw_json(filename, row), ts, ts, import_id, row.fitid))
+                     round(row.amount, 2), None, *_pfc_hint(row, g["card"]), _raw_json(filename, row), ts, ts, import_id, row.fitid))
         results.append({"label": g["label"], "account": {"id": account_id, "name": name}, "new": len(new), "skipped": skipped})
     classify.apply(conn)
     dates = sorted(r.date for g, _ in plan for r in g["rows"])

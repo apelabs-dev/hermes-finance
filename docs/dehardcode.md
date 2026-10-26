@@ -65,7 +65,8 @@ on a hit, 0 when clean, 2 on bad usage. The rules:
 
 What it lets through, each a committed, reasoned decision in `scripts/dehardcode.py`:
 
-- `ALLOWED_PUBLIC`: exact public strings masked before matching, each with its reason. It's empty.
+- `ALLOWED_PUBLIC`: exact public strings masked before matching, each with its reason. Today that is only the live
+  demo's hostname (the README links it); the rest of that domain is still a private word.
 - The repository's own URL (`github.com/<owner>/<repo>`) is masked at runtime, because Release Please writes compare
   and commit links into CHANGELOG.md. It comes from CI's `GITHUB_REPOSITORY`, `HERMES_FINANCE_PUBLIC_URL`, or a git
   remote of the scanned checkout (a clone's `origin`; in a development checkout, add a `public` remote). It is never

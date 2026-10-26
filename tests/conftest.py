@@ -96,6 +96,15 @@ _REAL_CONNECT, _REAL_CONNECT_EX, _REAL_GETADDRINFO = socket.socket.connect, sock
 
 
 @pytest.fixture(autouse=True)
+def hermes_credentials_reset():
+    """Loading the Hermes plugin (register()) makes the app take its keys from Hermes, process-wide: undone after
+    every test, so it never reaches the next one."""
+    yield
+    from hermes_finance import config
+    config.use_hermes_credentials(None)
+
+
+@pytest.fixture(autouse=True)
 def environment_requirements(request):
     marker = request.node.get_closest_marker("env_dependent")
     if marker is not None:

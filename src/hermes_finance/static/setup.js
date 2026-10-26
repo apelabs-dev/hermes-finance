@@ -253,8 +253,14 @@
         btn(pending.size ? 'Skip for now' : 'Back', pending.size ? finish : () => go(5), 'btn ghost'));
     };
     const bank = s.banks.length === 1 ? ` at ${s.banks[0]}` : '';
+    // Nothing to suggest, but the window did have spending, all of it in Other (imported debits before a rule or a
+    // categorization): say so and point at the Other filter, instead of claiming there was no spending at all.
+    const other = !rows.length && Number(s.other_spend) > 0;
     wiz(6, h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, 'Suggested budgets')),
       rows.length ? h('p', {}, `From your last ${s.days} days${bank}, rounded up. Nothing is set until you tap Use.`)
+        : other ? h('p', {}, `Your spending from the last ${s.days} days${bank} is still uncategorized. Sort it into categories on `,
+          h('a', {href: HF.hashFor('transactions', {category: 'Other'})}, 'Transactions (Other)'),
+          ', then come back here for budget suggestions.')
         : h('p', {}, `No spending in the last ${s.days} days yet. Suggestions show up here and on Budgets once your bank's history is in.`),
       list, actions);
     draw();

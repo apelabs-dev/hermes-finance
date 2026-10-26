@@ -43,7 +43,7 @@ Your agent gets the same numbers as native tools, over MCP, or through the dashb
 
 Full documentation: [`docs/`](docs/index.md), a MkDocs site (`uvx --python 3.12 --with "mkdocs-material>=9.5,<10" --from "mkdocs>=1.6,<2" mkdocs build --strict`).
 
-Try the [read-only static demo](docs/demo.md) with synthetic data; it builds without an account or API key.
+Try the [live read-only demo](https://financing.apelabs.dev) with synthetic data, or [build it yourself](docs/demo.md); it needs no account or API key.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/overview-dark.png">
@@ -170,12 +170,26 @@ run `uv run python tests/demo_data.py /tmp/finance-plugin-demo` and set
 The plugin opens reads read-only and never creates a missing database.
 
 Each category change, rule, budget cap and tracked bill requires approval. Scheduled
-and unattended runs block those writes. Sync can contact Plaid using the app's stored
-credentials; a billed bank refresh also requires approval. Optional report jobs run
-subprocesses only after explicit `hermes finance crons apply`. The Ask completion
-bridge delegates to Hermes's configured model and authentication. The app can read
-its configured secrets files and Hermes environment file; this external dependency
-and credential access need catalog policy review before any public submission.
+and unattended runs block those writes. Sync contacts Plaid; a billed bank refresh
+also requires approval. Optional report jobs run subprocesses only after explicit
+`hermes finance crons apply`. The Ask completion bridge delegates to Hermes's
+configured model and authentication.
+
+Keys are optional and set through Hermes, or in the Desktop's plugin settings:
+
+```sh
+hermes config set PLAID_CLIENT_ID <client id>
+hermes config set PLAID_SECRET <secret>
+hermes config set PLAID_ENV production        # or sandbox; empty means production
+hermes config set APCA_API_KEY_ID <key id>     # Alpaca, live account only
+hermes config set APCA_API_SECRET_KEY <secret>
+hermes config set APCA_ENV live
+```
+
+Under the plugin (its tools and its report jobs) the app reads keys only from Hermes.
+It never opens `secrets.env`, the Hermes `.env` file or the Alpaca key file. A missing
+key gives "Plaid not configured in Hermes (...)". Report jobs set up before this
+change pick it up after `hermes finance crons apply`. The standalone app is unchanged.
 
 ## The three AI modes
 

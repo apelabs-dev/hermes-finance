@@ -24,6 +24,11 @@ It also registers `hermes finance` (finance_cli.py): `hermes finance crons statu
 weekly report jobs, only when asked (crons/); `hermes finance completion` is the Ask panel's bridge to Hermes's own model
 (completion.py): the app starts it for each request of a Hermes-mode turn, and it makes one structured completion and
 nothing else (no database, no tool). Nothing is written by importing or registering the plugin.
+
+Credentials come through Hermes, never from files (catalog rule 11): the optional Plaid and Alpaca keys (CREDENTIALS,
+declared in plugin.yaml's config_schema) are read with Hermes's agent.secret_scope.get_secret at each use, and
+register() hands that reader to the app (config.use_hermes_credentials), after which the app opens no key file at all.
+An app checkout too old for that still answers every read, but finance_sync is refused (it would read the key files).
 """
 
 from __future__ import annotations
@@ -42,6 +47,23 @@ PLUGIN_DIR = Path(__file__).resolve().parent
 TOOLSET = "hermes-finance"
 APP_DIR = "HERMES_FINANCE_APP_DIR"
 DATA_DIR = "HERMES_FINANCE_DATA_DIR"
+# the optional keys (plugin.yaml config_schema, type secret): only finance_sync and the report jobs use them
+CREDENTIALS = ("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV", "APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "APCA_ENV")
+OLD_APP = ("{tool} isn't available: the hermes-finance app checkout is too old to take its keys from Hermes. Update it "
+           "(git pull, then uv sync in the checkout {setting} names) and try again. Nothing was changed.")
+
+
+def _hermes_secret(name: str) -> str | None:
+    """One of CREDENTIALS, read through Hermes at call time (never cached, never os.environ or a file). None when it's
+    unset, blank, not ours, or Hermes can't say (an older Hermes without secret_scope, no secret scope, anything)."""
+    if name not in CREDENTIALS:
+        return None
+    try:
+        from agent.secret_scope import get_secret
+        value = get_secret(name)
+    except Exception:
+        return None
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _setting(ctx: Any, key: str) -> str | None:
@@ -120,9 +142,16 @@ def _no_human_here() -> str | None:
 class _Finance:
     """The tools' handlers and the approval hook, bound to one Hermes plugin context."""
 
-    def __init__(self, ctx: Any, tooldefs: Any):
+    def __init__(self, ctx: Any, tooldefs: Any, credentials: bool = True):
         self.ctx = ctx
         self.tooldefs = tooldefs
+        self.credentials = credentials   # False: the app can't take its keys from Hermes, so finance_sync is refused
+
+    def old_app(self, tool_name: str) -> str | None:
+        """The refusal for a keyed tool (finance_sync) when the app is too old to take its keys from Hermes, else None."""
+        if self.credentials or tool_name not in getattr(self.tooldefs, "ACTIONS", ()):
+            return None
+        return OLD_APP.format(tool=tool_name, setting=APP_DIR)
 
     def db_path(self) -> Path:
         configured = _setting(self.ctx, DATA_DIR)
@@ -135,6 +164,9 @@ class _Finance:
         t = self.tooldefs
 
         def run(args: dict | None = None, **kwargs: Any) -> str:
+            refused = self.old_app(name)
+            if refused:
+                return t.render({"error": refused})
             try:
                 if name in t.WRITES:  # reached only after the pre_tool_call hook's approval
                     payload = t.apply(name, args, self.db_path(), t.today())
@@ -161,6 +193,9 @@ class _Finance:
         t = self.tooldefs
         if tool_name not in t.WRITES and tool_name not in getattr(t, "ACTIONS", ()):
             return None
+        refused = self.old_app(tool_name)
+        if refused:
+            return {"action": "block", "message": refused}
         if _in_cron_session():
             return {"action": "block", "message": CRON_BLOCK.format(tool=tool_name)}
         nobody = _no_human_here()
@@ -188,7 +223,13 @@ class _Finance:
 
 def register(ctx: Any) -> None:
     tooldefs = _load_app(ctx)
-    finance = _Finance(ctx, tooldefs)
+    use = getattr(importlib.import_module("hermes_finance.config"), "use_hermes_credentials", None)
+    if callable(use):   # from now on the app takes every key from Hermes and opens no key file
+        use(_hermes_secret)
+    else:
+        log.warning("hermes-finance plugin: the app checkout is too old to take its keys from Hermes; finance_sync is "
+                    "refused until it is updated (the reads work)")
+    finance = _Finance(ctx, tooldefs, credentials=callable(use))
     for tool in tooldefs.TOOLS.values():
         ctx.register_tool(name=tool.name, toolset=TOOLSET, handler=finance.handler(tool.name),
                           schema={"name": tool.name, "description": tool.description, "parameters": tool.schema()},

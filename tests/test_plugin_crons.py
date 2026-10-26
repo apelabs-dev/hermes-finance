@@ -711,7 +711,7 @@ def test_new_jobs_are_generic_their_scripts_versioned_private_and_read_back(p):
         path = p.hermes_home / hr.SCRIPTS / f"{role}.sh"
         text = path.read_text()
         assert stat.S_IMODE(path.stat().st_mode) == 0o700
-        assert f"hermes-finance cron entry script: {role} (version 1)" in text
+        assert f"hermes-finance cron entry script: {role} (version 2)" in text
         assert "hermes_finance.cronpipe" in text and str(hr.APP_PYTHON) in text
         assert state["scripts"][f"hermes-finance/{role}.sh"]["sha256"] == __import__("hashlib").sha256(
             path.read_bytes()).hexdigest()

@@ -105,8 +105,18 @@ def test_the_repos_own_url_is_masked_and_the_login_alone_still_hits():
     assert [r for _, r, _ in dehardcode.release_hits_in_text(other, {WORD}, own)] == ["private-word"]
 
 
-def test_allowed_public_is_empty_and_masks_exactly_what_it_lists(monkeypatch):
-    assert dehardcode.ALLOWED_PUBLIC == {}                     # no shipped file names the repo's URL
+def test_allowed_public_is_only_the_demo_hostname_and_masks_exactly_that():
+    host = J(["financing.", "ape", "labs", ".dev"])
+    assert dehardcode.ALLOWED_PUBLIC.keys() == {host}
+    assert all(reason.strip() for reason in dehardcode.ALLOWED_PUBLIC.values())
+    word = J(["ape", "labs"])
+    assert rules(J(["[live demo](https://", host, ")"]), {word}) == []              # the listed hostname, masked
+    assert rules(J(["see ", word, ".dev"]), {word}) == ["private-word"]              # the bare domain still hits
+    assert rules(J(["https://other.", word, ".dev"]), {word}) == ["private-word"]    # another subdomain still hits
+
+
+def test_allowed_public_masks_exactly_what_it_lists(monkeypatch):
+    monkeypatch.setattr(dehardcode, "ALLOWED_PUBLIC", {})
     slug = f"{WORD}/hermes-finance"
     assert rules(J(["github.com/", slug]), {WORD}) == ["private-word"]
     monkeypatch.setattr(dehardcode, "ALLOWED_PUBLIC", {slug: "a repository's own slug"})

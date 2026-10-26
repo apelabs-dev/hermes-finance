@@ -216,7 +216,7 @@ function routeRefresh() {
     MONTH_PAGES:new Set(['overview']), MONTH_RE:/^\d{4}-(0[1-9]|1[0-2])$/,thisMonth:()=> '2027-01',
     location:{hash:'#/overview?month=2026-11'}, window:{scrollTo(){}},document:{body:{classList:{toggle(){},contains(){return true;},add(){}}}},
     BOARDS:new Set(),RENDER:{overview:async()=>{}},readInk(){},loadCounts(){},renderNav(){},renderTop(){},
-    closeDrawer(){},closePanel(){},finishCounts(){},COUNT:{tk:0,done:new Set(),live:new Set()},hideToast(){},closeSyncPanel(){},destroyCharts(){}};
+    closeDrawer(){},closePanel(){},finishCounts(){},COUNT:{tk:0,done:new Set(),live:new Set()},hideToast(){},closeSyncPanel(){},destroyCharts(){},reducedMotion:()=>false};
   vm.createContext(sandbox);vm.runInContext(route+'\nroute(); route({keepToast:true});',sandbox);
   assert.deepEqual(seen,['2026-11','2026-11'], 'navigation and writes refresh open chat after selecting month');
 }

@@ -23,6 +23,13 @@ there, and is the only place the three valuation flags are read from (see below)
 | Paths and switches (process environment) | the process environment only | see the next table |
 | Settings kept in the database | the database (`settings` table), set on the Settings page or with the CLI | `prefs.get_many()` |
 
+**Under the Hermes plugin** (its tools, and its report jobs, whose entry script sets
+`HERMES_FINANCE_CREDENTIAL_SOURCE=hermes`) the rows above change: the Plaid and Alpaca keys come from Hermes only
+(`hermes config set NAME VALUE`, read with Hermes's `get_secret`, or the environment Hermes runs a report job with),
+and the valuation flags from the process environment. The secrets file, the env file and Alpaca's key file are never
+opened. The Settings page can't change keys there, and a missing Plaid key reads "Plaid not configured in Hermes
+(...)". Without the plugin or the variable, everything is as in the table.
+
 ### Process environment variables
 
 | variable | default | what it does |
@@ -31,6 +38,7 @@ there, and is the only place the three valuation flags are read from (see below)
 | `HERMES_ENV_FILE` | `~/.hermes/.env` | the env file |
 | `FINANCE_SECRETS_FILE` | `~/.config/hermes-finance/secrets.env` | the secrets file |
 | `HERMES_ALPACA_KEY_FILE` | `~/.config/hermes-finance/alpaca-live.env` | Alpaca's key file |
+| `HERMES_FINANCE_CREDENTIAL_SOURCE` | none | `hermes`: keys come from the process environment only and no key file is opened (the plugin's report jobs set it) |
 | `FINANCE_PUBLIC_URLS`, `FINANCE_ALLOWED_USERS` | none | comma-separated; merged with `finance serve --public-url` / `--allow-user` (see [Access modes](guide.md#access-modes)) |
 | `FINANCE_HERMES_BIN` | `$HERMES_HOME/hermes-agent/venv/bin/hermes` | the Hermes executable the Ask panel's bridge runs (AI mode `hermes`) |
 | `HERMES_HOME` | `~/.hermes` | where Hermes is installed (only its existence and its executable are looked at; nothing in it is read) |

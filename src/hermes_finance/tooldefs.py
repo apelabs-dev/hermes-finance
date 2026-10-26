@@ -342,7 +342,9 @@ def _sync(conn: sqlite3.Connection, a: dict[str, Any], today: date) -> dict[str,
         return syncnow.run(conn, syncnow.make_client, refresh=bool(a.get("refresh")))
     except syncnow.SyncRefused as e:
         raise ToolError(str(e)) from None
-    except config.ConfigError:
+    except config.ConfigError as e:
+        if config.hermes_credentials():   # names the hermes config set commands (never a value)
+            raise ToolError(str(e)) from None
         raise ToolError("Plaid keys are missing (Settings \u2192 Connections \u2192 Replace keys); nothing was synced") from None
 
 

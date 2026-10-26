@@ -10,6 +10,9 @@ It lives at config.secrets_file_path() (default ~/.config/hermes-finance/secrets
 written atomically (a temp file in the same directory, then a rename). Values are never returned to the browser, never
 printed and never logged: status() says only whether a key is set, and every value read or written is registered with
 redact so it's scrubbed from any output that could carry it. A backup of the database never includes this file.
+
+Hermes mode (config.hermes_credentials(), catalog rule 11): the keys are kept in Hermes. Then this file is never opened
+or looked at: read() is empty, write() is refused, and status() says what Hermes has.
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ AI_KEY = "AI_API_KEY"
 KNOWN = (*PLAID, AI_KEY)
 PLAID_ENVS = ("production", "sandbox")
 MAX_VALUE = 4096
+IN_HERMES = ("Keys are kept in Hermes here: set them with hermes config set (PLAID_CLIENT_ID, PLAID_SECRET, PLAID_ENV) "
+             "or the Hermes Desktop's plugin settings")
 
 
 class SecretError(ValueError):
@@ -47,6 +52,8 @@ def shown_path(p: Path | None = None) -> str:
 
 
 def read() -> dict[str, str]:
+    if config.hermes_credentials():
+        return {}
     p = path()
     values = config.parse_env_file(p) if p.exists() else {}
     for k, v in values.items():
@@ -72,6 +79,8 @@ def _clean(key: str, value: str) -> str:
 
 def write(updates: dict[str, str | None]) -> None:
     """Set (a value) or remove (None) keys; every other line of the file is kept as it was."""
+    if config.hermes_credentials():
+        raise SecretError(IN_HERMES)
     clean = {k: (None if v is None else _clean(k, v)) for k, v in updates.items()}
     p = path()
     lines = p.read_text().splitlines() if p.exists() else ["# hermes-finance keys (0600). Written by the app; never shared."]
@@ -109,6 +118,17 @@ def write(updates: dict[str, str | None]) -> None:
 
 def status() -> dict:
     """What the Settings page may know: which keys are set (never a value) and where they're kept."""
+    if config.hermes_credentials():   # no file is looked at
+        values = config.key_values()
+        plaid_set = bool(values.get("PLAID_CLIENT_ID") and values.get("PLAID_SECRET"))
+        return {
+            "path": "Hermes",
+            "plaid": {"set": plaid_set, "env": (values.get("PLAID_ENV") or "production") if plaid_set else None,
+                      "where": "Hermes" if plaid_set else None},
+            "ai_key": {"set": bool(values.get(AI_KEY)), "where": "Hermes"},
+            "alpaca": {"set": bool(values.get("APCA_API_KEY_ID") and values.get("APCA_API_SECRET_KEY")),
+                       "where": "Hermes"},
+        }
     env_file = config.env_file_path()
     env_values = config.parse_env_file(env_file) if env_file.exists() else {}
     mine = read()
