@@ -53,7 +53,10 @@ def test_goals_and_the_bills_calendar_are_reachable_from_the_sidebar_and_the_pho
     for page, probe in (("goals", "#page .card.goal"), ("recurring", "#page .calcard .agenda")):
         goto(browser, features, "overview", 390)
         browser.js("document.getElementById('menu').click()")
-        browser.js("new Promise((r) => setTimeout(r, 400))")
+        # until the drawer is open (a slow CI runner hadn't finished its slide-in at a fixed 400 ms: visible False)
+        browser.js("""new Promise((r) => { const t0 = Date.now(); (function look() {
+          if (getComputedStyle(document.getElementById('side')).visibility === 'visible' || Date.now() - t0 > 8000) r();
+          else setTimeout(look, 50); })(); })""")
         link = browser.js(f"""(() => {{ const a = document.querySelector('#side #nav a[data-pg={page}]'); const r = a.getBoundingClientRect();
           return {{visible: getComputedStyle(document.getElementById('side')).visibility === 'visible', w: r.width, h: r.height,
                    tab: Boolean(document.querySelector('#tabbar a[data-pg={page}]'))}}; }})()""")
