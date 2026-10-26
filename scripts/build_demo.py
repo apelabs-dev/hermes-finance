@@ -597,8 +597,7 @@ class RenameMap:
                     continue
                 k += 1
                 self.ids[v] = f"{prefix}_{k:05d}" if prefix == "txn" else f"{prefix}_{k:02d}"
-        for i, (f,) in enumerate(conn.execute("SELECT file FROM asset_images WHERE file IS NOT NULL ORDER BY key"), 1):
-            self.images[f] = hashlib.sha1(f"demo-image-{i}".encode()).hexdigest()[:16] + Path(f).suffix
+        self.index_images(conn)
         conn.row_factory = None
         keys = sorted(self.names, key=len, reverse=True)
         self._names_re = re.compile("|".join(f"(?<![A-Za-z0-9]){re.escape(k)}(?![A-Za-z0-9])" for k in keys), re.I) if keys else None
@@ -607,6 +606,13 @@ class RenameMap:
         ids = sorted(self.ids, key=len, reverse=True)
         self._ids_re = re.compile("(?<![A-Za-z0-9_])(" + "|".join(map(re.escape, ids)) + ")(?![A-Za-z0-9_])") if ids else None
         self._paths = sorted(self.paths, key=len, reverse=True)
+
+    def index_images(self, conn: sqlite3.Connection) -> None:
+        """Each cached picture's demo file name, numbered in key order. Run again once apply_assets has put the demo's
+        own photos in (demo_parity builds its map from the finished DB, so the build must name them the same way)."""
+        self.images = {f: hashlib.sha1(f"demo-image-{i}".encode()).hexdigest()[:16] + Path(f).suffix
+                       for i, (f,) in enumerate(conn.execute("SELECT file FROM asset_images WHERE file IS NOT NULL "
+                                                             "ORDER BY key"), 1)}
         self._images_re = re.compile("|".join(map(re.escape, self.images))) if self.images else None
 
     def _name(self, m: re.Match) -> str:
@@ -1188,6 +1194,7 @@ def build(out: Path, today: date, keep: Path | None = None, seed: int = 0, salt:
         scaled = sanitize_db(conn, today, now, tmp_paths)
         bank_logos = apply_bank_logos(conn, rename)
         valued = apply_assets(conn, rename, today, db_path)
+        rename.index_images(conn)   # the photos apply_assets put in get their demo names too
         goal_looks = apply_goal_looks(conn)
         conn.close()
         log = {"generated_s": round(time.monotonic() - t0, 2), "scaled_rows": scaled, "renamed": rename.summary(),
