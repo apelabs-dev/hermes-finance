@@ -925,7 +925,9 @@ if case != "known":   # from now on, sysctl's answer not had (as one not believe
     os.environ["PATH"] = f"{tmp / 'bin'}:{os.environ['PATH']}"
     if hasattr(os, "waitid"):   # (Linux: no waitid either, as on macOS, so the state really can't be told)
         del os.waitid
-check.UNKNOWN_WAIT = 2
+# 2 s for the sleeper (it never ends); 12 for the one-test run: on a loaded CI runner pytest took over 2 s just to
+# start, and a bound that ran out first left an exited run looking like a stuck one (rc None)
+check.UNKNOWN_WAIT = 2 if case == "still running" else 12
 logs = tmp / "logs"
 logs.mkdir()
 r = check.Pytest(case.replace(" ", "-"), [str(tmp / ("test_sleepy.py" if case == "still running" else "test_one.py"))],
