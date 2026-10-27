@@ -118,9 +118,9 @@ def test_due_details_bounded_and_main_amounts_visible(chrome, site, width, theme
     b.settle()
     b.js("location.hash='#/overview'")
     b.settle()
-    b.js("new Promise(r=>setTimeout(r,300))")
     sel = "[data-help='pace']"
-    assert b.js(f"!!document.querySelector({json.dumps(sel)})"), "pace needs a readable details disclosure"
+    # (wait for the overview's redraw with the patched data, not a fixed 300 ms: slow-mode run 3 lost that race)
+    assert b.until(f"!!document.querySelector({json.dumps(sel)})"), "pace needs a readable details disclosure"
     tap(b, sel)
     assert b.js("document.querySelector('.help-panel').getAttribute('role')") == "dialog"
     assert b.js("document.querySelectorAll('.help-panel .help-bill').length") == 60

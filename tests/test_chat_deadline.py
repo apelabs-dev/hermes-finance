@@ -534,7 +534,9 @@ def test_an_answer_in_time_whose_publish_would_come_after_the_deadline_publishes
         {"message": call_msg("finance_set_cap", {"category": "Other Shopping", "monthly_cap": 900})},
         {"message": answer("Raising it to $900 would cover it. Approve the card if you want it."), "hold": hold}], hold)
     assert t.result[0] == 504 and t.result[1] == {"error": chat.LATE}, (t.result, pending_rows())
-    [(aid, _, _, status)] = pending_rows()
+    # (the Nightly once found no card here, with the answer's request made: what its tool step gave the model shows why)
+    told = [m.get("content") for m in gated.requests[-1].get("messages", []) if m.get("role") == "tool"]
+    [(aid, _, _, status)] = pending_rows() or pytest.fail(f"no card recorded; the tool step told the model: {told}")
     assert (status, result_of(aid)) == ("rejected", {"withdrawn": mcp_state.WITHDRAWN})
     s, d = http(app, "POST", "/api/mcp/pending/approve", {"id": aid})
     assert s == 409 and "already rejected" in d["error"] and cap_of("Other Shopping") == 850.0

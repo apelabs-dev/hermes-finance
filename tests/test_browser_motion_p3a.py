@@ -121,12 +121,18 @@ def test_aria_label_is_the_final_value_while_counting(browser, site):
 def test_count_up_takes_at_most_400ms(browser, site):
     load(browser, site)
     t = browser.js("""(async () => { const find = %s; document.getElementById('mprev').click();
-      const t0 = performance.now(); let last = t0, first = null;
-      await new Promise((res) => { const end = t0 + 1500; const tick = () => { const el = find('spent');
-        if (el && el.getAttribute('role')) { if (first === null) first = performance.now(); last = performance.now(); }
-        performance.now() < end ? requestAnimationFrame(tick) : res(); }; tick(); });
-      return first === null ? null : last - first; })()""" % FIND)
-    assert t is not None and t <= 440, t
+      const t0 = performance.now(); let last = t0, first = null, prev = t0, gap = 0;
+      await new Promise((res) => { const end = t0 + 1500; const tick = () => { const el = find('spent'), now = performance.now();
+        gap = Math.max(gap, now - prev); prev = now;
+        if (el && el.getAttribute('role')) { if (first === null) first = now; last = now; }
+        now < end ? requestAnimationFrame(tick) : res(); }; tick(); });
+      return first === null ? null : [last - first, gap]; })()""" % FIND)
+    assert t is not None, "no count-up"
+    # app.js stops it with its own 400 ms timer. A busy page runs that timer late by up to its longest frame gap (the
+    # Nightly runner measured 441.5 ms); that is the page's lag, not a longer count-up, so the bound takes it into account
+    # but never drops below the old 440 ms.
+    took, gap = t
+    assert took <= max(440, 400 + gap), t
 
 
 def test_no_count_up_on_a_plain_rerender(browser, site):

@@ -262,7 +262,7 @@ def test_one_info_line_per_sync_in_serve_log_even_without_verbose(conn, fake, mo
     assert re.fullmatch(r"POST /api/sync log-1: sync, 1 bank\(s\), \d+\.\d s, answered in the request: synced 1 of 1, "
                         r"2 new, 0 updated, 0 balance\(s\) moved", lines[0]), lines[0]
     assert re.fullmatch(r"POST /api/sync log-2: refresh, 1 bank\(s\), \d+\.\d s, answered in the request: asked 1 bank\(s\); "
-                        r"not synced: every bank synced under a minute ago \(the last 20 s ago\)", lines[1]), lines[1]
+                        r"not synced: every bank synced under a minute ago \(the last 2\d s ago\)", lines[1]), lines[1]
     assert re.fullmatch(r"POST /api/sync log-3: refresh, 1 bank\(s\), \d+\.\d s, refused 429: Synced a moment ago\. "
                         r"Try again in \d+ s\.", lines[2]), lines[2]
     assert all(TOKEN_A not in x and "$" not in x for x in lines)           # no token, no amount

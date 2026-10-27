@@ -60,12 +60,14 @@ def free_port() -> int:
 # The literal stdlib http.server (python -m http.server PORT --bind 127.0.0.1 --directory DIR), plus one thread that
 # ends it once this process is gone. It runs in its own session so close() can stop it alone, which also means nothing
 # stops it if this process dies before close(): a timeout's SIGTERM or a SIGKILL skips every finally. That left a server
-# running for hours (retro, 2026-10-26). Now it exits within a second of its parent, however that ends.
-SERVE = """import os, runpy, sys, threading, time
-parent, port, directory = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+# running for hours (retro, 2026-10-26). Now it exits once its parent is gone, however that ends: its stdin is a pipe
+# only the parent holds, so the kernel closes it then, and the read sees EOF (no pid compared: no launcher or reparenting
+# can fool it).
+SERVE = """import os, runpy, sys, threading
+port, directory = sys.argv[1], sys.argv[2]
 def orphaned():
-    while os.getppid() == parent:
-        time.sleep(0.5)
+    while sys.stdin.buffer.read(1):
+        pass
     os._exit(0)
 threading.Thread(target=orphaned, daemon=True).start()
 sys.argv = ['http.server', port, '--bind', '127.0.0.1', '--directory', directory]
@@ -81,8 +83,10 @@ class Site:
         copied = Path(self.scratch.name) / 'site'
         shutil.copytree(dist, copied)
         self.port = free_port()
-        self.proc = subprocess.Popen([sys.executable, '-c', SERVE, str(os.getpid()), str(self.port), str(copied)],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.errors = Path(self.scratch.name) / 'server.err'   # (why it didn't start, if it doesn't)
+        with self.errors.open('wb') as err:
+            self.proc = subprocess.Popen([sys.executable, '-c', SERVE, str(self.port), str(copied)], stdin=subprocess.PIPE,
+                                         stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
         self.url = f"http://127.0.0.1:{self.port}"
         deadline = time.time() + 15
         while time.time() < deadline:
@@ -91,8 +95,10 @@ class Site:
                     return
             except OSError:
                 time.sleep(0.1)
+        why = f"exit {self.proc.poll()}: {self.errors.read_text(errors='replace')[-600:].strip()}" \
+            if self.proc.poll() is not None else "still running, not listening after 15 s"
         self.close()
-        raise RuntimeError("http.server did not start")
+        raise RuntimeError(f"http.server did not start ({why})")
 
     def close(self) -> None:
         if self.proc.poll() is None:
@@ -105,7 +111,8 @@ class Site:
                 except ProcessLookupError:
                     pass
                 self.proc.wait(5)
-
+        if self.proc.stdin:
+            self.proc.stdin.close()   # (its end of the server's lifeline)
         self.scratch.cleanup()
 
 
