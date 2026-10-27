@@ -178,7 +178,7 @@ def sync(b):
     b.js("document.getElementById('syncnow').click()")
     b.js(OPEN)
     b.settle()
-    b.js("new Promise((r) => setTimeout(r, 300))")   # the panel's pop-in / slide-up (P3a) finishes before it is measured
+    assert b.still("#syncp") is True, "the panel's pop-in never finished"   # measured at its end, not mid pop-in
     return b.js(PANEL)
 
 

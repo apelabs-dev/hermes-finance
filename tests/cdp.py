@@ -1222,6 +1222,16 @@ class Chrome:
             if (v || performance.now() >= end) r(v); else setTimeout(f, 50); }};
           f(); }})""")
 
+    def still(self, sel: str = "", timeout: float = 8.0):
+        """Wait until no finite animation or transition is running in `sel`'s subtree (the whole page if empty), so a
+        measurement after a pop-in reads the end state, not a frame of it. Endless ones (spinners) don't count. True
+        once still, else the running animations' names (for the assert message)."""
+        root = f"document.querySelector({json.dumps(sel)})" if sel else "document"
+        return self.until(f"""(() => {{ const r = {root}; if (!r) return true;
+          const run = r.getAnimations({{subtree: true}}).filter((a) => a.playState === 'running'
+            && (a.effect?.getTiming?.().iterations ?? 1) !== Infinity);
+          return run.length === 0 || null; }})()""", timeout) or "still running"
+
     def settle(self) -> None:
         self.js(SETTLE)
 

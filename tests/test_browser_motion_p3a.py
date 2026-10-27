@@ -75,7 +75,7 @@ def load(b, site, width=1280, reduced=False):
     b.size(width, 900 if width > 800 else 844)
     b.goto(f"{site.url}/?t={time.time():.3f}#/overview")
     b.settled()
-    b.js("new Promise((r) => setTimeout(r, 700))")   # the bars' first fill and the page fade are over
+    assert b.still() is True, "the bars' first fill / page fade never finished"
 
 
 def sample(b, act, ms=900):
