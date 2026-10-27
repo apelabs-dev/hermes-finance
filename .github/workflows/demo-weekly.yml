@@ -1,0 +1,199 @@
+# Replaces the local hf-demo-weekly-start/report crons. Logs and artifacts are public.
+name: Weekly demo
+
+on:
+  schedule:
+    # Monday 03:00 PST / 04:00 PDT; UTC cron drifts with daylight saving time.
+    # GitHub disables schedules after 60 days without repository activity.
+    - cron: "0 11 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-weekly
+  cancel-in-progress: false
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      HERMES_PLAID: "off"
+      HERMES_ALPACA: "off"
+      HERMES_CHROME_DEVTOOLS: "off"
+      HERMES_ENV_FILE: /nonexistent
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Prepare private words and runner masks
+        env:
+          WORDS_CONTENT: ${{ secrets.HF_PRIVATE_WORDS_CONTENT }}
+        run: |
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/hf-weekly"
+          {
+            echo "HF_WEEKLY_OUT=$RUNNER_TEMP/hf-weekly/out"
+            echo "HF_WEEKLY_LOGS=$RUNNER_TEMP/hf-weekly/logs"
+            echo "HF_WEEKLY_EVIDENCE=$RUNNER_TEMP/hf-weekly/evidence"
+          } >> "$GITHUB_ENV"
+          if [[ -z "$WORDS_CONTENT" ]]; then
+            echo 'HF_PRIVATE_WORDS_CONTENT is required; no pipeline or deployment attempted.'
+            exit 1
+          fi
+          words="$RUNNER_TEMP/hf-weekly/private-words.txt"
+          printf '%s\n' "$WORDS_CONTENT" > "$words"
+          chmod 600 "$words"
+          while IFS= read -r w || [[ -n "$w" ]]; do
+            w=${w%$'\r'}
+            if (( ${#w} >= 3 )); then
+              # Escape workflow-command data; never print the unescaped word.
+              w=${w//'%'/'%25'}
+              w=${w//$'\r'/'%0D'}
+              echo "::add-mask::$w"
+            fi
+          done < "$words"
+          echo "HF_PRIVATE_WORDS=$words" >> "$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Install the locked dependencies
+        run: uv sync --frozen
+      - name: Find the runner's Chrome
+        id: chrome
+        run: |
+          chrome=$(uv run --frozen python -c 'import sys; sys.path.insert(0, "tests"); import cdp; print(cdp.find_chrome() or "")')
+          echo "path=$chrome" >> "$GITHUB_OUTPUT"
+      - name: Install Chrome only if the runner has none
+        id: fallback
+        if: steps.chrome.outputs.path == ''
+        uses: browser-actions/setup-chrome@b94431e051d1c52dcbe9a7092a4f10f827795416 # v2.1.0
+      - name: Configure Chrome for the Linux runner
+        env:
+          FOUND_CHROME: ${{ steps.chrome.outputs.path }}
+          FALLBACK_CHROME: ${{ steps.fallback.outputs.chrome-path }}
+        run: |
+          chrome=${FOUND_CHROME:-$FALLBACK_CHROME}
+          "$chrome" --version
+          # cdp.py supplies headless/profile flags but has no extra-flags setting.
+          # A wrapper avoids Ubuntu sandbox restrictions without changing shared code.
+          printf '#!/bin/bash\nexec %q --no-sandbox --disable-dev-shm-usage "$@"\n' "$chrome" > "$RUNNER_TEMP/hf-weekly/chrome"
+          chmod 700 "$RUNNER_TEMP/hf-weekly/chrome"
+          echo "HF_CHROME=$RUNNER_TEMP/hf-weekly/chrome" >> "$GITHUB_ENV"
+      - name: Smoke-test headless Chrome
+        run: timeout 60 "$HF_CHROME" --headless=new --disable-gpu --dump-dom about:blank > /dev/null
+      - name: Run all seven variants and the combined demo
+        id: pipeline
+        timeout-minutes: 100
+        run: |
+          # No Cloudflare secrets here. Mirror demo_weekly.sh's safe environment.
+          rc=0
+          env -u PLAID_CLIENT_ID -u PLAID_SECRET -u PLAID_ENV -u APCA_API_KEY_ID -u APCA_API_SECRET_KEY \
+            -u MARKETCHECK_API_KEY -u RENTCAST_API_KEY -u OPENAI_API_KEY -u ANTHROPIC_API_KEY \
+            -u OPENROUTER_API_KEY -u OPENROUTER_KEY -u PYTEST_ADDOPTS \
+            bash scripts/demo_weekly.sh > "$RUNNER_TEMP/hf-weekly/run.log" 2>&1 || rc=$?
+          ok=false
+          if [[ "$rc" == 0 ]] && grep -q '^DEMO_WEEKLY_OK' "$RUNNER_TEMP/hf-weekly/run.log"; then
+            ok=true
+          fi
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          # A zero exit without the success marker must also leave the job red.
+          [[ "$ok" == true ]]
+      - name: Collect only redacted summary and eligible stage logs
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re, shutil
+          base = pathlib.Path(os.environ['RUNNER_TEMP']) / 'hf-weekly'
+          upload = base / 'upload'
+          upload.mkdir(parents=True, exist_ok=True)
+          stages = {'01-build', '02-tests', '03-parity', '04-canary-synth', '05-canary-selftest',
+                    '06-canary-private', '07-verify', '08-combine', '09-tests-shared',
+                    '10-canary-synth', '11-canary-selftest', '12-canary-private', '13-verify'}
+          reasons = {'combine', 'shared tests', 'combined synthetic canary', 'combined canary selftest',
+                     'combined private canary', 'combined verify'}
+          reasons.update(f'v{k} {s}' for k in range(7) for s in
+                         ('build', 'tests', 'parity', 'synthetic canary', 'canary selftest', 'private canary', 'verify'))
+          log = base / 'run.log'
+          lines = log.read_text(errors='replace').splitlines() if log.exists() else []
+          summary = []
+          for line in lines:
+              stage = re.fullmatch(r'(v[0-6]|all) ([a-z0-9-]+) exit ([0-9]+)(?: ::.*)?', line)
+              if stage and stage[2] in stages:
+                  summary.append(f'{stage[1]} {stage[2]} exit {stage[3]}')
+              elif line.startswith('DEMO_WEEKLY_OK '):
+                  summary.append('DEMO_WEEKLY_OK ' + os.environ['HF_WEEKLY_OUT'] + '/demo')
+              elif line.startswith('demo_weekly: FAIL '):
+                  reason = line.removeprefix('demo_weekly: FAIL ')
+                  summary.append('FAIL ' + (reason if reason in reasons else 'pipeline setup'))
+          if not summary:
+              summary.append('FAIL pipeline did not produce a summary')
+          (upload / 'summary.txt').write_text('\n'.join(summary) + '\n')
+          for directory in [f'v{k}' for k in range(7)] + ['all']:
+              for stage in stages - {'06-canary-private', '12-canary-private'}:
+                  source = base / 'logs' / directory / (stage + '.log')
+                  if source.is_file() and not source.is_symlink():
+                      target = upload / directory / source.name
+                      target.parent.mkdir(exist_ok=True)
+                      shutil.copyfile(source, target)
+          PY
+      - name: Scrub every upload file before publishing any logs
+        id: scrub
+        if: always()
+        run: |
+          set +x
+          upload="$RUNNER_TEMP/hf-weekly/upload"
+          clean="$RUNNER_TEMP/hf-weekly/scrub-words.txt"
+          # Fail closed: no readable list means nothing is approved for upload.
+          [[ -n "${HF_PRIVATE_WORDS:-}" && -r "$HF_PRIVATE_WORDS" && -d "$upload" ]]
+          umask 077
+          awk '{ sub(/\r$/, ""); if (length($0) >= 3) print }' "$HF_PRIVATE_WORDS" > "$clean"
+          removed=0
+          while IFS= read -r -d '' file; do
+            rc=0
+            grep -F -i -f "$clean" -- "$file" > /dev/null 2>&1 || rc=$?
+            if [[ "$rc" != 1 ]]; then
+              # Matching files AND grep errors are withheld. Never print matches/paths.
+              rm -f -- "$file"
+              removed=$((removed + 1))
+            fi
+          done < <(find "$upload" -type f -print0)
+          printf 'Scrub removed %s file(s).\n' "$removed"
+          echo 'safe=true' >> "$GITHUB_OUTPUT"
+          if [[ -f "$upload/summary.txt" ]]; then
+            cat "$upload/summary.txt"
+          fi
+      - name: Upload scrubbed logs only
+        if: always() && steps.scrub.outputs.safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: demo-weekly-logs
+          path: ${{ runner.temp }}/hf-weekly/upload/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Delete private word files
+        if: always()
+        run: |
+          rm -f -- "$RUNNER_TEMP/hf-weekly/private-words.txt" "$RUNNER_TEMP/hf-weekly/scrub-words.txt"
+      - name: Deploy the verified demo
+        timeout-minutes: 15
+        id: deploy
+        if: steps.pipeline.outputs.ok == 'true'
+        env:
+          WRANGLER_SEND_METRICS: "false"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4.153.0 pages deploy "$HF_WEEKLY_OUT/demo" \
+            --project-name hermes-finance-demo --branch main --commit-dirty=true
+      - name: Check the published core data
+        timeout-minutes: 5
+        if: steps.deploy.outcome == 'success' && steps.pipeline.outputs.ok == 'true'
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --fail --retry 5 --retry-delay 10 \
+            --retry-all-errors https://financing.apelabs.dev/demo/data/v0/core.json)
+          [[ "$code" == 200 ]]
