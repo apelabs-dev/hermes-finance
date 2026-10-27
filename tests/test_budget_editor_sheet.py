@@ -93,7 +93,7 @@ def q(b, selector, expr="el.textContent.trim()"):
 def click(b, selector):
     b.js(f"(() => {{ const el = document.querySelector({json.dumps(selector)}); el.scrollIntoView({{block: 'center'}}); el.click(); }})()")
     b.settle()
-    b.js("Promise.all(document.getAnimations().map((a) => a.finished.catch(() => 0))).then(() => 1)")   # the sheet has slid in
+    b.js("Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => 0))).then(() => 1)")   # the sheet has slid in
 
 
 def pause(b, ms=500):

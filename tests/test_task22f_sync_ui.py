@@ -112,6 +112,27 @@ def chrome():
         yield b
 
 
+# When #syncp opens and closes, stamped in the page (performance.now()), so a 4 s timer is measured from its own start.
+# HOVER: dispatch the pointerenter in the same turn it opens (a microtask after the timer is set), as a pointer resting there.
+WATCH_PANEL = """(() => {
+  const p = document.getElementById('syncp');
+  window.__sp = {open: null, close: null};
+  if (window.__spObs) window.__spObs.disconnect();
+  window.__spObs = new MutationObserver(() => {
+    const t = performance.now();
+    if (!p.hidden && __sp.open === null) { __sp.open = t; if (HOVER) p.dispatchEvent(new Event('pointerenter')); }
+    else if (p.hidden && __sp.open !== null && __sp.close === null) __sp.close = t;
+  });
+  window.__spObs.observe(p, {attributes: true, attributeFilter: ['hidden']});
+  return 1;
+})()"""
+OPEN_TO_CLOSE = """new Promise((r) => {   // ms it stayed open (waits up to 10 s for it to close)
+  const t0 = performance.now();
+  const f = () => (__sp.close !== null || performance.now() - t0 > 10000) ? r(__sp.close === null ? -1 : __sp.close - __sp.open) : setTimeout(f, 25);
+  f();
+})"""
+
+
 def later(monkeypatch, seconds):
     at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
     monkeypatch.setattr(syncnow, "clock", lambda: at)
@@ -463,17 +484,18 @@ def test_nothing_new_closes_by_itself_after_4_seconds(chrome, site, monkeypatch)
     sync(b)
     b.js("document.querySelector('#syncp .spx').click()")
     later(monkeypatch, 120)
+    b.js(WATCH_PANEL.replace("HOVER", "false"))
     p = sync(b)
     assert (p["title"], p["sub"]) == ("Synced just now", "All 8 banks")
     assert re.fullmatch(r"Nothing new since \d{1,2}:\d{2}\s?[AP]M\.", p["sums"][0]) and p["ask"]["text"] == "Ask banks for fresh data"
-    b.js("new Promise((r) => setTimeout(r, 3000))")
-    assert b.js("document.getElementById('syncp').hidden") is False
-    b.js("new Promise((r) => setTimeout(r, 1400))")
+    shown = b.js(OPEN_TO_CLOSE)                     # timed in the page, from the moment it opened (not from here:
+    assert 3950 <= shown < 6000, shown              # on a slow machine sync() itself takes a second or more)
     assert b.js("document.getElementById('syncp').hidden") is True        # gone, no animation
     later(monkeypatch, 240)
+    b.js(WATCH_PANEL.replace("HOVER", "true"))      # the pointer lands on it the moment it opens
     sync(b)
-    b.js("document.getElementById('syncp').dispatchEvent(new Event('pointerenter'))")
     b.js("new Promise((r) => setTimeout(r, 4600))")
+    assert b.js("window.__sp.open") is not None and b.js("window.__sp.close") is None
     assert b.js("document.getElementById('syncp').hidden") is False
     # "Ask banks for fresh data": the banks asked (Trial), and when they can be asked again
     later(monkeypatch, 250)

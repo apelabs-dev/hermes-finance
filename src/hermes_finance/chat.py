@@ -99,7 +99,7 @@ import time
 import weakref
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import urlsplit
 
 from . import access, aisession, api, bridge, config, mcp_state, prefs, redact, secretstore, tooldefs, usage
@@ -499,13 +499,14 @@ def card(action: dict[str, Any]) -> dict[str, Any]:
 
 def _record(path: Path, name: str, checked: dict[str, Any], summary: str, turn_id: str, deadline: float,
             origin: str = ORIGIN, owner: str | None = None) -> dict[str, Any]:
-    conn = _writer(path, deadline)
-    try:
-        client = f"{mcp_state.ASK_OWNER_PREFIX}{owner}" if owner else CLIENT
-        return _write(deadline, conn, mcp_state.record_pending, name, checked, summary, client, origin=origin,
-                      held_by=turn_id)
-    finally:
-        conn.close()
+    with _late_if_locked():
+        conn = _writer(path, deadline)
+        try:
+            client = f"{mcp_state.ASK_OWNER_PREFIX}{owner}" if owner else CLIENT
+            return _write(deadline, conn, mcp_state.record_pending, name, checked, summary, client, origin=origin,
+                          held_by=turn_id)
+        finally:
+            conn.close()
 
 
 # --- one turn --------------------------------------------------------------------------------------------------------
@@ -685,11 +686,12 @@ def _publish(path: Path, turn_id: str, recorded: int, deadline: float) -> list[d
         if released != recorded or time.monotonic() >= deadline:
             raise ChatError(LATE, 504)
 
-    conn = _writer(path, deadline)
-    try:
-        return _write(deadline, conn, mcp_state.release, turn_id, card, in_time)
-    finally:
-        conn.close()
+    with _late_if_locked():
+        conn = _writer(path, deadline)
+        try:
+            return _write(deadline, conn, mcp_state.release, turn_id, card, in_time)
+        finally:
+            conn.close()
 
 
 def _withdraw(path: Path, turn_id: str, until: float) -> None:
@@ -738,6 +740,20 @@ def _tries(until: float, attempt: Callable[[], Any]) -> Any:
     if locked is None:
         raise ChatError(LATE, 504)
     raise locked
+
+
+@contextlib.contextmanager
+def _late_if_locked() -> Iterator[None]:
+    """A turn's step bounded by its deadline (a card's record, the publish) that another writer kept locked out until
+    then: LATE (504), the turn simply took too long, not SQLite's raw "database is locked" (web.py's bare 500
+    "internal error (OperationalError)"). Slow-machine find: a turn whose answer came at once could reach its publish
+    before the deadline and spend the rest of it locked out. Other errors pass through as they are."""
+    try:
+        yield
+    except (sqlite3.OperationalError, tooldefs.ToolError) as e:
+        if _busy(e):
+            raise ChatError(LATE, 504) from None
+        raise
 
 
 def _writer(path: Path, until: float) -> sqlite3.Connection:

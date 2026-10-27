@@ -1411,3 +1411,25 @@ def test_a_connect_that_stalls_ends_by_the_deadline_and_tries_nothing_after(prov
     monkeypatch.setattr(socket, "socket", Unanswered)
     got, took = outcome(f"http://localhost:{good}/ok-stall/chat/completions", DEADLINE)
     assert (got[:2], took < DEADLINE + SLACK, tried) == (("error", 504), True, [stall]), (got, took, tried)
+
+
+@pytest.mark.parametrize("step", ["publish", "record"])
+def test_a_step_locked_out_until_the_deadline_is_late_not_an_internal_error(app, step):
+    """Slow-machine find (slow-mode part 1): another writer holds the database from before the turn's last step until
+    past its deadline. The step is "in time or not at all", so the owner gets LATE (504), never SQLite's raw "database
+    is locked" (web.py's bare 500 "internal error (OperationalError)")."""
+    holder = sqlite3.connect(config.db_path(), timeout=5)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        deadline = time.monotonic() + 0.6
+        with pytest.raises(chat.ChatError) as e:
+            if step == "publish":
+                chat._publish(config.db_path(), "turn-locked", 0, deadline)
+            else:
+                chat._record(config.db_path(), "finance_set_cap", {"category": "Other Shopping", "monthly_cap": 900},
+                             "Raise Shopping", "turn-locked", deadline)
+        assert (str(e.value), e.value.status) == (chat.LATE, 504)
+    finally:
+        holder.rollback()
+        holder.close()
+    assert pending_rows() == []

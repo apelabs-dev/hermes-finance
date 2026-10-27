@@ -92,7 +92,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from cdp import READY_NOW, Chrome  # noqa: E402
+from cdp import READY_NOW, Chrome, parked  # noqa: E402
 
 WIDTHS = (1440, 1280, 1024, 768, 430, 390, 360)  # TASK-18: every page at 1440 / 1280 / 1024 / 768 / 390 in both themes;
                                                  # TASK-20: 430 and 360 too (TAP_WIDTHS), dark
@@ -1926,7 +1926,7 @@ def audit_many(sites: dict[str, str], out: Path, widths=WIDTHS, logs: dict | Non
         # deadlock detector and can wait forever when other workers do the same.
         work()
     else:
-        with ThreadPoolExecutor(n) as pool:
+        with parked(), ThreadPoolExecutor(n) as pool:   # (cdp.parked: this thread may hold a test's Chrome)
             for f in [pool.submit(work) for _ in range(n)]:
                 f.result()
     path = out / "layout-report.json"

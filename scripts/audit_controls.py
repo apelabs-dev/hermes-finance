@@ -59,7 +59,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "scripts"))
 from audit_layout import HEIGHT, PAGES  # noqa: E402
-from cdp import READY_NOW, Chrome  # noqa: E402
+from cdp import READY_NOW, Chrome, parked  # noqa: E402
 
 KINDS = ("full", "nocaps")         # gate_dbs kinds the gate runs on (run_gates / tests/test_gates.py)
 WIDTHS = (1440, 390)
@@ -518,7 +518,7 @@ def audit_many(sites: dict[str, str], out: Path | None = None, widths=WIDTHS, pa
     if n == 1:
         work()
     else:
-        with ThreadPoolExecutor(n) as pool:
+        with parked(), ThreadPoolExecutor(n) as pool:   # (cdp.parked: this thread may hold a test's Chrome)
             for f in [pool.submit(work) for _ in range(n)]:
                 f.result()
     for k, rep in reports.items():

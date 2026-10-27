@@ -57,6 +57,22 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+# The literal stdlib http.server (python -m http.server PORT --bind 127.0.0.1 --directory DIR), plus one thread that
+# ends it once this process is gone. It runs in its own session so close() can stop it alone, which also means nothing
+# stops it if this process dies before close(): a timeout's SIGTERM or a SIGKILL skips every finally. That left a server
+# running for hours (retro, 2026-10-26). Now it exits within a second of its parent, however that ends.
+SERVE = """import os, runpy, sys, threading, time
+parent, port, directory = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+def orphaned():
+    while os.getppid() == parent:
+        time.sleep(0.5)
+    os._exit(0)
+threading.Thread(target=orphaned, daemon=True).start()
+sys.argv = ['http.server', port, '--bind', '127.0.0.1', '--directory', directory]
+runpy.run_module('http.server', run_name='__main__', alter_sys=True)
+"""
+
+
 class Site:
     """dist/ on http://127.0.0.1:<port>/ (scripts/serve_demo.py: http.server plus dist/_headers), in its own process group."""
 
@@ -65,7 +81,7 @@ class Site:
         copied = Path(self.scratch.name) / 'site'
         shutil.copytree(dist, copied)
         self.port = free_port()
-        self.proc = subprocess.Popen([sys.executable, '-m', 'http.server', str(self.port), '--bind', '127.0.0.1', '--directory', str(copied)],
+        self.proc = subprocess.Popen([sys.executable, '-c', SERVE, str(os.getpid()), str(self.port), str(copied)],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         self.url = f"http://127.0.0.1:{self.port}"
         deadline = time.time() + 15

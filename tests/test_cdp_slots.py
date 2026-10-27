@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 from pathlib import Path
 
@@ -141,3 +142,64 @@ def test_an_ordinary_wait_is_not_a_deadlock(slots):
     t.join(20)
     assert got and 2.5 < got[0] < 10
     assert cdp.slots_in_use() == 0
+
+
+def test_a_deadlock_through_a_pool_thread_is_seen(slots):
+    """The v0.2.4 Nightly hang: each of 2 workers holds one of the 2 slots (its module's browser) and runs a layout gate
+    whose Chrome starts on a pool thread it then waits for. The pool threads hold no slot, so the waiters' own count
+    never added up to a deadlock and both runs hung for good. A thread that waits on its pool says so (cdp.parked());
+    then the pool threads' wait is seen, one gives up within seconds, and the other worker's pool gets that slot."""
+    ready = threading.Barrier(2)
+    out: dict[str, object] = {}
+
+    def worker(name):
+        first = Holder()
+        ready.wait()
+        t0 = time.monotonic()
+        with cdp.parked(), ThreadPoolExecutor(1) as pool:
+            fut = pool.submit(Holder)
+            try:
+                second = fut.result(30)
+            except RuntimeError as e:
+                out[name] = ("gave up", str(e), time.monotonic() - t0)
+                first.release()
+                return
+            except TimeoutError:
+                out[name] = ("hung", "", time.monotonic() - t0)
+                first.release()
+                return
+        out[name] = ("got it", "", time.monotonic() - t0)
+        cdp._release_slot(second)
+        first.release()
+    threads = [threading.Thread(target=worker, args=(n,)) for n in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(70)
+    assert not any(t.is_alive() for t in threads), "the workers hung"
+    assert sorted(v[0] for v in out.values()) == ["gave up", "got it"], out
+    gave_up = next(v for v in out.values() if v[0] == "gave up")
+    assert "deadlock" in gave_up[1] and gave_up[2] < 10
+    assert cdp.slots_in_use() == 0 and not list(slots.glob("wait-*")) and not list(slots.glob("park-*"))
+
+
+def test_parked_without_a_slot_changes_nothing(slots):
+    """A thread holding no slot that waits on its pool (run_gates' main thread) isn't counted: an ordinary wait."""
+    other = Holder()
+    got: list[float] = []
+
+    def work():
+        with cdp.parked(), ThreadPoolExecutor(1) as pool:
+            t0 = time.monotonic()
+            h = pool.submit(Holder).result(20)
+            got.append(time.monotonic() - t0)
+            cdp._release_slot(h)
+    first = Holder()   # both slots taken, by threads that aren't waiting
+    t = threading.Thread(target=work)
+    t.start()
+    time.sleep(3)
+    other.release()
+    t.join(20)
+    first.release()
+    assert got and 2.5 < got[0] < 10
+    assert cdp.slots_in_use() == 0 and not list(slots.glob("park-*"))

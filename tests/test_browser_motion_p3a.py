@@ -37,7 +37,10 @@ SAMPLE = """(async () => {
     for (const k of Object.keys(out)) { const el = find(k); if (!el) continue; if (t0 === null) t0 = performance.now();
       out[k].push(el.textContent.replace(/\\s+/g, ' ').trim());
       const r = el.getBoundingClientRect(); rects[k].push([Math.round(r.width * 10) / 10, Math.round(r.height * 10) / 10]); }
-    if (performance.now() < end) requestAnimationFrame(tick); else res(); }; tick(); });
+    // past the window, sampled on until no count-up is still running (its role/label/min-width set), 5 s at most: on a
+    // slow machine it can outlast MS, and "ends on the exact value, state cleared" is about its end (t_d2b88168)
+    const busy = () => Object.keys(out).some((k) => { const el = find(k); return el && (el.getAttribute('role') || el.style.minWidth); });
+    if (performance.now() < end || (busy() && performance.now() < end + 5000)) requestAnimationFrame(tick); else res(); }; tick(); });
   po.disconnect();
   const aria = {}; for (const k of Object.keys(out)) { const el = find(k); aria[k] = el ? [el.getAttribute('role'), el.getAttribute('aria-label'), el.style.minWidth] : null; }
   return {out, rects, shift, aria, final: Object.fromEntries(Object.keys(out).map((k) => [k, find(k) && find(k).textContent.replace(/\\s+/g, ' ').trim()]))};
@@ -86,7 +89,8 @@ def test_count_up_on_month_switch_ends_on_exact_value(browser, site):
         assert seen, key
         final = r["final"][key]
         assert seen[-1] == final
-        assert len(set(seen)) > 2, (key, seen)           # it did count: intermediate values were on screen
+        assert set(seen) - {seen[0], final}, (key, seen)  # it did count: a value neither the start nor the end was on screen
+        # (not len(set(seen)) > 2: net worth can start and end on the same value, and a slow machine catches 1 frame)
         assert r["aria"][key] == [None, None, ""], r["aria"][key]   # interruption state cleared: no stale label or min-width
     # the exact final values are the ones a plain load of that month shows (no count-up on a fresh load)
     month = browser.js("location.hash")

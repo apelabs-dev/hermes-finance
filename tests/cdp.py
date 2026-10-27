@@ -40,6 +40,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from hermes_finance.cdp_client import WebSocket, WebSocketTimeout  # the minimal RFC 6455 client the app's Carfax lookup uses
@@ -789,6 +790,7 @@ SLOT_WARN = 60        # s: waiting longer than this for a slot prints one line (
 # same whichever looks, gives up with a RuntimeError: a failed test, not a run that never ends.
 _HELD: dict[int, int] = {}           # thread ident -> slots it holds (its Chromes not yet stopped)
 _HELD_LOCK = threading.RLock()   # (reentrant: _release_slot() can run in a signal handler)
+_PARKED = 0   # threads of this process inside parked(): its pool threads look for a deadlock too, holding no slot
 
 
 def _acquire_slot() -> int:
@@ -812,7 +814,7 @@ def _acquire_slot() -> int:
                 with _HELD_LOCK:
                     _HELD[me] = held + 1
                 return fd
-            if held and time.monotonic() - looked >= 1:   # (a deadlock is looked for once a second, and must be seen twice)
+            if (held or _PARKED) and time.monotonic() - looked >= 1:   # (looked for once a second, and must be seen twice)
                 looked = time.monotonic()
                 mark = mark or _mark_waiting(held)
                 seen = seen + 1 if _deadlocked(mark[0]) else 0
@@ -832,10 +834,39 @@ def _acquire_slot() -> int:
             os.close(mark[1])
 
 
-def _mark_waiting(held: int) -> tuple[Path, int]:
-    """SLOT_DIR/wait-<pid>-<thread>, flocked while this thread waits for a slot holding `held` of them."""
+@contextlib.contextmanager
+def parked() -> Iterator[None]:
+    """The calling thread now waits on threads it started (a ThreadPoolExecutor whose work starts Chromes) while it
+    holds its own slots: the v0.2.4 Nightly hang. A worker kept its module's Chrome and ran a layout gate whose Chrome
+    started on a pool thread; the pool threads hold no slot, so the waiters' count never added up to a deadlock and
+    every run with HF_CHROMES=2 hung for good. While parked, SLOT_DIR/park-<pid>-<thread> (flocked) says how many slots
+    it holds, _deadlocked() counts them, and this process's pool threads look for a deadlock although they hold none.
+    A parked thread is never the one to give up (it isn't waiting for a slot); one of the waiters is. Holding no slot,
+    it changes nothing."""
+    global _PARKED
+    with _HELD_LOCK:
+        held = _HELD.get(threading.get_ident(), 0)
+    if not held:
+        yield
+        return
+    mark = _mark_waiting(held, "park")
+    with _HELD_LOCK:
+        _PARKED += 1
+    try:
+        yield
+    finally:
+        with _HELD_LOCK:
+            _PARKED -= 1
+        with contextlib.suppress(OSError):
+            os.unlink(mark[0])
+        os.close(mark[1])
+
+
+def _mark_waiting(held: int, kind: str = "wait") -> tuple[Path, int]:
+    """SLOT_DIR/<kind>-<pid>-<thread>, flocked while this thread waits (for a slot, or parked() on its pool) holding
+    `held` of them."""
     import fcntl
-    path = SLOT_DIR / f"wait-{os.getpid()}-{threading.get_ident()}"
+    path = SLOT_DIR / f"{kind}-{os.getpid()}-{threading.get_ident()}"
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)
     os.write(fd, str(held).encode())
@@ -843,13 +874,14 @@ def _mark_waiting(held: int) -> tuple[Path, int]:
 
 
 def _deadlocked(mine: Path) -> bool:
-    """Every slot is taken and the waiting threads (their wait-* files still flocked) hold all of them; True for one of
-    those waiters only (the last by name), so exactly one gives up."""
+    """Every slot is taken and the waiting threads (their wait-* files still flocked) and the parked ones (park-*: each
+    waits on its pool) hold all of them; True for one of the slot waiters only (the last wait-* by name), so exactly
+    one gives up."""
     import fcntl
     if slots_in_use() < SLOTS:
         return False
     waiting: list[tuple[str, int]] = []
-    for p in SLOT_DIR.glob("wait-*"):
+    for p in [*SLOT_DIR.glob("wait-*"), *SLOT_DIR.glob("park-*")]:
         try:
             fd = os.open(p, os.O_RDONLY)
         except OSError:
@@ -866,7 +898,8 @@ def _deadlocked(mine: Path) -> bool:
                 continue   # being written
         finally:
             os.close(fd)
-    return sum(n for _, n in waiting) >= SLOTS and max(waiting)[0] == mine.name
+    waiters = [name for name, _ in waiting if name.startswith("wait-")]
+    return sum(n for _, n in waiting) >= SLOTS and bool(waiters) and max(waiters) == mine.name
 
 
 def _release_slot(c: Chrome) -> None:
@@ -1137,6 +1170,15 @@ class Chrome:
             except RuntimeError:
                 time.sleep(0.002)   # between two documents (no page to evaluate on yet), or out of time
         return False
+
+    def until(self, expr: str, timeout: float = 8.0):
+        """expr's value once it's truthy, polled in the page every 50 ms for up to `timeout` s, else its last value (so
+        an assert on it shows what was there). For reads after a click or a transition: a fixed wait is a guess that a
+        slow machine loses (the slow-mode sweep, t_d2b88168), a wait for the state the test expects is not."""
+        return self.js(f"""new Promise((r) => {{ const end = performance.now() + {timeout * 1000:.0f};
+          const f = () => {{ let v = null; try {{ v = ({expr}); }} catch (e) {{ v = null; }}
+            if (v || performance.now() >= end) r(v); else setTimeout(f, 50); }};
+          f(); }})""")
 
     def settle(self) -> None:
         self.js(SETTLE)

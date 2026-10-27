@@ -249,6 +249,7 @@ def test_the_group_name_opens_its_transactions(tmp_path, width):
         assert q(b, link) == "Food"
         tap(b, link)
         assert b.js("location.hash") == "#/transactions?group=Food"
+        assert b.until("Boolean(document.querySelector('.txchips .tfchip'))")   # (the page's chips are drawn)
         assert q(b, ".txchips .tfchip") == "Food · all"
         want = get_json(b, "/api/transactions?" + urlencode({"group": "Food", "month": month, "limit": 50}))["rows"]
         assert b.js("[...document.querySelectorAll('#page tr[data-tid]')].map((r) => r.dataset.tid)") == \

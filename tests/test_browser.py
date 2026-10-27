@@ -88,7 +88,7 @@ EDITORS = """(async () => {
   const out = [];
   const still = async () => {   // the sheet has slid in and the focus has landed
     AFTER_CHANGE
-    await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => 0)));
+    await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => 0)));
     AFTER_CHANGE
   };
   const measure = (what) => {
@@ -454,7 +454,7 @@ EDITOR_USE = """(async () => {
   const row = [...document.querySelectorAll('#page tr.c')].find((c) => c.querySelector('.nml').textContent === NAME);
   row.querySelector('.plan').click();
   await wait();
-  await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => 0)));
+  await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => 0)));
   const sheet = document.getElementById('sheet');
   const sug = sheet.querySelector('.bx-sug');
   const use = sug && [...sug.querySelectorAll('button')].find((b) => b.textContent === 'Use');

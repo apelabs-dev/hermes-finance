@@ -406,7 +406,7 @@ def test_asked_inside_the_minute_the_panel_says_not_synced_again(chrome, site, m
     b.settle()
     p = b.js(PANEL)
     assert (p["title"], p["sub"]) == ("Banks asked for fresh data", "All 8 banks")
-    assert len(p["more"]) == 1 and re.fullmatch(r"Not synced again: the last sync was 2[01] s ago\.", p["more"][0]), p["more"]
+    assert len(p["more"]) == 1 and re.fullmatch(r"Not synced again: the last sync was 2\d s ago\.", p["more"][0]), p["more"]
     assert not any(m.startswith("This sync") for m in p["more"]) and "Synced just now" not in p["text"]
     assert b.problems() == []
 

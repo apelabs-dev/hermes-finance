@@ -134,6 +134,8 @@ def test_the_drawer_counts_the_draft_applies_it_and_the_chips_clear_it(site, chr
 def test_on_a_phone_the_drawer_is_a_sheet_and_the_order_is_a_chip(site, chrome):
     go(chrome, site, "transactions", 390)
     act(chrome, "document.querySelector('#page .tfbtn').click()", 500)
+    chrome.until("(() => { const d = document.querySelector('.tfd'); return d && Math.round(d.getBoundingClientRect().bottom) === "
+                 "innerHeight && !d.getAnimations({subtree: true}).some((a) => a.playState === 'running'); })()")   # slid in
     box = chrome.js("(() => { const r = document.querySelector('.tfd').getBoundingClientRect(); "
                     "return [r.left, Math.round(r.bottom) === innerHeight, r.width === innerWidth, "
                     "Boolean(document.querySelector('.tfd .tfsorts').getClientRects().length), "

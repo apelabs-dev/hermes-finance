@@ -72,7 +72,7 @@ def test_groups_drill_filters_and_screenshots(site, width):
         b.js("[...document.querySelectorAll('.wherewent a.crowl')].find(x => x.textContent.includes('Eating Out')).click()")
         b.settle()
         assert 'category=Eating' in b.js('location.hash')
-        assert b.js("document.querySelectorAll('.tx [data-tid]').length") > 0
+        assert b.until("document.querySelectorAll('.tx [data-tid]').length") > 0
         b.goto(f'{site.url}/#/overview?month=2026-10')
         b.settle()
         # The drilled group is remembered (hf.wherewent.group): the reload comes back to Food, so go back to the groups.
