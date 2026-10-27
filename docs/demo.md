@@ -93,6 +93,20 @@ errors, and exercises read-only controls, transaction windows/search/filters and
 records counts, a screenshot manifest, requests, checks, owned PIDs and cleanup. Screenshots/logs belong outside the repo.
 `scripts/serve_demo.py dist/demo` can separately preview Cloudflare's `_headers`; the browser proof needs no such server.
 
+## Weekly publication
+
+`.github/workflows/demo-weekly.yml` replaces the local weekly start/report crons. It runs Mondays at 11:00 UTC
+(03:00 PST, 04:00 PDT), or through **Run workflow**, and serializes runs. GitHub disables scheduled workflows after
+60 days without repository activity. The owner must create repository Actions secrets `HF_PRIVATE_WORDS_CONTENT`
+(the multiline publication word list), `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+
+The workflow installs locked dependencies, runs all seven weekday variants and the combined demo, then deploys with
+Wrangler 4.153.0 only after a zero exit and `DEMO_WEEKLY_OK`. It requires HTTP 200 from the published core JSON.
+Public artifacts expire after seven days: only a redacted summary and scrubbed stage logs are eligible. Private-canary
+logs, screenshots and word files are excluded; word files are deleted even after failure. Ubuntu Chrome uses a local
+wrapper for runner sandbox flags. Linux text rendering can differ from the macOS browser checks; a failed verification
+blocks publication and leaves the previous deployment in place.
+
 ## Cloudflare Pages publication (operator steps; no deployment performed)
 
 After the private publication scan passes, upload the exact scanned directory:
