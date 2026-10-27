@@ -1066,6 +1066,17 @@ def test_a_deadline_bounds_every_frame_and_a_torn_connection_is_closed(how):
     large command is sent: it fails by its deadline (it used to go on waiting the socket's 60 s per read), says the
     connection is closed, and closes it (the page sees it go); a later call fails at once instead of parsing the rest
     of a torn stream."""
+    # send-stall: encoding and masking the 8 MB command come out of the deadline too, and a starved machine can spend
+    # all of it before a byte is sent (2026-10-27 hog loop: -0.75 s left at the first send). Then nothing is torn, so
+    # "not closed" is right, and that try proves nothing about a stalled send: it's retried on a fresh connection with
+    # a longer deadline, so the encoding fits and the send itself stalls.
+    for budget in ((0.5, 2.0, 8.0) if how == "send-stall" else (0.5,)):
+        if _one_torn_frame_try(how, budget) != "starved before sending":
+            return
+    pytest.fail("send-stall: the machine was too starved to start sending, even with an 8 s deadline")
+
+
+def _one_torn_frame_try(how: str, budget: float) -> str:
     reading = threading.Event()
 
     def serve(dt):
@@ -1082,13 +1093,21 @@ def test_a_deadline_bounds_every_frame_and_a_torn_connection_is_closed(how):
     c, dt = _connected(serve, rcvbuf=4096 if how == "send-stall" else None)
     if how == "send-stall":
         c.ws.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+    left: list[float] = []   # what was left of the deadline at each blocking socket call
+    real_wait = c.ws._wait
+    c.ws._wait = lambda deadline: (left.append(deadline - time.monotonic()) if deadline else None, real_wait(deadline))[1]
     expr, out = "x" * 8_000_000 if how == "send-stall" else "1", {}
     try:
-        out = _in_time(lambda: c.call("Runtime.evaluate", time.monotonic() + 0.5, expression=expr), 4)
+        out = _in_time(lambda: c.call("Runtime.evaluate", time.monotonic() + budget, expression=expr), budget + 3.5)
         reading.set()
-        assert out["result"] != "still waiting", f"call() still waiting 4 s after its deadline of 0.5 s ({how})"
-        assert out["result"].startswith("raised") and out["secs"] < 2, out
-        assert "closed" in out["result"], out
+        assert out["result"] != "still waiting", f"call() still waiting 3.5 s after its deadline of {budget} s ({how})"
+        assert out["result"].startswith("raised"), out
+        if how == "send-stall" and left and left[0] <= 0:   # (its time is the encoding's, not a stall's: not bounded)
+            assert "closed" not in out["result"] and not c.ws.broken, out   # nothing sent: nothing torn
+            return "starved before sending"
+        # (< 3, not < 2: 2.22 s on a starved runner, Nightly 40580322138. "Never returns" is the 4 s check above.)
+        assert out["secs"] < budget + 2.5, (out, left[:3])
+        assert "closed" in out["result"], (out, left[:3])
         assert dt.eof.wait(5), "the torn connection was left open"
         t0 = time.monotonic()
         with pytest.raises(ConnectionError):
@@ -1096,6 +1115,7 @@ def test_a_deadline_bounds_every_frame_and_a_torn_connection_is_closed(how):
         assert time.monotonic() - t0 < 0.5
         if how == "fragment-then-ping":
             assert dt.pongs == [b"hi"], dt.pongs   # (the ping was answered on the way)
+        return "proved"
     finally:
         reading.set()
         dt.close()   # (unblocks a call still reading)
@@ -1114,7 +1134,7 @@ def test_a_deadline_bounds_a_stream_of_events_that_never_drains():
     try:
         out = _in_time(lambda: c.call("Runtime.evaluate", time.monotonic() + 0.5, expression="1"), 4)
         assert out["result"] != "still waiting", "call() still reading events 4 s after its deadline of 0.5 s"
-        assert out["result"].startswith("raised") and out["secs"] < 2, out
+        assert out["result"].startswith("raised") and out["secs"] < 3, out
         assert len(c.events) > 10, len(c.events)   # (it did read the events meanwhile)
     finally:
         dt.close()
@@ -1136,7 +1156,7 @@ def test_a_deadline_with_nothing_of_a_message_in_hand_leaves_the_connection_in_u
     try:
         out = _in_time(lambda: c.call("Runtime.evaluate", time.monotonic() + 0.5, expression="1"), 4)
         assert out["result"] != "still waiting", "call() still waiting 4 s after its deadline of 0.5 s (a ping, then nothing)"
-        assert out["result"].startswith("raised") and "closed" not in out["result"] and out["secs"] < 2, out
+        assert out["result"].startswith("raised") and "closed" not in out["result"] and out["secs"] < 3, out
         assert dt.pongs == [b"hi"], dt.pongs
         assert c.call("Runtime.evaluate", time.monotonic() + 5, expression="2") == {"result": {"type": "number", "value": 2}}
         assert not dt.eof.is_set()
@@ -1315,7 +1335,7 @@ def test_a_message_begun_with_an_empty_fragment_is_open_on_a_deadline():
     out, after = {}, {}
     try:
         out = _in_time(lambda: c.call("Runtime.evaluate", time.monotonic() + 0.5, expression="1"), 4)
-        assert out["result"].startswith("raised") and out["secs"] < 2, out
+        assert out["result"].startswith("raised") and out["secs"] < 3, out
         after = _in_time(lambda: c.call("Runtime.evaluate", time.monotonic() + 2, expression="2"), 4)
         assert "closed" in out["result"] and after["result"].startswith("unwound: ConnectionError"), \
             (f"the first call {out['result']!r}; the next {after['result']!r} (the continuation of an unfinished message "

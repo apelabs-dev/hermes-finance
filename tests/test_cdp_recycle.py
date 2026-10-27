@@ -35,7 +35,10 @@ def site(tmp_path_factory):
     srv.server_close()
 
 
-def test_a_wedged_page_fails_its_goto_and_the_next_goto_gets_a_fresh_chrome(site):
+def test_a_wedged_page_fails_its_goto_and_the_next_goto_gets_a_fresh_chrome(site, monkeypatch):
+    # This Chrome wedges on purpose: with HF_CHROME_LOG on (the Nightly) it was kept and counted as a wedge every run
+    # (Nightly 40572130051, 40580322138), so check.py's "Chromes that wedged" counts real ones only.
+    monkeypatch.delenv(cdp.LOG_ENV, raising=False)
     with Chrome() as b:
         b.call("Page.addScriptToEvaluateOnNewDocument", source="window.__mark = 'kept';")
         b.call("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "dark"}])
