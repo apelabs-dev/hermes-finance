@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.5](https://github.com/arspesk/hermes-finance/compare/v0.2.4...v0.2.5) (2026-10-27)
+
+
+### Bug Fixes
+
+* demo server listens without a reverse DNS lookup first ([5673364](https://github.com/arspesk/hermes-finance/commit/5673364b6686c76be47fd257cb8f1b5ed2bf485e))
+* slow-machine sweep: a locked-out Ask turn times out instead of a 500; deadlock detector sees pool threads; demo server dies with its parent ([7e0732b](https://github.com/arspesk/hermes-finance/commit/7e0732b517bd82d8211164202953e14e70bf0081))
+* slow-machine tests wait for state; demo server dies with its parent via a stdin pipe; count-up bound allows page lag ([0cb5a0e](https://github.com/arspesk/hermes-finance/commit/0cb5a0e7005c2243bcf822bfd4d0d897bdb331c0))
+
 ## [0.2.4](https://github.com/arspesk/hermes-finance/compare/v0.2.3...v0.2.4) (2026-10-26)
 
 
