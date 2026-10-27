@@ -187,6 +187,9 @@ READY_NOW = f"(window.__appear ? window.__appear(() => {DRAWN}, 8000, 'the page 
 SETTLED = "(window.__settled ? window.__settled() : " + SETTLE.replace("res(true)", "res('')") + ")"
 
 
+# what a test sets up in its Chrome that a replacement one (Chrome._recycle) gets too; every Emulation.* override as well
+STICKY = {"Page.addScriptToEvaluateOnNewDocument", "Network.setBlockedURLs", "Network.setExtraHTTPHeaders",
+          "Network.emulateNetworkConditions", "Network.setCacheDisabled", "Page.setBypassCSP"}
 NAV_TIMEOUT = 15      # s: (TEST-SPEED review F5) a goto() whose page hasn't committed and loaded by then fails
 READY_TIMEOUT = 15    # s: (review B1) and then one whose READY hasn't answered this long after (8 s of it in the page)
 
@@ -1030,6 +1033,8 @@ class Chrome:
     def _connect(self) -> None:
         self.n = 0
         self.events: list[dict] = []
+        self._sticky: list[tuple[str, dict]] = []   # the test's own setup, for a replacement Chrome (_recycle)
+        self._recording = False
         port_file = Path(self.profile) / "DevToolsActivePort"
         deadline = time.time() + 30
         page = None
@@ -1066,6 +1071,7 @@ class Chrome:
         self.call("Page.addScriptToEvaluateOnNewDocument", source=PEND)   # TEST-SPEED: settled() / goto()
         self.width = self.height = 0
         self.mobile = False
+        self._recording = True
 
     def __enter__(self):
         return self
@@ -1086,6 +1092,10 @@ class Chrome:
         at once). Without a deadline, each read waits the socket's 60 s, as it always did. Review round 3: the deadline
         is looked at before every frame, buffered ones too; the work on one frame or on the finished message (its
         decoding, json.loads) is CPU time it doesn't interrupt, so a call can end that much after it."""
+        if self.__dict__.get("_recording") and (method.startswith("Emulation.") or method in STICKY):
+            if method.startswith("Emulation."):   # an override: the latest one is what's in force
+                self._sticky = [s for s in self._sticky if s[0] != method]
+            self._sticky.append((method, params))
         self.n += 1
         mine = self.n
         try:
@@ -1118,6 +1128,38 @@ class Chrome:
                   deviceScaleFactor=scale or (2 if mobile else 1), mobile=mobile)
 
     def goto(self, url: str, ready: bool = True) -> None:
+        """_goto(), and if it fails (the page didn't load, wasn't drawn, or DevTools stopped answering), this Chrome is
+        replaced before the error goes on: slow-mode run 4 (t_d2b88168) had one page wedge its renderer, and every later
+        goto() in that Chrome failed with "Page.navigate: no answer by its deadline" (85 tests, 50 minutes). A
+        navigation the page itself refused (Page.navigate's errorText) leaves it as it is."""
+        try:
+            self._goto(url, ready)
+        except RuntimeError as e:
+            # (a Chrome started here; tests of goto()'s own deadlines drive a stand-in made without __init__)
+            if "the navigation failed:" not in str(e) and "_sticky" in self.__dict__:
+                self._recycle(str(e))
+            raise
+
+    def _recycle(self, why: str) -> None:
+        """Stop this Chrome and go on as a fresh one: the same object (the test's fixture holds it), the slot it frees,
+        and the setup the test gave the old one (its Emulation overrides, scripts for new documents, size)."""
+        sticky, size = list(self._sticky), (self.width, self.height, self.mobile)
+        self.close()
+        fresh = Chrome(self.path)
+        with _REGISTER:   # (a stop of every Chrome looks at _LIVE under it: never sees neither, or both)
+            _LIVE.discard(fresh)
+            self.__dict__ = fresh.__dict__
+            _LIVE.add(self)
+        self._recording = False
+        try:
+            for method, params in sticky:
+                self.call(method, **params)
+        finally:
+            self._sticky, self._recording = sticky, True
+        self.width, self.height, self.mobile = size
+        sys.stderr.write(f"cdp: a Chrome was replaced after: {why[:200]}\n")
+
+    def _goto(self, url: str, ready: bool = True) -> None:
         """Open `url` and wait until it's there, then (ready) until the page is drawn (READY). TEST-SPEED: no fixed pause
         (it was 0.15 s, which a busy machine can outlast): a new document is waited for until it has loaded (its PEND
         tracker is a new one), a new #hash in the same document until the page's own hashchange listener has run.

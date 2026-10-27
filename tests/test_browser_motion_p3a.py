@@ -27,7 +27,7 @@ FIND = """(key) => { const t = {spent: 'Spent in', left: 'Left to spend', networ
 
 # Samples the three heroes on every frame for `ms` after `act` ran; also the layout shifts seen from the first sample on.
 SAMPLE = """(async () => {
-  const find = FIND_FN; const out = {spent: [], left: [], networth: []}, rects = {spent: [], left: [], networth: []};
+  const find = FIND_FN; const out = {spent: [], left: [], networth: []}, rects = {spent: [], left: [], networth: []}, busy_at = {spent: 0, left: 0, networth: 0};
   let shift = 0, t0 = null;
   const po = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (t0 !== null && e.startTime >= t0) shift += e.value; });
   po.observe({type: 'layout-shift', buffered: false});
@@ -36,6 +36,7 @@ SAMPLE = """(async () => {
   await new Promise((res) => { const tick = () => {
     for (const k of Object.keys(out)) { const el = find(k); if (!el) continue; if (t0 === null) t0 = performance.now();
       out[k].push(el.textContent.replace(/\\s+/g, ' ').trim());
+      if (el.getAttribute('role') || el.style.minWidth) busy_at[k] += 1;   // a frame while its count-up ran
       const r = el.getBoundingClientRect(); rects[k].push([Math.round(r.width * 10) / 10, Math.round(r.height * 10) / 10]); }
     // past the window, sampled on until no count-up is still running (its role/label/min-width set), 5 s at most: on a
     // slow machine it can outlast MS, and "ends on the exact value, state cleared" is about its end (t_d2b88168)
@@ -43,7 +44,7 @@ SAMPLE = """(async () => {
     if (performance.now() < end || (busy() && performance.now() < end + 5000)) requestAnimationFrame(tick); else res(); }; tick(); });
   po.disconnect();
   const aria = {}; for (const k of Object.keys(out)) { const el = find(k); aria[k] = el ? [el.getAttribute('role'), el.getAttribute('aria-label'), el.style.minWidth] : null; }
-  return {out, rects, shift, aria, final: Object.fromEntries(Object.keys(out).map((k) => [k, find(k) && find(k).textContent.replace(/\\s+/g, ' ').trim()]))};
+  return {out, rects, shift, aria, busy_at, final: Object.fromEntries(Object.keys(out).map((k) => [k, find(k) && find(k).textContent.replace(/\\s+/g, ' ').trim()]))};
 })()""".replace("FIND_FN", FIND)
 
 PREV = "document.getElementById('mprev').click();"
@@ -89,8 +90,12 @@ def test_count_up_on_month_switch_ends_on_exact_value(browser, site):
         assert seen, key
         final = r["final"][key]
         assert seen[-1] == final
-        assert set(seen) - {seen[0], final}, (key, seen)  # it did count: a value neither the start nor the end was on screen
-        # (not len(set(seen)) > 2: net worth can start and end on the same value, and a slow machine catches 1 frame)
+        # it did count: a value neither the start nor the end was on screen, once the page drew 2+ frames while it ran
+        # (not len(set(seen)) > 2: net worth can start and end on the same value). A starved page (frames 200+ ms apart,
+        # slow-mode run 5) can draw the whole 400 ms count-up in one frame: then there was no in-between frame to show
+        assert r["busy_at"][key] >= 1, (key, "the count-up never ran", seen)
+        if r["busy_at"][key] >= 2:
+            assert set(seen) - {seen[0], final}, (key, seen, r["busy_at"][key])
         assert r["aria"][key] == [None, None, ""], r["aria"][key]   # interruption state cleared: no stale label or min-width
     # the exact final values are the ones a plain load of that month shows (no count-up on a fresh load)
     month = browser.js("location.hash")
