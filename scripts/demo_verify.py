@@ -8,6 +8,7 @@ Screenshots and JSON evidence require --out outside the repository. Everything o
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import signal
@@ -63,15 +64,25 @@ def free_port() -> int:
 # running for hours (retro, 2026-10-26). Now it exits once its parent is gone, however that ends: its stdin is a pipe
 # only the parent holds, so the kernel closes it then, and the read sees EOF (no pid compared: no launcher or reparenting
 # can fool it).
-SERVE = """import os, runpy, sys, threading
-port, directory = sys.argv[1], sys.argv[2]
+# It's http.server's own handler on a ThreadingHTTPServer, minus one call: HTTPServer.server_bind asks
+# socket.getfqdn('127.0.0.1') (a reverse DNS lookup) BEFORE it listens, and on the Nightly's runner that hung past 15 s
+# twice ("still running, not listening"). The name it looks up is only ever used in log lines; here it's the address.
+# SIGUSR1 makes it write its stacks to stderr, so a server that's alive but not listening says where it is.
+SERVE = """import faulthandler, functools, os, signal, socketserver, sys, threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+faulthandler.register(signal.SIGUSR1)
+port, directory = int(sys.argv[1]), sys.argv[2]
 def orphaned():
     while sys.stdin.buffer.read(1):
         pass
     os._exit(0)
 threading.Thread(target=orphaned, daemon=True).start()
-sys.argv = ['http.server', port, '--bind', '127.0.0.1', '--directory', directory]
-runpy.run_module('http.server', run_name='__main__', alter_sys=True)
+class Server(ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+with Server(('127.0.0.1', port), functools.partial(SimpleHTTPRequestHandler, directory=directory)) as httpd:
+    httpd.serve_forever()
 """
 
 
@@ -95,8 +106,12 @@ class Site:
                     return
             except OSError:
                 time.sleep(0.1)
-        why = f"exit {self.proc.poll()}: {self.errors.read_text(errors='replace')[-600:].strip()}" \
-            if self.proc.poll() is not None else "still running, not listening after 15 s"
+        if self.proc.poll() is None:   # alive but not listening: where is it? (SERVE dumps its stacks on SIGUSR1)
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(self.proc.pid, signal.SIGUSR1)
+            time.sleep(1)
+        state = f"exit {self.proc.poll()}" if self.proc.poll() is not None else "still running, not listening after 15 s"
+        why = f"{state}: {self.errors.read_text(errors='replace')[-1500:].strip()}"
         self.close()
         raise RuntimeError(f"http.server did not start ({why})")
 
