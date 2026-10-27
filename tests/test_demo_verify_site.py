@@ -29,6 +29,17 @@ def _listening(port: int) -> bool:
         return False
 
 
+def _alive(pid: int) -> bool:
+    """Running, not merely a zombie: once the killed parent's children are reparented, a PID 1 that doesn't reap (a
+    CI container without an init) leaves the dead server in the process table, and os.kill(pid, 0) still succeeds."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
 def test_the_server_goes_when_its_demo_verify_is_killed(tmp_path):
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -45,12 +56,7 @@ def test_the_server_goes_when_its_demo_verify_is_killed(tmp_path):
         while time.monotonic() < deadline and _listening(port):
             time.sleep(0.2)
         assert not _listening(port), "the http.server outlived its demo_verify"
-        try:
-            os.kill(server, 0)
-            alive = True
-        except ProcessLookupError:
-            alive = False
-        assert not alive
+        assert not _alive(server), "the http.server process is still running"
     finally:
         if parent.poll() is None:
             os.killpg(parent.pid, signal.SIGKILL)
