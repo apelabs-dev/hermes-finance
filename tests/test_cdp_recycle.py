@@ -11,7 +11,10 @@ import time
 
 import pytest
 
-from cdp import Chrome, _exited, slots_in_use
+import threading
+
+import cdp
+from cdp import Chrome, _exited
 
 STUCK = ('<html><body>stuck<script>addEventListener("load", () => setTimeout(() => { for (;;) {} }, 0));'
          '</script></body></html>')
@@ -37,11 +40,13 @@ def test_a_wedged_page_fails_its_goto_and_the_next_goto_gets_a_fresh_chrome(site
         b.call("Page.addScriptToEvaluateOnNewDocument", source="window.__mark = 'kept';")
         b.call("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "dark"}])
         b.size(390, 844)
-        old, slots = b.proc, slots_in_use()
+        old, held = b.proc, cdp._HELD.get(threading.get_ident())
         with pytest.raises(RuntimeError):
             b.goto(site + "/stuck.html")
         assert _exited(old), "the wedged Chrome is still running"
-        assert b.proc is not old and slots_in_use() == slots   # replaced in the same slot, none leaked
+        # replaced, holding a slot, and this thread holds as many as before: none leaked, none taken twice
+        # (this thread's count, not slots_in_use(): that's machine-wide, and other workers come and go: Nightly 40451942425)
+        assert b.proc is not old and b.slot is not None and cdp._HELD.get(threading.get_ident()) == held == 1
         t = time.monotonic()
         b.goto(site + "/ok.html", ready=False)
         assert time.monotonic() - t < 10

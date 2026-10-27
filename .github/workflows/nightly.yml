@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
+    inputs:
+      maxfail:
+        description: "stop each part at this many failures (empty: run everything)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -29,6 +34,7 @@ jobs:
     env:
       HERMES_FINANCE_TEST_PRIVATE: ${{ secrets.HERMES_FINANCE_TEST_PRIVATE }}
       HERMES_PLAID: "off"
+      CHECK_MAXFAIL: ${{ inputs.maxfail }}   # (empty on the schedule: the full report)
       # part 1 runs the no-browser files alongside the browser ones: on the runner's 3 cores, 4 Chromes besides left
       # a page 3 frames a second (a 400 ms count-up seen at its ends only). Part 2's gates run alone: all 4.
       # (3 for part 1: check.py keeps one slot free of its browser workers, so 2 workers as before)

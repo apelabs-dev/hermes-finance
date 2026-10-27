@@ -762,8 +762,11 @@ class Pytest:
     def __init__(self, name: str, args: list[str], logs: Path, env: dict):
         self.name, self.log, self.xml = name, logs / f"{name}.log", logs / f"{name}.xml"
         self.basetemp = logs / f"tmp-{name}"
+        # CHECK_MAXFAIL=N: stop at the Nth failure instead of running on (a fix round learns of a failure in minutes,
+        # not at the end of a 40-minute run; the Nightly's on-demand maxfail input sets it)
+        maxfail = [f"--maxfail={int(m)}"] if (m := os.environ.get("CHECK_MAXFAIL", "").strip()) else []
         cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:randomly", "-p", "no:cacheprovider", "-rfE",
-               f"--junitxml={self.xml}", f"--basetemp={self.basetemp}", *args]
+               f"--junitxml={self.xml}", f"--basetemp={self.basetemp}", *maxfail, *args]
         self.t0 = time.monotonic()
         self.proc = subprocess.Popen(cmd, cwd=ROOT, env={**env, "HF_CHECK_RUN": str(logs)}, stdout=self.log.open("w"),
                                      stderr=subprocess.STDOUT, start_new_session=True)
