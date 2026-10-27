@@ -29,7 +29,7 @@ def open_page(b, site, page, fresh=False):
     if fresh:
         b.js("localStorage.removeItem('hf.accounts.shut'); localStorage.removeItem('hf.wherewent.group')")
     b.goto(f'{site.url}/?r=1#/{page}')
-    b.settle()
+    b.settled()   # its fetches done too, not just two frames (t_d2b88168)
 
 
 def acct(b, key='cash'):

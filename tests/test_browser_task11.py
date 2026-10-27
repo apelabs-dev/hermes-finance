@@ -63,6 +63,7 @@ def browser():
 def open_page(browser, srv, page, mode):
     browser.size(*WIDTHS[mode])
     browser.goto(f"{srv.url}/?t={mode}{time.time():.3f}#/{page}")  # a new URL: always a real load
+    browser.settled()   # "drawn" is only the page's shell; its rows come from a fetch after (t_d2b88168)
     browser.problems()
 
 

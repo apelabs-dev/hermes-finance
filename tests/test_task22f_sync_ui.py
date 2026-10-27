@@ -169,8 +169,7 @@ def go(b, s, page="overview", width=1440, theme=None):
     b.goto(f"{s.url}/?t={time.time():.3f}#/{page}")
     if theme:
         b.js(f"window.HFTheme.set({theme!r})")
-        time.sleep(0.3)
-    b.settle()
+    b.settled(force=bool(theme))   # fetches, redraws and the theme's transition done (was a fixed 0.3 s; t_d2b88168)
     b.js("localStorage.removeItem('hf.theme')")
 
 

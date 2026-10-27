@@ -78,6 +78,7 @@ def browser():
 def open_page(browser, site, page, mode):
     browser.size(*WIDTHS[mode])
     browser.goto(f"{site.url}/?t={mode}#/{page}")
+    browser.settled()   # "drawn" is only the page's shell; its rows come from a fetch after (CI, t_d2b88168)
     browser.problems()
 
 
@@ -429,14 +430,16 @@ def test_the_saved_toast_stays_visible_after_the_page_refreshes(browser, site):
 # --- sweep: the recategorize toast said "5 mores from them" -------------------------------------------
 
 RECATEGORIZE = """(async () => {
-  const sel = [...document.querySelectorAll('#page button.catb')].find((x) => x.value === 'Gas'
+  const until = async (f, what) => { for (const end = performance.now() + 8000; performance.now() < end;
+    await new Promise((r) => setTimeout(r, 50))) { const v = f(); if (v) return v; } throw new Error(`never: ${what}`); };
+  const sel = await until(() => [...document.querySelectorAll('#page button.catb')].find((x) => x.value === 'Gas'
     && [...document.querySelectorAll('#page tr')].filter((tr) => tr.querySelector('.mt b .t')
-      && tr.querySelector('.mt b .t').textContent === x.closest('tr').querySelector('.mt b .t').textContent).length > 2);
+      && tr.querySelector('.mt b .t').textContent === x.closest('tr').querySelector('.mt b .t').textContent).length > 2),
+    'a Gas row with 2 more from the same merchant');
   sel.click();   // polish P0: the grouped category picker
-  for (let i = 0; i < 50 && !document.querySelector('.cpk .cpko'); i++) await new Promise((r) => setTimeout(r, 50));
-  document.querySelector('.cpk .cpko[data-cat="Travel"]').click();
-  await new Promise((r) => setTimeout(r, 700));
-  return document.getElementById('toast').textContent;
+  (await until(() => document.querySelector('.cpk .cpko[data-cat="Travel"]'), 'the picker')).click();
+  return await until(() => { const t = document.getElementById('toast').textContent; return t.startsWith('Moved ') && t; },
+    'the "Moved" toast').catch(() => document.getElementById('toast').textContent);
 })()"""
 
 
