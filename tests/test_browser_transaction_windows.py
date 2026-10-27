@@ -58,7 +58,9 @@ def chrome():
 
 
 def wait(b):
-    b.settle()
+    # settled(): the page's fetches and short timers done, not two frames (Nightly 40572130051: a month switch's
+    # links weren't drawn yet 510 ms in on a starved runner). The 450 ms stays for the drawer/sheet transitions.
+    b.settled()
     b.js('new Promise(r => setTimeout(r, 450))')
 
 
@@ -259,3 +261,19 @@ def test_filter_preview_saved_filters_sort_review_totals_and_shared_navigation(s
         assert link and 'month=2026-09' in link
         b.goto(site.url+'/'+link); wait(b); assert label(b) == 'September 2026'
     assert b.problems() == []
+
+
+def test_a_month_switch_whose_fetch_is_slow_is_waited_for(site, chrome):
+    """Nightly 40572130051 (a starved runner): after #mnext the Overview's month link was missing because wait() gave
+    the page two frames and 510 ms, not the end of its fetch. Every fetch here is held 900 ms (a timer settled() tracks)."""
+    b = chrome
+    go(b, site, 'overview?month=2026-09')
+    b.js("(() => {window.__realFetch = window.fetch;"
+         " window.fetch = (...a) => new Promise(r => setTimeout(r, 900)).then(() => window.__realFetch(...a));})()")
+    try:
+        click(b, '#mprev'); assert label(b) == 'August 2026'
+        click(b, '#mnext'); assert label(b) == 'September 2026'
+        link = b.js("[...document.querySelectorAll('#page a[href]')].find(a=>a.hash.startsWith('#/transactions'))?.hash")
+        assert link and 'month=2026-09' in link
+    finally:
+        b.js("window.__realFetch && (window.fetch = window.__realFetch)")
