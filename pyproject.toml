@@ -1,6 +1,6 @@
 [project]
 name = "hermes-finance"
-version = "0.2.4" # x-release-please-version
+version = "0.2.5" # x-release-please-version
 description = "Plaid -> local SQLite personal-finance pipeline for the Hermes budgeting agent"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
