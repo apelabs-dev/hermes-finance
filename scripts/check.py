@@ -48,7 +48,8 @@ and exits 1 on any failure: a failed test or check, a phase that ran no tests, g
 exactly the layout states they were asked for (a state audit_layout skipped counts only where ABSENT says its DB lacks
 it, and is reported absent, not checked), a pytest run or Chrome whose processes outlived SIGKILL, or (TEST-SPEED
 review round 3) a cleanup its watchdog couldn't finish (a process of the run still running, a `ps` that failed, the
-watchdog itself out of time). Logs: $TMPDIR/hf-check-<pid>-*/ (kept when something failed, or with --keep-logs).
+watchdog itself out of time). Logs: $TMPDIR/hf-check-<pid>-*/ (kept when something failed, or with --keep-logs, or when a Chrome wedged under
+HF_CHROME_LOG=run: its log, process group and samples are in <logs>/chrome).
 """
 from __future__ import annotations
 
@@ -470,6 +471,25 @@ def gate_scope(xml: Path, want: list[str], reports: dict[str, dict]) -> tuple[di
 
 _CHILDREN: list[Pytest] = []
 LEDGER: Path | None = None
+# t_37bf3e0b: HF_CHROME_LOG=run puts tests/cdp.py's Chrome logs in this run's own log dir (<logs>/chrome), and a run in
+# which a Chrome wedged (was replaced: its <log>.wedge.txt) keeps that dir, passed or not, so CI's upload of the logs
+# finds it. Any other value is a directory of the caller's own, passed through as it is; unset, nothing changes.
+CHROME_LOG_ENV = "HF_CHROME_LOG"
+
+
+def chrome_log_dir(logs: Path) -> Path | None:
+    """Where this run's Chromes log (HF_CHROME_LOG; `run`: <logs>/chrome, set for its children), or None."""
+    value = os.environ.get(CHROME_LOG_ENV)
+    if not value:
+        return None
+    if value == "run":
+        os.environ[CHROME_LOG_ENV] = str(logs / "chrome")
+    return Path(os.environ[CHROME_LOG_ENV])
+
+
+def wedged_chromes(directory: Path | None) -> list[Path]:
+    """The wedge reports (tests/cdp.py Chrome._capture) in `directory`."""
+    return sorted(directory.glob("*.wedge.txt")) if directory else []
 
 
 def note(event: str, *fields) -> None:
@@ -1089,6 +1109,7 @@ def _main(args) -> int:
     LEDGER = logs / "ledger.txt"
     LEDGER.touch()
     os.environ["HF_CHROME_LEDGER"] = str(LEDGER)   # tests/cdp.py: every Chrome this run starts, and stops, goes in it
+    chrome_logs = chrome_log_dir(logs)
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _on_signal)
     dog = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--watchdog", str(LEDGER)],
@@ -1103,7 +1124,11 @@ def _main(args) -> int:
         if why:   # (TEST-SPEED review round 3: the run fails, and its record of what may still run is kept)
             print(f"check.py: the run's cleanup failed: {why}. The run fails; its ledger and logs are kept, and so is "
                   f"every profile not seen stopped ({LEDGER})", flush=True)
-        if ok and not why and not args.keep_logs:
+        wedged = wedged_chromes(chrome_logs)
+        if wedged:
+            print(f"check.py: Chromes that wedged and were replaced: {len(wedged)}; what each was doing: "
+                  f"{chrome_logs}/*.wedge.txt", flush=True)
+        if ok and not why and not args.keep_logs and not (wedged and chrome_logs.is_relative_to(logs)):
             shutil.rmtree(logs, ignore_errors=True)
         else:
             print(f"(logs: {logs})")

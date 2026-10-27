@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import socketserver
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +28,16 @@ LOCAL = {"Host": "127.0.0.1:8765"}
 JSONH = {**LOCAL, "Content-Type": "application/json", "Origin": "http://127.0.0.1:8765"}
 KEY = "sk-or-test-0123456789abcdef"
 MODEL = "anthropic/claude-haiku-4.5"
+
+
+class Loopback(ThreadingHTTPServer):
+    """The fakes' server, minus HTTPServer.server_bind's socket.getfqdn('127.0.0.1'): a reverse DNS lookup that stalled
+    ~35 s on the Nightly's runner (40433230579: GatedLLM's setup, between the app fixture's settings and the turn's; the
+    same as web._Server and demo_verify's SERVE). The name is only ever used in log lines."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class FakeLLM:
@@ -64,7 +75,7 @@ class FakeLLM:
             def log_message(self, *a):
                 pass
 
-        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.srv = Loopback(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/v1"
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
 

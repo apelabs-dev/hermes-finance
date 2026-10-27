@@ -192,6 +192,14 @@ STICKY = {"Page.addScriptToEvaluateOnNewDocument", "Network.setBlockedURLs", "Ne
           "Network.emulateNetworkConditions", "Network.setCacheDisabled", "Page.setBypassCSP"}
 NAV_TIMEOUT = 15      # s: (TEST-SPEED review F5) a goto() whose page hasn't committed and loaded by then fails
 READY_TIMEOUT = 15    # s: (review B1) and then one whose READY hasn't answered this long after (8 s of it in the page)
+# t_37bf3e0b: HF_CHROME_LOG=<dir> gives each Chrome its own log there (Chrome's stderr, with LOG_ARGS), and a Chrome that
+# wedges (Chrome._capture, before _recycle stops it) its process group, `sample`s and page there too; the logs of the
+# Chromes that stopped cleanly are deleted. Unset: the same Chrome as before (stderr to /dev/null), nothing written.
+LOG_ENV = "HF_CHROME_LOG"
+LOG_ARGS = ["--enable-logging=stderr", "--v=0"]
+SAMPLE_SECONDS = 2    # each `sample` of a wedged Chrome's process ...
+SAMPLE_WAIT = 30      # s: ... ends by then (symbolicating included), or is killed
+SAMPLE_MAX = 4        # processes sampled at most: the browser, the GPU process, then renderers
 
 PROFILE_PREFIX = "hf-cdp-"
 OWNER_FILE = "hf-owner"   # (TEST-SPEED) in each profile, written as soon as it's made: the pid of the process it's for
@@ -463,6 +471,9 @@ def _finish(c: Chrome) -> str:
         done.add("ws")
     if "profile" not in done:
         shutil.rmtree(c.profile, ignore_errors=True)
+        if c.__dict__.get("log") and not c.__dict__.get("wedged"):   # (HF_CHROME_LOG: a clean stop's log isn't kept)
+            with contextlib.suppress(OSError):
+                os.unlink(c.log)
         done.add("profile")
     if "stop" not in done:
         _ledger("stop", c)
@@ -997,23 +1008,33 @@ class Chrome:
                     if _CLOSING:
                         raise RuntimeError("the process is stopping its Chromes")
                     self.profile = _new_profile()   # (N2: its owner in it before a concurrent sweep can list it)
+                    argv = [self.path, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={self.profile}",
+                            "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
+                            "--disable-component-update", "--disable-sync", "--disable-extensions",
+                            "--disable-default-apps", "--hide-scrollbars", "--force-color-profile=srgb", "--mute-audio",
+                            "--password-store=basic", "--use-mock-keychain", "about:blank"]
+                    err, self.log = subprocess.DEVNULL, None
+                    if os.environ.get(LOG_ENV):   # (t_37bf3e0b) its own log, kept only if it wedges
+                        os.makedirs(os.environ[LOG_ENV], exist_ok=True)
+                        self.log = os.path.join(os.environ[LOG_ENV], f"chrome-{Path(self.profile).name}.log")
+                        argv[-1:-1] = LOG_ARGS
+                        err = open(self.log, "wb")
                     if masked:
                         signal.pthread_sigmask(signal.SIG_SETMASK, was)
                     try:
-                        self.proc = subprocess.Popen(
-                            [self.path, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={self.profile}",
-                             "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
-                             "--disable-component-update", "--disable-sync", "--disable-extensions",
-                             "--disable-default-apps", "--hide-scrollbars", "--force-color-profile=srgb", "--mute-audio",
-                             "--password-store=basic", "--use-mock-keychain", "about:blank"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-                            pass_fds=(self.slot,))
+                        self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True,
+                                                     pass_fds=(self.slot,))
                     finally:
+                        if err is not subprocess.DEVNULL:
+                            err.close()   # (Chrome has its own copy)
                         if masked:
                             signal.pthread_sigmask(signal.SIG_BLOCK, masked)
                 except BaseException:
                     if getattr(self, "profile", None):
                         shutil.rmtree(self.profile, ignore_errors=True)
+                    if getattr(self, "log", None):
+                        with contextlib.suppress(OSError):
+                            os.unlink(self.log)
                     _release_slot(self)
                     raise
                 self.pgid = self.proc.pid   # start_new_session: Chrome leads a new session and process group (pgid == its pid)
@@ -1144,6 +1165,7 @@ class Chrome:
         """Stop this Chrome and go on as a fresh one: the same object (the test's fixture holds it), the slot it frees,
         and the setup the test gave the old one (its Emulation overrides, scripts for new documents, size)."""
         sticky, size = list(self._sticky), (self.width, self.height, self.mobile)
+        self._capture(why)   # (HF_CHROME_LOG: what it was doing, looked at before it's stopped)
         self.close()
         fresh = Chrome(self.path)
         with _REGISTER:   # (a stop of every Chrome looks at _LIVE under it: never sees neither, or both)
@@ -1158,6 +1180,68 @@ class Chrome:
             self._sticky, self._recording = sticky, True
         self.width, self.height, self.mobile = size
         sys.stderr.write(f"cdp: a Chrome was replaced after: {why[:200]}\n")
+
+    def _capture(self, why: str) -> None:
+        """HF_CHROME_LOG only (t_37bf3e0b): what this Chrome was doing when it stopped answering, written next to its
+        log, which is then kept: <log>.wedge.txt (why, the test, its pages as the browser's own /json lists them, and
+        its process group from ps) and <log>.sample-<pid>.txt (macOS `sample`, SAMPLE_SECONDS each, SAMPLE_WAIT at
+        most: the browser, its GPU process, its renderers). Every step is bounded, and none raises."""
+        log = self.__dict__.get("log")
+        if not log or self.__dict__.get("_stopped", True):
+            return
+        self.wedged = True
+        base = log[:-len(".log")]
+        out = [f"why: {why}", f"at: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+               f"test: {os.environ.get('PYTEST_CURRENT_TEST')}", f"chrome: pid {self.proc.pid}, group {self.pgid}"]
+        try:   # (the browser's HTTP endpoint, not the page's DevTools session: that's what stopped answering)
+            port = int((Path(self.profile) / "DevToolsActivePort").read_text().split()[0])
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            c.request("GET", "/json/list")
+            out += [f"page: {t.get('type')} {t.get('url')}" for t in json.loads(c.getresponse().read())]
+            c.close()
+        except Exception as e:
+            out.append(f"pages: not listed ({e!r})")
+        group: list[tuple[int, float, str]] = []
+        try:
+            ps = subprocess.run(["ps", PS_ALL, "-o", "pid=,ppid=,pgid=,stat=,%cpu=,rss=,etime=,command="],
+                                capture_output=True, text=True, timeout=PS_WAIT).stdout
+            out.append("ps (pid ppid pgid stat %cpu rss etime command):")
+            for ln in ps.splitlines():
+                f = ln.split(None, 7)
+                if len(f) == 8 and f[2] == str(self.pgid):
+                    out.append("  " + ln.strip())
+                    group.append((int(f[0]), float(f[4]), f[7]))
+        except Exception as e:
+            out.append(f"ps: failed ({e!r})")
+        # the browser, its GPU process, then the pages' renderers busiest first (not Chrome's own UI's or extensions')
+        order = lambda p: (0 if p[0] == self.pgid else 1 if "--type=gpu-process" in p[2] else
+                           2 if "--type=renderer" in p[2] and "--top-chrome-webui" not in p[2]
+                           and "--extension-process" not in p[2] else 3, -p[1])
+        picked = [p for p in sorted(group, key=order) if order(p)[0] < 3][:SAMPLE_MAX] if shutil.which("sample") else []
+        samplers = []
+        for pid, *_ in picked:
+            try:
+                samplers.append((pid, subprocess.Popen(["sample", str(pid), str(SAMPLE_SECONDS), "-file",
+                                                        f"{base}.sample-{pid}.txt"], stdin=subprocess.DEVNULL,
+                                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                                       start_new_session=True)))
+            except OSError as e:
+                out.append(f"sample {pid}: not started ({e!r})")
+        end = time.monotonic() + SAMPLE_WAIT
+        for pid, s in samplers:
+            try:
+                _, err = s.communicate(timeout=max(0.1, end - time.monotonic()))
+                out.append(f"sample {pid}: exit {s.returncode} {err.decode(errors='replace').strip()[-300:]}")
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(s.pid, signal.SIGKILL)
+                s.communicate()
+                out.append(f"sample {pid}: killed after {SAMPLE_WAIT} s")
+        try:
+            Path(f"{base}.wedge.txt").write_text("\n".join(out) + "\n")
+        except OSError:
+            pass
+        sys.stderr.write(f"cdp: a wedged Chrome's log and samples: {base}.*\n")
 
     def _goto(self, url: str, ready: bool = True) -> None:
         """Open `url` and wait until it's there, then (ready) until the page is drawn (READY). TEST-SPEED: no fixed pause

@@ -504,16 +504,25 @@ def test_a_card_then_an_answer_trickling_in_ends_at_the_deadline_and_withdraws_t
     assert (first, second) == ("ok", "timeout") and note.endswith(f"out={chat.MAX_OUTPUT_TOKENS} estimated")
 
 
+# The deadline of a held turn with a tool step before its last request (t_37bf3e0b): that step's child process
+# (chat._isolated, a fresh `python -I`) took 0.56-1.79 s on this Mac starved like a CI runner (taskpolicy -b, 4 CPU hogs,
+# 3 Chromes), and the second request came at up to 1.85 s; with 2 s, a turn past it ended LATE before that request and
+# the helper's wait for it failed (wait_requests(2, 20): False). The turns with no step before it keep their 2 s.
+HELD_TIMEOUT = 6.0
+
+
 def held_past_the_deadline(app, gated, script: list[dict], hold: threading.Event) -> Asking:
     """Run a turn whose last request is answered at once but whose next write waits on another writer until 0.5 s past
-    the turn's deadline (chat.TIMEOUT from now); the finished Asking."""
-    start = time.monotonic()
+    the turn's deadline (chat.TIMEOUT from now); the finished Asking. (The script's length is taken before the turn
+    starts: GatedLLM pops its steps from this same list, so counted later it's what's left; Nightly 40433230579.)"""
+    start, last = time.monotonic(), len(script)
     gated.script = script
     t = Asking(app, "Shopping?")
     t.start()
     holder = sqlite3.connect(config.db_path(), timeout=5)
     try:
-        assert gated.wait_requests(len(script), 20)
+        assert gated.wait_requests(last, 20), (f"the turn's request {last} never came ({len(gated.requests)} did); the turn "
+                                               f"{'is still running' if t.is_alive() else f'ended: {t.result}'}")
         holder.execute("BEGIN IMMEDIATE")
         hold.set()
         time.sleep(max(0.0, start + chat.TIMEOUT + 0.5 - time.monotonic()))
@@ -528,7 +537,7 @@ def held_past_the_deadline(app, gated, script: list[dict], hold: threading.Event
 def test_an_answer_in_time_whose_publish_would_come_after_the_deadline_publishes_nothing(app, gated, monkeypatch):
     """Deadline exhausted before the publish: the answer comes at once, but another writer holds the database until
     past the deadline, so the turn only gets to its publish late. It publishes nothing: 504, the card withdrawn."""
-    monkeypatch.setattr(chat, "TIMEOUT", 2.0)
+    monkeypatch.setattr(chat, "TIMEOUT", HELD_TIMEOUT)
     hold = threading.Event()
     t = held_past_the_deadline(app, gated, [
         {"message": call_msg("finance_set_cap", {"category": "Other Shopping", "monthly_cap": 900})},
@@ -541,6 +550,58 @@ def test_an_answer_in_time_whose_publish_would_come_after_the_deadline_publishes
     s, d = http(app, "POST", "/api/mcp/pending/approve", {"id": aid})
     assert s == 409 and "already rejected" in d["error"] and cap_of("Other Shopping") == 850.0
     assert [o for o, _ in ai_calls()] == ["ok", "ok"]      # the answer's cost is still recorded (it came)
+
+
+def test_the_helper_waits_for_the_last_request_even_when_the_first_came_before_it_looked(app, gated, monkeypatch):
+    """Nightly 40433230579's missing card (t_37bf3e0b): GatedLLM pops each step from the very list the helper was given,
+    so a helper that counts that list only after starting the turn counts what's left of it. When the turn's first
+    request comes before the helper looks (here forced: the helper's own db_path() call waits for it; on a loaded runner,
+    the scheduler), it waits for that one request only and takes the write lock before the tool step: the turn ends LATE
+    at the step's _in_time with no card, the first request's cost its only row, and no second request. The test above
+    then fails exactly as the Nightly did (504 LATE, no card, ai_calls ['ok'])."""
+    monkeypatch.setattr(chat, "TIMEOUT", HELD_TIMEOUT)
+    main, real = threading.get_ident(), config.db_path
+
+    def after_the_first_request():
+        if threading.get_ident() == main and gated.requests == [] and gated.script:
+            assert gated.wait_requests(1, 20)               # the turn's first request is out before the helper looks
+        return real()
+
+    hold = threading.Event()
+    script = [{"message": call_msg("finance_set_cap", {"category": "Other Shopping", "monthly_cap": 900})},
+              {"message": answer("Raising it to $900 would cover it. Approve the card if you want it."), "hold": hold}]
+    steps, isolated = [], chat._isolated
+
+    def counted(step, name, *a):
+        steps.append((step, name))
+        return isolated(step, name, *a)
+
+    monkeypatch.setattr(chat, "_isolated", counted)
+    monkeypatch.setattr(config, "db_path", after_the_first_request)
+    t = held_past_the_deadline(app, gated, script, hold)
+    monkeypatch.setattr(config, "db_path", real)
+    assert t.result == (504, {"error": chat.LATE}), t.result
+    assert len(gated.requests) == 2, (f"the helper let go after {len(gated.requests)} request(s): tool steps {steps}, "
+                                      f"cards {pending_rows()}, ai rows {ai_calls()}")
+    [(aid, _, _, status)] = pending_rows()
+    assert (status, result_of(aid)) == ("rejected", {"withdrawn": mcp_state.WITHDRAWN})
+    assert [o for o, _ in ai_calls()] == ["ok", "ok"]
+
+
+def test_a_held_turn_whose_tool_step_is_as_slow_as_a_starved_machines_still_reaches_its_last_request(app, gated,
+                                                                                                    monkeypatch):
+    """t_37bf3e0b: with the fixed helper, a starved run (taskpolicy -b, 4 CPU hogs, 3 Chromes) failed the publish test
+    above at iteration 25 of a loop: wait_requests(2, 20) was False, its tool step's child process (up to 1.79 s
+    measured there) having taken the turn past a 2 s deadline before its second request. Here that step takes 2.1 s
+    more than its own; the test above still gets its second request, and its 504 with the card withdrawn."""
+    real = chat._isolated
+
+    def slow(*a, **k):
+        time.sleep(2.1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(chat, "_isolated", slow)
+    test_an_answer_in_time_whose_publish_would_come_after_the_deadline_publishes_nothing(app, gated, monkeypatch)
 
 
 def test_an_answer_without_cards_that_would_come_after_the_deadline_is_not_given(app, gated, monkeypatch):

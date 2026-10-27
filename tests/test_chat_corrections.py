@@ -20,10 +20,11 @@ reconciles (and `finance mcp status` stays read-only)."""
 from __future__ import annotations
 
 import json
+import socket
 import sqlite3
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,7 @@ import pytest
 from agent_tools import TODAY, build, mcp_session, rows, run_cli
 from hermes_finance import chat, config, db, mcp_state, prefs, secretstore, tooldefs, usage
 from hermes_finance.web import App
-from test_chat_task23 import KEY, MODEL, answer, ask, call_msg, cap_of, http, pending_rows, wire
+from test_chat_task23 import KEY, MODEL, FakeLLM, Loopback, answer, ask, call_msg, cap_of, http, pending_rows, wire
 
 STATIC = Path(__file__).resolve().parent.parent / "src" / "hermes_finance" / "static"
 
@@ -81,7 +82,7 @@ class GatedLLM:
             def log_message(self, *a):
                 pass
 
-        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.srv = Loopback(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/v1"
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
 
@@ -177,6 +178,17 @@ def longest_turn() -> float:
     (a reply trickling in, a late publish, a database lock). A card it couldn't withdraw (the database stayed locked),
     or whose turn a finance_sync held longer, is left to reconcile(): that turn can't publish it any more."""
     return chat.TIMEOUT + chat.SETTLE + 1
+
+
+def test_the_fake_providers_start_without_a_reverse_lookup(monkeypatch):
+    """The fakes never ask the resolver about 127.0.0.1 (HTTPServer.server_bind's getfqdn): on the Nightly's runner that
+    stalled ~35 s inside GatedLLM's setup (40433230579, t_37bf3e0b: the failing test took 38.4 s, 4.4 s here)."""
+    def no_lookup(*a):
+        raise AssertionError(f"socket.getfqdn{a}: a reverse DNS lookup")
+
+    monkeypatch.setattr(socket, "getfqdn", no_lookup)
+    for fake in (FakeLLM(), GatedLLM()):
+        fake.close()
 
 
 # --- C1: provenance is the server's, not the client's name ----------------------------------------------------------

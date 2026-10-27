@@ -69,3 +69,28 @@ def test_permission_failure_does_not_prove_a_dead_process(private_root, monkeypa
     monkeypatch.setattr(check.os, 'kill', denied)
     check._prune_old_logs(own)
     assert protected.exists()
+
+
+def test_chrome_log_run_puts_the_chromes_logs_in_the_runs_own_dir(private_root, monkeypatch):
+    """t_37bf3e0b: HF_CHROME_LOG=run sends tests/cdp.py's Chrome logs (and a wedged one's samples) into the run's log
+    dir, which CI uploads; a wedge report there is what keeps that dir after a run that passed."""
+    logs = make(private_root, f'hf-check-{os.getpid()}-current', 10)
+    monkeypatch.setenv(check.CHROME_LOG_ENV, 'run')
+    chrome = check.chrome_log_dir(logs)
+    assert chrome == logs / 'chrome' and os.environ[check.CHROME_LOG_ENV] == str(logs / 'chrome')
+    assert check.wedged_chromes(chrome) == []
+    chrome.mkdir()
+    (chrome / 'chrome-hf-cdp-x.log').write_text('a clean one is deleted by cdp; a wedged one stays')
+    (chrome / 'chrome-hf-cdp-x.wedge.txt').write_text('why: goto ...')
+    assert check.wedged_chromes(chrome) == [chrome / 'chrome-hf-cdp-x.wedge.txt']
+
+
+def test_chrome_log_is_passed_through_as_it_is_or_not_at_all(private_root, monkeypatch):
+    logs = make(private_root, f'hf-check-{os.getpid()}-current', 10)
+    monkeypatch.delenv(check.CHROME_LOG_ENV, raising=False)
+    assert check.chrome_log_dir(logs) is None and check.CHROME_LOG_ENV not in os.environ
+    assert check.wedged_chromes(None) == []
+    mine = private_root / 'mine'
+    monkeypatch.setenv(check.CHROME_LOG_ENV, str(mine))
+    assert check.chrome_log_dir(logs) == mine and os.environ[check.CHROME_LOG_ENV] == str(mine)
+    assert check.CHROME_LOG_ENV in check.safe_env()   # (not taken for a credential: it reaches pytest and its Chromes)
