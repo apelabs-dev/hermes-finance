@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             (LOGOS / f"{t}.png").write_bytes(png)
             print(f"{t}: {len(png)} bytes")
         return 0
-    ua = "hermes-finance demo build (one-off photo pull; https://github.com/arspesk/hermes-finance)"
+    ua = "hermes-finance demo build (one-off photo pull; https://github.com/apelabs-dev/hermes-finance)"
     data = json.loads(ASSETS.read_text())
     PHOTOS.mkdir(parents=True, exist_ok=True)
     skip = set(args.skip)
