@@ -150,13 +150,20 @@ def test_release_config_and_all_version_updaters():
 
 def test_readme_pngs_and_capture_dependencies():
     readme = (ROOT / 'README.md').read_text()
-    assert '<picture>' in readme and 'prefers-color-scheme: dark' in readme
-    for theme in ('light', 'dark'):
-        path = f'docs/assets/screenshots/overview-{theme}.png'
-        assert path in readme
-        data = (ROOT / path).read_bytes()
-        assert data[:8] == b'\x89PNG\r\n\x1a\n'
-        assert struct.unpack('>II', data[16:24]) == (2880, 1800)
+    path = 'docs/assets/screenshots/showcase.jpg'
+    assert path in readme
+    data = (ROOT / path).read_bytes()
+    assert data[:3] == b'\xff\xd8\xff'
+    # JPEG size lives in the SOF marker.
+    i = 2
+    while i < len(data):
+        marker = data[i + 1]
+        if marker in (0xC0, 0xC1, 0xC2):
+            assert struct.unpack('>HH', data[i + 5:i + 9]) == (1800, 2880)
+            break
+        i += 2 + struct.unpack('>H', data[i + 2:i + 4])[0]
+    else:
+        raise AssertionError('no SOF marker')
     for path in ('scripts/capture_readme_shots.py', 'scripts/sync_release.py', 'tests/cdp.py',
                  'tests/demo_data.py', 'tests/gate_dbs.py', 'scripts/check.py', 'docs/releasing.md'):
         assert (ROOT / path).exists()
@@ -168,5 +175,5 @@ def test_native_readme_capture_framing():
     assert "'css_width': 1440, 'css_height': 900, 'device_scale': 2" in source
     # A fixed height attribute squashes the image on narrow (phone) GitHub views.
     readme = (ROOT / 'README.md').read_text()
-    assert 'height="1500"' not in readme and 'overview-light.png" alt=' in readme
+    assert 'height="1500"' not in readme and 'showcase.jpg" alt=' in readme
     assert 'docs/assets/logo.svg' in readme and (ROOT / 'docs/assets/logo.svg').exists()

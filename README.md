@@ -45,10 +45,7 @@ Full documentation: [`docs/`](docs/index.md), a MkDocs site (`uvx --python 3.12 
 
 Try the [live read-only demo](https://financing.apelabs.dev) with synthetic data, or [build it yourself](docs/demo.md); it needs no account or API key.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/overview-dark.png">
-  <img src="docs/assets/screenshots/overview-light.png" alt="hermes-finance Overview: monthly spending, net worth, Where it went and Budgets with synthetic demo data">
-</picture>
+<img src="docs/assets/screenshots/showcase.jpg" alt="hermes-finance: Transactions, Budgets and Overview pages with synthetic demo data" width="100%">
 
 ## Quickstart
 
