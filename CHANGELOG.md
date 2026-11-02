@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/apelabs-dev/hermes-finance/compare/v0.2.5...v0.2.6) (2026-11-02)
+
+
+### Miscellaneous Chores
+
+* release 0.2.6 ([#9](https://github.com/apelabs-dev/hermes-finance/issues/9)) ([6c484b4](https://github.com/apelabs-dev/hermes-finance/commit/6c484b4cb8ad5e296c19145ddbd888367fb7ab3d))
+
 ## [0.2.5](https://github.com/apelabs-dev/hermes-finance/compare/v0.2.4...v0.2.5) (2026-10-27)
 
 
