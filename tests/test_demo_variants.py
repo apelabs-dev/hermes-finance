@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -112,9 +112,12 @@ def test_the_demo_today_is_the_visitors_today(builds):
     built = harness(tmp, b['s0'], '?demo-today=build', ['/api/recurring'], [local])
     assert built['evals'] == [[2026, 10, 28]]
     assert got['gets']['/api/recurring'] == demo_parity.move(built['gets']['/api/recurring'], date(2026, 10, 28), 6, 1)
-    # Ask streams an answer only while it's fresh, by the real clock (the demo's runs days off on another day's build)
+    # Ask streams an answer only while it's fresh, by the real clock; the demo's own clock is pinned to the build's noon
+    # on the visitor's day (which is not always a day away from the real clock: on 2026-11-03 it is the same day).
     real, demo = harness(tmp, b['s0'], '?demo-today=2026-11-03', evals=['[HFDemo.ask.clock(), Date.now()]'])['evals'][0]
-    assert abs(real - time.time() * 1000) < 60_000 and abs(demo - real) > 86_400_000
+    pinned = datetime(2026, 11, 3, 12, tzinfo=timezone.utc).timestamp() * 1000
+    assert abs(real - time.time() * 1000) < 60_000
+    assert abs(demo - pinned) < 5_000
 
 
 def test_prose_dates_move_from_their_nearest_year():

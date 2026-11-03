@@ -371,7 +371,8 @@ def flows(run, core, vp):
     import demo_ask
     presets = expected['presets']
     run.open('overview', fresh=True)
-    run.js("sessionStorage.removeItem('hf.chat.v1'); localStorage.removeItem('hf-demo.live-ai'); true")
+    run.js("sessionStorage.removeItem('hf.chat.v1'); localStorage.setItem('hf-demo.live-ai', '0'); "
+           "localStorage.removeItem('hf-demo.live-ai.lock'); true")
     run.open('overview', fresh=True)
     run.tap("document.getElementById('askb')", 'Ask')
     run.until("!document.getElementById('chat').hidden", 'Ask panel')

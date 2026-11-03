@@ -1,10 +1,13 @@
 // Hermes Finances demo: live-AI worker.
 //
-// The public static demo has canned Ask answers ("presets"). With "Try live AI" on, the page posts the
-// visitor's question here; we ask an OpenRouter free model to answer from ONLY the matched preset's
-// frozen synthetic data (fetched by this worker from the demo origin, never taken from the client).
-// The browser falls back silently to the canned answer on anything but a valid 200, so every failure
-// here is a bare {"error": "..."} with no upstream detail.
+// The public static demo has canned Ask answers ("presets"). With live AI on, the page posts every
+// question here; a matched preset is answered from its frozen synthetic data, anything else from a
+// general summary of the demo's accounts, budgets, goals, bills and recent transactions. The summary is
+// fetched by this worker from the demo origin, never taken from the client.
+//
+// Quota exhaustion (our daily caps, or the upstream's 429/402) is distinct from a transient failure: the
+// page locks the switch until the reset time for the former and falls back quietly for the latter. Every
+// failure body is bare {"error": ...} with no upstream detail.
 
 const MAX_BODY_BYTES = 2048;
 const MAX_QUESTION = 300;
@@ -117,7 +120,12 @@ export function validateBody(raw) {
   if (typeof obj.question !== "string") return null;
   const question = obj.question.trim();
   if (question.length < 1 || question.length > MAX_QUESTION) return null;
-  if (typeof obj.preset !== "string" || !PRESET_RE.test(obj.preset)) return null;
+  // A preset is optional: with none, the question is answered from the general summary.
+  let preset = null;
+  if (obj.preset !== undefined && obj.preset !== null) {
+    if (typeof obj.preset !== "string" || !PRESET_RE.test(obj.preset)) return null;
+    preset = obj.preset;
+  }
   let variant = null;
   if (obj.variant !== undefined && obj.variant !== null) {
     if (!Number.isInteger(obj.variant) || obj.variant < 0 || obj.variant > 6) return null;
@@ -135,7 +143,7 @@ export function validateBody(raw) {
     if (typeof obj.turnstile !== "string" || obj.turnstile.length > 2048) return null;
     turnstile = obj.turnstile;
   }
-  return { question, preset: obj.preset, variant, shift, turnstile };
+  return { question, preset, variant, shift, turnstile };
 }
 
 async function timedFetch(url, init, ms) {
@@ -174,8 +182,118 @@ async function loadPreset(env, variant, presetId) {
   return p;
 }
 
+async function loadJson(env, url) {
+  const now = clock();
+  let entry = askCache.get(url);
+  if (!entry || now - entry.at > CACHE_MS) {
+    try {
+      const r = await timedFetch(url, { method: "GET", headers: { Accept: "application/json" } }, config.askTimeoutMs);
+      if (r.status !== 200) return null;
+      const data = JSON.parse(r.text);
+      if (!data || typeof data !== "object") return null;
+      entry = { at: now, data };
+      askCache.set(url, entry);
+    } catch {
+      return null;
+    }
+  }
+  return entry.data;
+}
+
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
   "November", "December"];
+
+function isoDay(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+}
+
+function isoMonth(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}$/.test(value) ? value : null;
+}
+
+const usd = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? `$${n.toFixed(2)}` : null;
+};
+
+// A compact read-only summary of the demo's synthetic data, for a question that names no preset. Dates go in
+// as tokens and out through renderDates, so the model sees the visitor's dates.
+export function buildGeneralSummary(core, bundle, shift = { days: 0, months: 0 }) {
+  const meta = core && core.meta && typeof core.meta === "object" ? core.meta : {};
+  const pages = core && core.core && typeof core.core === "object" ? core.core : {};
+  const lines = [];
+  const today = isoDay(meta.today);
+  const month = isoMonth(meta.this_month);
+  if (today || month) {
+    lines.push(`Demo data as of ${today ? `{{D:${today}}}` : "today"}${month ? `, month {{m:${month}}}` : ""}.`);
+  }
+  const overview = bundle && bundle.overview && typeof bundle.overview === "object" ? bundle.overview : {};
+  const summary = overview.summary && typeof overview.summary === "object" ? overview.summary : {};
+  if (usd(summary.mtd)) {
+    lines.push(`This month so far: ${usd(summary.mtd)} spent${usd(summary.income) ? `, ${usd(summary.income)} income` : ""}` +
+      `${Number.isFinite(summary.days_left) ? `; ${summary.days_left} days left` : ""}.`);
+  }
+  const accounts = pages["/api/accounts"] && typeof pages["/api/accounts"] === "object" ? pages["/api/accounts"] : {};
+  const nw = accounts.net_worth;
+  if (nw && usd(nw.net)) {
+    lines.push(`Net worth: ${usd(nw.net)} (assets ${usd(nw.assets)}, debts ${usd(nw.debts)}).`);
+  }
+  const accountLines = [];
+  for (const item of Array.isArray(accounts.items) ? accounts.items : []) {
+    for (const a of item && Array.isArray(item.accounts) ? item.accounts : []) {
+      const balance = usd(a && a.current_balance);
+      if (!a || !a.name || !balance) continue;
+      const kind = [a.type, a.subtype].filter(Boolean).join("/");
+      accountLines.push(`${a.name}${kind ? ` (${kind})` : ""} ${balance}`);
+    }
+  }
+  if (accountLines.length) lines.push(`Accounts: ${accountLines.slice(0, 12).join("; ")}.`);
+  const budgets = bundle && bundle.budgets && typeof bundle.budgets === "object" ? bundle.budgets : {};
+  const cats = Array.isArray(budgets.categories) ? budgets.categories :
+    Array.isArray(overview.budgets) ? overview.budgets : [];
+  const spent = cats.filter((c) => c && Number(c.spend) > 0).sort((a, b) => Number(b.spend) - Number(a.spend)).slice(0, 10);
+  if (spent.length) {
+    lines.push(`Spending this month by category: ${spent.map((c) =>
+      `${c.category} ${usd(c.spend)}${usd(c.cap) ? ` of ${usd(c.cap)}${Number.isFinite(c.pct) ? ` (${Math.round(c.pct)}%)` : ""}` : ""}`
+    ).join("; ")}.`);
+  }
+  const goals = pages["/api/goals"] && Array.isArray(pages["/api/goals"].goals) ? pages["/api/goals"].goals : [];
+  const goalLines = goals.filter((g) => g && g.name && usd(g.target)).map((g) =>
+    `${g.name}: ${usd(g.progress)} of ${usd(g.target)}${Number.isFinite(g.pct) ? ` (${Math.round(g.pct)}%)` : ""}`).slice(0, 8);
+  if (goalLines.length) lines.push(`Savings goals: ${goalLines.join("; ")}.`);
+  const rec = pages["/api/recurring"] && Array.isArray(pages["/api/recurring"].items) ? pages["/api/recurring"].items : [];
+  const due = rec.filter((r) => r && Number.isFinite(r.days_until) && r.days_until >= 0).sort((a, b) => a.days_until - b.days_until).slice(0, 10);
+  const dueLines = due.map((r) => {
+    const day = isoDay(r.next_expected);
+    return `${r.merchant}: ${usd(r.amount) || r.amount_label || "amount unknown"} ${r.cadence || "recurring"}` +
+      `${day ? `, next {{d:${day}}}` : ""}${Number.isFinite(r.days_until) ? ` (${r.days_until} days)` : ""}`;
+  });
+  if (dueLines.length) lines.push(`Upcoming bills and subscriptions: ${dueLines.join("; ")}.`);
+  const inv = overview.investments;
+  if (inv && usd(inv.total)) {
+    lines.push(`Investments: ${usd(inv.total)}${inv.change_7d && usd(inv.change_7d.amount) ? `, ${usd(inv.change_7d.amount)} in 7 days` : ""}.`);
+  }
+  const debt = overview.debt;
+  if (debt && usd(debt.total)) lines.push(`Debt: ${usd(debt.total)}${Number.isFinite(debt.cards_util) ? `, cards at ${debt.cards_util}% of limit` : ""}.`);
+  const recent = Array.isArray(overview.recent) ? overview.recent : [];
+  const recentLines = recent.filter((r) => r && usd(r.amount)).slice(0, 8).map((r) => {
+    const day = isoDay(r.date);
+    return `${day ? `{{d:${day}}}` : ""} ${r.merchant_name || r.name || "transaction"} ${usd(Math.abs(r.amount))} ${r.category || ""}`.trim();
+  });
+  if (recentLines.length) lines.push(`Recent transactions: ${recentLines.join("; ")}.`);
+  const text = renderDates(lines.join("\n"), shift);
+  return text.length > MAX_CONTEXT_CHARS ? text.slice(0, MAX_CONTEXT_CHARS) : text;
+}
+
+async function loadGeneralSummary(env, variant, shift) {
+  const base = String(env.DEMO_ORIGIN || SITE_ORIGIN).replace(/\/+$/, "");
+  const dir = variant === null ? `${base}/demo/data` : `${base}/demo/data/v${variant}`;
+  const core = await loadJson(env, `${dir}/core.json`);
+  if (!core || !core.meta || !isoMonth(core.meta.this_month)) return null;
+  const bundle = await loadJson(env, `${dir}/m/${core.meta.this_month}.json`);
+  if (!bundle) return null;
+  return buildGeneralSummary(core, bundle, shift);
+}
 
 // The presets carry dates as tokens the page renders (scripts/demo_ask.py render, demo/shim.js render):
 // {{d:YYYY-MM-DD}} "Oct 26", {{D:..}} "Oct 26, 2026", {{m:YYYY-MM}} "October 2026", {{M:..}} "Oct 2026",
@@ -215,14 +333,39 @@ export function buildMessages(preset, question, shift) {
   ];
 }
 
+export function buildGeneralMessages(summary, question) {
+  const context = String(summary === undefined || summary === null ? "" : summary).slice(0, MAX_CONTEXT_CHARS);
+  const system = [
+    "You are the demo assistant of Hermes Finances, a self-hosted personal finance dashboard.",
+    "All data is synthetic demo data.",
+    "Answer ONLY from the JSON summary below. If the summary does not cover the question, say so plainly and briefly.",
+    "Do not give advice beyond what the data shows.",
+    "Plain text only, at most 120 words, no tables, no links, no markdown headings.",
+    "",
+    "Data summary:",
+    context,
+  ].join("\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: question },
+  ];
+}
+
 export function cleanReply(content, key) {
   if (typeof content !== "string") return null;
   // eslint-disable-next-line no-control-regex
-  const text = content.replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, "").trim();
+  let text = content.replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, "");
+  // Some free models behind openrouter/free put their reasoning in the answer: drop a <think> block, and refuse a
+  // reply that is the model working through our own instructions (it would show the visitor the prompt).
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^[\s\S]*<\/think>/i, "").trim();
+  if (LEAK_RE.test(text)) return null;
   if (text.length < 1 || text.length > MAX_REPLY) return null;
   if (key && text.includes(key)) return null;
   return text;
 }
+
+// Phrases from our system prompts, or a model's own step headers, that only appear when reasoning leaked into the reply.
+export const LEAK_RE = /answer only from|json summary provided|data summary:|reference answer to the preset|constraint \d|analy[sz]e the (request|data|question)|<think>/i;
 
 async function verifyTurnstile(env, token, ip) {
   if (!token || !env.TURNSTILE_SECRET) return false;
@@ -250,23 +393,29 @@ function capOf(value, fallback) {
 
 // Daily counters in KV. KV is eventually consistent, so the cap is approximate under bursts
 // (acceptable for a demo; a Durable Object would make it exact).
-// Returns true when the request may go upstream (and has been counted).
+// Returns {allowed, scope}: the request may go upstream (and has been counted), or the cap that stopped it.
 async function takeQuota(env, ip) {
   const kv = env.DEMO_AI_KV;
-  if (!kv) return false;
+  if (!kv) return { allowed: false, scope: null, unavailable: true };   // a config gap is not the visitor's quota
   const day = utcDay(clock());
   const gKey = `g:${day}`;
   const vKey = await visitorKey(ip, day);
   const [g, v] = await Promise.all([kv.get(gKey), kv.get(vKey)]);
   const gCount = Number.parseInt(g || "0", 10) || 0;
   const vCount = Number.parseInt(v || "0", 10) || 0;
-  if (gCount >= capOf(env.GLOBAL_DAILY_CAP, 100)) return false;
-  if (vCount >= capOf(env.VISITOR_DAILY_CAP, 10)) return false;
+  if (gCount >= capOf(env.GLOBAL_DAILY_CAP, 100)) return { allowed: false, scope: "global" };
+  if (vCount >= capOf(env.VISITOR_DAILY_CAP, 25)) return { allowed: false, scope: "visitor" };
   await Promise.all([
     kv.put(gKey, String(gCount + 1), { expirationTtl: KV_TTL }),
     kv.put(vKey, String(vCount + 1), { expirationTtl: KV_TTL }),
   ]);
-  return true;
+  return { allowed: true, scope: null };
+}
+
+export function quotaResponse(scope, nowMs) {
+  const d = new Date(nowMs);
+  const resets = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) + 864e5).toISOString();
+  return { error: "quota", scope, resets_at: resets };
 }
 
 async function callUpstream(env, messages) {
@@ -284,14 +433,19 @@ async function callUpstream(env, messages) {
           "X-Title": "Hermes Finances demo",
           "X-OpenRouter-Title": "Hermes Finances demo",
         },
-        body: JSON.stringify({ model: env.MODEL, messages, max_tokens: 300, temperature: 0.3 }),
+        body: JSON.stringify({ model: env.MODEL, messages, max_tokens: 300, temperature: 0.3, reasoning: { exclude: true } }),
       },
       config.upstreamTimeoutMs,
     );
   } catch (e) {
     return { status: e && e.name === "AbortError" ? 504 : 502 };
   }
-  if (r.status === 429) return { status: 429 };
+  // Out of credit (402) or OpenRouter's daily free-model limit means "used up for today". Any other 429 is one free
+  // provider's per-minute limit: transient, so busy (a canned answer now, live again on the next question).
+  if (r.status === 402 || (r.status === 429 && /per-day|per day|daily/i.test(String(r.text || "")))) {
+    return { quota: true, status: r.status };
+  }
+  if (r.status === 429) return { status: 503 };
   if (r.status !== 200) return { status: 502 };
   let data;
   try {
@@ -339,18 +493,31 @@ export async function handle(request, env) {
 
   if (!env.OPENROUTER_KEY) return respond(origin, path, 503, "busy", BUSY);
 
-  const preset = await loadPreset(env, body.variant, body.preset);
-  if (!preset) return respond(origin, path, 503, "busy", BUSY);
+  // A named preset is answered from its frozen data. An absent, unknown or unloadable one falls through to
+  // the general summary (never a 503 of its own).
+  const preset = body.preset === null ? null : await loadPreset(env, body.variant, body.preset);
+  let messages;
+  if (preset) {
+    messages = buildMessages(preset, body.question, body.shift);
+  } else {
+    const summary = await loadGeneralSummary(env, body.variant, body.shift);
+    if (summary === null) return respond(origin, path, 503, "busy", BUSY);
+    messages = buildGeneralMessages(summary, body.question);
+  }
 
-  let allowed = false;
+  let quota;
   try {
-    allowed = await takeQuota(env, ip);
+    quota = await takeQuota(env, ip);
   } catch {
     return respond(origin, path, 503, "busy", BUSY);
   }
-  if (!allowed) return respond(origin, path, 429, "capped", BUSY);
+  if (!quota.allowed) {
+    if (quota.unavailable) return respond(origin, path, 503, "busy", BUSY);
+    return respond(origin, path, 429, "capped", quotaResponse(quota.scope, clock()));
+  }
 
-  const up = await callUpstream(env, buildMessages(preset, body.question, body.shift));
+  const up = await callUpstream(env, messages);
+  if (up.quota) return respond(origin, path, 429, "capped", quotaResponse("global", clock()));
   if (up.status !== 200) return respond(origin, path, up.status, "busy", BUSY);
   return respond(origin, path, 200, "ok", { reply: up.reply, model: up.model });
 }

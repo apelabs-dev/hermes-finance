@@ -31,6 +31,7 @@ const request = JSON.parse(fs.readFileSync(reqFile, 'utf8'));
 // The demo's today is the build's (not the visitor's) unless a request asks for another day or variant.
 const query = request.query === undefined ? '?demo-today=build' : request.query;
 const store = new Map();
+store.set('hf-demo.live-ai', '0');   // parity checks the frozen canned answers; live AI is a separate browser check
 const storage = {getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)),
   removeItem: (k) => store.delete(k), key: (i) => [...store.keys()][i], get length() { return store.size; }};
 const ctx = {console, URL, URLSearchParams, Response, Request, Headers, Event, JSON, Math, Number, String, Object, Array,

@@ -29,7 +29,8 @@ credentials are removed before importing the app. It never opens an installed da
 profile. Temporary databases and rename maps are removed after the build. No database ships.
 
 Every allowlisted product asset under `src/hermes_finance/static/` is copied byte-for-byte. The App supplies the page
-shell; the demo adds its banner, CSP, adapter and sequential asset loader, removes Plaid Link, and labels Ask as canned.
+shell; the demo adds its banner, CSP, adapter and sequential asset loader, removes Plaid Link, and gives Ask a mode
+badge that `demo/ask.js` keeps in step with the live-AI switch.
 The loader fetches the original styles and scripts in order, so an unmodified static server's small connection backlog
 works too. No bundler or new dependency is required.
 
@@ -46,18 +47,18 @@ External links, documentation links and database backups are refused. The synthe
 Unknown API paths/queries fail closed. Cross-origin fetch/XHR requests are refused; CSP includes `connect-src 'self'`.
 No Plaid script, paid API, external image/logo, CDN, documentation request, or model runs.
 
-Ask presents exactly four examples, all clearly labelled **Canned demo answer**:
+Ask ships canned preset answers built from the real finance tools on the sanitized synthetic database, plus live AI.
+The builder freezes each preset's complete tool arguments/results in `demo/data/ask.json`; no model prose or invented
+tool result is involved in a canned answer.
 
-1. How much did I spend on dining last month?
-2. Am I on track with my budgets this month?
-3. What bills are due in the next 7 days?
-4. How has my net worth changed this year?
+Live AI is on by default for a new visitor; an explicit off is remembered. With it on, every question is sent to the
+demo's optional worker: a matched preset is answered from that preset's frozen data, anything else from a general
+summary of the demo's accounts, net worth, budgets, goals, bills and recent transactions. A transient failure or a
+slow answer falls back to the canned answer with a quiet note. When the free daily quota is used up, the switch turns
+off, locks until the worker's `resets_at`, and explains the wait in a tooltip; the canned answers continue.
 
-The builder calls the real `finance_spend`, `finance_budget_status`, `finance_bills` and `finance_networth` tools on the
-sanitized synthetic database. It freezes their complete arguments/results in `demo/data/ask.json`. The first three
-answers use the real CLI formatters; the fourth compares actual history points, identifying the first available point
-this year instead of assuming a January 1 balance. No model prose or invented tool result is involved. Other questions
-return exactly **AI chat is off in the demo — install it to use your own model.**
+The public static preview has no `/ai/*` route, so there live calls fall back to the canned answers. See
+`demo/worker/README.md` for the worker's deployment and its quota contract.
 
 ## Privacy boundary and verification
 
@@ -89,7 +90,8 @@ The canary self-test uses disposable invented owner/repository markers and plant
 need the owner's file. The browser verifier uses `tests/cdp.py`'s machine-wide Chrome slots, disables orphan sweeping,
 and closes only processes it starts. It serves a scratch **copy** with literal `python -m http.server` bound to loopback,
 screenshots every page and all five asset details at 1440 and 390 in both themes, checks local link resources and network
-errors, and exercises read-only controls, transaction windows/search/filters and the four Ask examples. `verify.json`
+errors, and exercises read-only controls, transaction windows/search/filters and the Ask examples, including the live-AI
+fallback. `verify.json`
 records counts, a screenshot manifest, requests, checks, owned PIDs and cleanup. Screenshots/logs belong outside the repo.
 `scripts/serve_demo.py dist/demo` can separately preview Cloudflare's `_headers`; the browser proof needs no such server.
 

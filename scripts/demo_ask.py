@@ -506,7 +506,7 @@ def build_answers(db_path, today: date) -> dict:
                          "suggestions": UNMATCHED},
            "matcher": {"synonyms": SYNONYMS, "phrases": PHRASES, "stopwords": STOPWORDS, "threshold": THRESHOLD},
            "live": {"note": "Live AI busy, showing the demo answer", "source": "Live AI · a free model on OpenRouter, "
-                    "reading only this answer's numbers"}}
+                    "reading only this demo's fake data"}}
     for p in out["presets"].values():
         assert all(n in out["presets"] for n in p["next"]), p["id"]
         assert len(json.dumps(p["context"])) <= 6000, p["id"]

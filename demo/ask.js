@@ -18,7 +18,7 @@
   const REDUCED = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const WORD_MS = 24, FRESH_MS = 4000;
   let ask = null;
-  D.data().then((a) => { ask = a; drawChips(); }).catch(() => { /* chips stay as chat.js drew them */ });
+  D.data().then((a) => { ask = a; drawChips(); drawTries(); }).catch(() => { /* chips stay as chat.js drew them */ });
 
   // ---- blocks ---------------------------------------------------------------------------------------------------------
   const signedMoney = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + money2(Math.abs(v));
@@ -115,6 +115,7 @@
       el.dataset.hfd = '1';
       const x = D.answerFor(m.content);
       if (!x) return;
+      drawTry(el, x);
       const src = el.querySelector(':scope > .src');
       if (x.blocks && x.blocks.length) el.insertBefore(blocks(x), src);
       if (x.live) el.classList.add('hfd-live-answer');
@@ -181,20 +182,115 @@
       onclick: () => HF.chat.ask(q)}, q)));
   }
 
-  // ---- live AI -----------------------------------------------------------------------------------------------------------
-  const sw = h('button', {class: 'hfd-switch', type: 'button', role: 'switch', id: 'hfd-live'});
-  const liveRow = h('div', {class: 'hfd-liverow'}, sw);
-  function drawSwitch() {
-    const on = D.live.get();
-    sw.setAttribute('aria-checked', String(on));
-    fill(sw, h('span', {class: 'knob', 'aria-hidden': 'true'}),
-      h('span', {}, on ? 'Live AI on · a free model, may be busy' : 'Try live AI (a free model)'));
-  }
-  sw.addEventListener('click', () => { D.live.set(!D.live.get()); drawSwitch(); });
-  drawSwitch();
-  if (foot) foot.insertBefore(liveRow, foot.firstChild);
+  // ---- live AI: a header switch, reflected by the header badge -------------------------------------------------------
+  const header = panel.querySelector('.chh');
+  const badgeEl = panel.querySelector('.chh .brain');
+  const sw = h('button', {class: 'hfd-switch', type: 'button', role: 'switch', id: 'hfd-live',
+    'aria-label': 'Live AI answers', 'aria-describedby': 'hfd-live-tip'},
+    h('span', {class: 'knob', 'aria-hidden': 'true'}));
+  if (badgeEl) badgeEl.insertAdjacentElement('afterend', sw);
+  else if (header) (header.querySelector('.chtl') || header).append(sw);
 
-  new MutationObserver(() => { decorate(); drawChips(); }).observe(msgs, {childList: true});
+  const tip = h('div', {class: 'help-panel hfd-tip', role: 'tooltip', id: 'hfd-live-tip', hidden: true});
+  document.body.append(tip);
+  let hovered = false, unlockTimer = null;
+
+  function lockNow() { return D.live.locked(); }
+  function localTime(until) {
+    try { return new Date(until).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}); } catch (_) { return ''; }
+  }
+  function tipText() {
+    const lock = lockNow();
+    return lock ? `Free live AI is used up for today. It's back at ${localTime(lock.until)}. Until then you get the ` +
+      'canned demo answers.' : "Answers come from a free model reading only this demo's fake data";
+  }
+  function placeTip() {
+    const r = sw.getBoundingClientRect();
+    const w = tip.offsetWidth, hgt = tip.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+    const left = Math.max(8, Math.min(r.left, vw - w - 8));
+    let top = r.bottom + 8;
+    if (top + hgt > vh - 8) top = Math.max(8, r.top - hgt - 8);
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  }
+  function showTip() {
+    tip.textContent = tipText();
+    tip.hidden = false;
+    placeTip();
+  }
+  function hideTip() { tip.hidden = true; }
+  function syncBadge(on) {
+    const badge = panel.querySelector('.chh .brain');
+    if (!badge) return;
+    const want = on ? 'Live AI' : 'canned demo answers';
+    let node = [...badge.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
+    if (!node) { node = document.createTextNode(''); badge.append(node); }
+    for (const n of [...badge.childNodes]) if (n !== node && n.nodeType === Node.TEXT_NODE) n.remove();
+    if (node.nodeValue !== want) node.nodeValue = want;
+    const title = on ? "Answers come from a free model reading only this demo's fake data" : 'Canned demo answers';
+    if (badge.title !== title) badge.title = title;
+  }
+  function scheduleUnlock(until) {
+    clearTimeout(unlockTimer);
+    unlockTimer = null;
+    const ms = until - D.clock();
+    if (ms > 0) unlockTimer = setTimeout(() => { unlockTimer = null; drawSwitch(); }, Math.min(ms + 500, 2147483647));
+  }
+  function drawSwitch() {
+    const lock = lockNow();
+    const on = !lock && D.live.get();
+    sw.classList.toggle('is-locked', Boolean(lock));
+    sw.setAttribute('aria-checked', String(on));
+    sw.setAttribute('aria-disabled', lock ? 'true' : 'false');
+    sw.dataset.locked = lock ? '1' : '0';
+    syncBadge(on);
+    if (lock) scheduleUnlock(lock.until);
+    else { clearTimeout(unlockTimer); unlockTimer = null; }
+    if (!tip.hidden) showTip();   // an open tooltip follows the state
+  }
+  sw.addEventListener('pointerenter', () => { hovered = true; showTip(); });
+  sw.addEventListener('pointerleave', () => { hovered = false; if (document.activeElement !== sw) hideTip(); });
+  sw.addEventListener('focus', showTip);
+  sw.addEventListener('blur', () => { if (!hovered) hideTip(); });
+  sw.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+  sw.addEventListener('click', () => {
+    if (lockNow()) { showTip(); return; }   // locked: explain, never flip
+    D.live.set(!D.live.get());
+    drawSwitch();
+    hideTip();
+  });
+  document.addEventListener('pointerdown', (e) => { if (!sw.contains(e.target) && !tip.contains(e.target)) hideTip(); }, true);
+  window.addEventListener('hfd-live-lock', drawSwitch);
+  window.addEventListener('resize', () => { if (!tip.hidden) placeTip(); });
+  drawSwitch();
+
+  if (header) {
+    // chat.js can redraw the badge (its own label); re-assert the real mode without looping on our own change.
+    new MutationObserver(() => syncBadge(sw.getAttribute('aria-checked') === 'true'))
+      .observe(header, {childList: true, subtree: true, characterData: true});
+  }
+
+  // ---- "Try one of these:" as part of an unmatched answer -------------------------------------------------------------
+  function drawTry(el, x) {
+    if (!ask || el.dataset.hfdTry || x.preset !== null || !Array.isArray(x.suggestions)) return;
+    const buttons = x.suggestions.map((id) => {
+      const p = ask.presets[id];
+      return p && p.question ? h('button', {class: 'fchip', type: 'button', onclick: () => HF.chat.ask(p.question)}, p.question) : null;
+    }).filter(Boolean);
+    if (!buttons.length) return;
+    el.dataset.hfdTry = '1';
+    const row = h('div', {class: 'hfd-try'}, buttons);
+    const src = el.querySelector(':scope > .src');
+    if (src) el.insertBefore(row, src); else el.append(row);
+  }
+  function drawTries() {
+    for (const [el, m] of bubbles()) {
+      const x = D.answerFor(m.content);
+      if (x) drawTry(el, x);
+    }
+  }
+
+  new MutationObserver(() => { decorate(); drawChips(); drawTries(); }).observe(msgs, {childList: true});
   new MutationObserver(() => drawChips()).observe(chips, {childList: true});
   decorate();
 });

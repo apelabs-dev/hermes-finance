@@ -152,9 +152,10 @@
   }
   // ---- Ask v2 (t_d31fda2a): preset questions, answered at build time by the real read tools (scripts/demo_ask.py) ----
   // A question is matched to a preset by its words (token overlap plus the build's synonyms; no model, no ML), the answer
-  // drawn by the app's own chat renderer, and demo/ask.js adds the answer's blocks and chips. With "Try live AI" on, a
-  // matched question also goes to the demo's worker (same origin, /ai/chat); any failure or a slow (8 s) answer falls
-  // back to the canned one, quietly, with a one-line note.
+  // drawn by the app's own chat renderer, and demo/ask.js adds the answer's blocks and chips. With live AI on (the
+  // default for a new visitor), every question goes to the demo's worker (same origin, /ai/chat): a matched preset
+  // from its frozen data, anything else from a general summary of the demo. A transient failure or a slow (8 s) answer
+  // falls back to the canned one quietly; an exhausted free quota locks the switch until the reset time.
   const LIVE_KEY = 'hf-demo.live-ai', ANSWERS_KEY = 'hf-demo.ask.v2', LIVE_MS = 8000;
   // {{d:YYYY-MM-DD}} "Oct 26", {{D:..}} "Oct 26, 2026", {{m:YYYY-MM}} "October 2026", {{M:..}} "Oct 2026" (demo_ask.render)
   function render(text) {
@@ -213,37 +214,83 @@
     while (ANSWERS.size > 40) ANSWERS.delete(ANSWERS.keys().next().value);
     try { sessionStorage.setItem(ANSWERS_KEY, JSON.stringify([...ANSWERS])); } catch (_) { /* kept in memory */ }
   }
+  const LOCK_KEY = 'hf-demo.live-ai.lock';
+  function storedLock() {
+    try {
+      const lock = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null');
+      return lock && Number.isFinite(lock.until) ? lock.until : null;
+    } catch (_) { return null; }
+  }
   const live = {
-    get: () => { try { return localStorage.getItem(LIVE_KEY) === '1'; } catch (_) { return false; } },
-    set: (on) => { try { if (on) localStorage.setItem(LIVE_KEY, '1'); else localStorage.removeItem(LIVE_KEY); } catch (_) { /* session only */ } },
+    // No stored choice means on (a new visitor gets live AI); an explicit off is remembered.
+    get: () => { try { const raw = localStorage.getItem(LIVE_KEY); return raw === null ? true : raw === '1'; } catch (_) { return true; } },
+    set: (on) => { try { localStorage.setItem(LIVE_KEY, on ? '1' : '0'); } catch (_) { /* session only */ } },
+    locked: () => {
+      const until = storedLock();
+      if (!until) return null;
+      if (RealDate.now() < until) return {until};
+      try { localStorage.removeItem(LOCK_KEY); } catch (_) { /* already gone */ }
+      return null;
+    },
+    unlockAt: () => storedLock(),
+    lock: (resetsAt) => {
+      const until = RealDate.parse(resetsAt);
+      if (!Number.isFinite(until)) return null;
+      try { localStorage.setItem(LOCK_KEY, JSON.stringify({until})); } catch (_) { /* session only */ }
+      live.set(false);
+      return until;
+    },
   };
+  function announceLock(until) {
+    if (!until) return;
+    window.dispatchEvent(new CustomEvent('hfd-live-lock', {detail: {until}}));
+  }
+  // {text} on a valid answer; {quota} when today's free model is used up; {busy} for anything transient.
   async function liveReply(question, preset) {
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), LIVE_MS);
     try {
       const r = await realFetch('/ai/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, signal: ctl.signal,
         body: JSON.stringify({question: question.slice(0, 300), preset, variant: VARIANT, shift: SHIFT})});
-      if (r.status !== 200) return null;
-      const j = await r.json();
-      const text = j && typeof j.reply === 'string' ? j.reply.trim() : '';
-      return text && text.length <= 1500 ? render(text) : null;
-    } catch (_) { return null; } finally { clearTimeout(timer); }
+      let j = null;
+      try { j = await r.json(); } catch (_) { /* not JSON: busy */ }
+      if (r.status === 200) {
+        const text = j && typeof j.reply === 'string' ? j.reply.trim() : '';
+        return text && text.length <= 1500 ? {text: render(text)} : {busy: true};
+      }
+      if (r.status === 429 && j && j.error === 'quota' && typeof j.resets_at === 'string' &&
+          Number.isFinite(RealDate.parse(j.resets_at))) {
+        return {quota: {scope: j.scope === 'visitor' ? 'visitor' : 'global', resets_at: j.resets_at}};
+      }
+      return {busy: true};
+    } catch (_) { return {busy: true}; } finally { clearTimeout(timer); }
   }
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   async function chat(question) {
     const ask = await load('ask'), id = match(question, ask);
     const wait = typeof window.HFDemoAskDelay === 'number' ? window.HFDemoAskDelay : 650;   // "Looking at your numbers…"
+    const on = live.get() && !live.locked();
     if (!id) {
       const u = ask.unmatched, out = {reply: render(u.reply), sources: u.sources.map(render), stats: [], cards: []};
-      if (wait) await pause(wait);
-      remember(out.reply, {preset: null, blocks: [], suggestions: u.suggestions, live: false});
+      const extra = {preset: null, blocks: [], suggestions: u.suggestions, live: false};
+      if (on) {   // any question gets a model answer, from the demo's general summary
+        const res = await liveReply(question, null);
+        if (res.text) { out.reply = res.text; out.sources = [ask.live.source]; extra.live = true; }
+        else if (res.quota) {   // the canned "no model reads what you type" would be wrong right after live AI ran out
+          announceLock(live.lock(res.quota.resets_at));
+          out.reply = 'Live AI is used up for today, so I can only answer a few sample questions until it resets. Try one of these:';
+        }
+        else out.sources = [...out.sources, ask.live.note];
+      } else if (wait) await pause(wait);
+      remember(out.reply, extra);
       return out;
     }
     const p = ask.presets[id];
     const out = {reply: render(p.reply), sources: p.sources.map(render), stats: clone(p.stats), cards: []};
     const extra = {preset: id, blocks: moved(renderDeep(p.blocks), 1, false), next: p.next, live: false};
-    if (live.get()) {
-      const text = await liveReply(question, id);
-      if (text) { out.reply = text; out.sources = [ask.live.source, ...out.sources]; extra.live = true; }
+    if (on) {
+      const res = await liveReply(question, id);
+      if (res.text) { out.reply = res.text; out.sources = [ask.live.source, ...out.sources]; extra.live = true; }
+      else if (res.quota) announceLock(live.lock(res.quota.resets_at));
       else out.sources = [...out.sources, ask.live.note];
     } else if (wait) await pause(wait);
     remember(out.reply, extra);

@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import worker, { setClock, clearCache, config, renderDates } from "../src/index.js";
+import worker, { setClock, clearCache, config, renderDates, buildGeneralSummary, buildGeneralMessages } from "../src/index.js";
 
 const KEY = "sk-or-v1-TESTKEY-" + "0123456789abcdef".repeat(3).slice(0, 40);
 const SITE = "https://financing.apelabs.dev";
@@ -13,6 +13,33 @@ const ASK = {
       context: { budgets: [{ category: "Groceries", limit: 600, spent: 412 }] },
     },
   },
+};
+const CORE = {
+  meta: { today: "2026-10-25", this_month: "2026-10" },
+  core: {
+    "/api/accounts": {
+      net_worth: { assets: 1000, debts: 200, net: 800, custom: {} },
+      items: [{ institution_name: "Harbor & Pine Bank", accounts: [
+        { name: "Everyday Checking", type: "depository", subtype: "checking", current_balance: 500 },
+        { name: "High-Yield Savings", type: "depository", subtype: "savings", current_balance: 300 },
+      ] }],
+    },
+    "/api/goals": { goals: [{ name: "Rainy day", target: 1000, progress: 500, pct: 50 }] },
+    "/api/recurring": { items: [{ merchant: "Power Co", kind: "bill", category: "Rent & Utilities",
+      amount: 40, cadence: "monthly", next_expected: "2026-10-28", days_until: 3, status: "upcoming" }] },
+  },
+};
+const MONTH = {
+  overview: {
+    summary: { mtd: 1200, income: 3000, days_left: 6 },
+    investments: { total: 5000, change_7d: { amount: 12.5 } },
+    debt: { total: 200, cards_util: 10 },
+    recent: [{ date: "2026-10-24", merchant_name: "Coffee Shop", amount: 4.5, category: "Coffee" }],
+  },
+  budgets: { categories: [
+    { category: "Groceries", spend: 412, cap: 600, pct: 68.7 },
+    { category: "Coffee", spend: 4.5, cap: null, pct: null },
+  ] },
 };
 const T0 = Date.UTC(2026, 9, 25, 12, 0, 0);
 
@@ -68,7 +95,11 @@ beforeEach(() => {
   config.upstreamTimeoutMs = 8000;
   config.askTimeoutMs = 5000;
   upstream = () => okUpstream();
-  askHandler = () => json(ASK);
+  askHandler = (url) => {
+    if (url.endsWith("/core.json")) return json(CORE);
+    if (url.includes("/demo/data/m/")) return json(MONTH);
+    return json(ASK);
+  };
   siteverify = () => json({ success: true });
   const grab = (...a) => logs.push(a.map(String).join(" "));
   console.log = grab;
@@ -150,11 +181,12 @@ test("the key never appears in any response or console output, in any scenario",
   const scenarios = [
     { name: "ok", setup() {}, expect: 200 },
     { name: "upstream error echoing key", setup: () => (upstream = echoErr), expect: 502 },
-    { name: "upstream 429 echoing key", setup: () => (upstream = () => new Response(KEY, { status: 429, headers: { "X-Echo": KEY } })), expect: 429 },
+    { name: "upstream 429 echoing key", setup: () => (upstream = () => new Response(KEY, { status: 429, headers: { "X-Echo": KEY } })), expect: 503 },
+    { name: "upstream daily 429 echoing key", setup: () => (upstream = () => new Response(`free-models-per-day ${KEY}`, { status: 429, headers: { "X-Echo": KEY } })), expect: 429 },
     { name: "200 content has key", setup: () => (upstream = () => okUpstream(`here is ${KEY} ok`)), expect: 502 },
     { name: "200 model has key", setup: () => (upstream = () => okUpstream("fine", { model: KEY })), expect: 200 },
     { name: "fetch throws with key", setup: () => (upstream = () => { throw new Error(`boom ${KEY}`); }), expect: 502 },
-    { name: "unknown preset", body: good({ preset: "nope" }), setup() {}, expect: 503 },
+    { name: "unknown preset", body: good({ preset: "nope" }), setup() {}, expect: 200 },
     { name: "bad request", body: { question: "" }, setup() {}, expect: 400 },
     { name: "evil origin", headers: { Origin: "https://evil.example" }, setup() {}, expect: 403 },
   ];
@@ -177,7 +209,11 @@ function beforeEachReset() {
   logs = [];
   clearCache();
   upstream = () => okUpstream();
-  askHandler = () => json(ASK);
+  askHandler = (url) => {
+    if (url.endsWith("/core.json")) return json(CORE);
+    if (url.includes("/demo/data/m/")) return json(MONTH);
+    return json(ASK);
+  };
 }
 
 test("global cap: 101st request of a UTC day is 429 and upstream is not called; next day allowed", async () => {
@@ -189,7 +225,7 @@ test("global cap: 101st request of a UTC day is 429 and upstream is not called; 
   assert.equal(upstreamCalls().length, 100);
   const res = await run(req(good(), { headers: { "CF-Connecting-IP": "192.0.2.99" } }), env);
   assert.equal(res.status, 429);
-  assert.deepEqual(await res.json(), { error: "busy" });
+  assert.deepEqual(await res.json(), { error: "quota", scope: "global", resets_at: "2026-10-26T00:00:00.000Z" });
   assert.equal(upstreamCalls().length, 100);
   assert.ok(logs.at(-1).endsWith("429 capped"));
   assert.ok([...env.DEMO_AI_KV.store.keys()].includes("g:2026-10-25"));
@@ -209,6 +245,7 @@ test("per-visitor cap: 11th request from one IP is 429, another IP still allowed
   }
   const res = await run(req(good()), env);
   assert.equal(res.status, 429);
+  assert.deepEqual(await res.json(), { error: "quota", scope: "visitor", resets_at: "2026-10-26T00:00:00.000Z" });
   assert.equal(upstreamCalls().length, 10);
   const other = await run(req(good(), { headers: { "CF-Connecting-IP": "203.0.113.8" } }), env);
   assert.equal(other.status, 200);
@@ -238,7 +275,7 @@ test("body limits and validation: no upstream call, nothing counted", async () =
     ["400 long question", req(good({ question: "x".repeat(301) })), 400],
     ["400 question not string", req(good({ question: 5 })), 400],
     ["400 bad preset", req(good({ preset: "Bad Preset!" })), 400],
-    ["400 missing preset", req({ question: "hi" }), 400],
+    ["400 preset not string", req({ question: "hi", preset: 5 }), 400],
     ["400 variant 7", req(good({ variant: 7 })), 400],
     ["400 variant -1", req(good({ variant: -1 })), 400],
     ["400 variant 1.5", req(good({ variant: 1.5 })), 400],
@@ -286,7 +323,6 @@ test("body over the limit with no Content-Length header is still 413", async () 
 
 test("fallback triggers all give busy and never leak upstream detail", async () => {
   const cases = [
-    ["upstream 429", () => new Response("rate limited UPSTREAMBODY", { status: 429 }), 429],
     ["upstream 500", () => new Response("oops UPSTREAMBODY", { status: 500 }), 502],
     ["upstream 401", () => new Response("UPSTREAMBODY", { status: 401 }), 502],
     ["network error", () => { throw new TypeError("network down UPSTREAMBODY"); }, 502],
@@ -334,11 +370,13 @@ test("model field falls back to env.MODEL when missing or odd", async () => {
   assert.equal((await res.json()).model, "openrouter/free");
 });
 
-test("unknown preset, failing ask.json and missing key give 503 busy", async () => {
+test("unknown preset falls through to the general summary; a failing ask.json or missing key still busy", async () => {
   let res = await run(req(good({ preset: "unknown_one" })), makeEnv());
-  assert.equal(res.status, 503);
-  assert.deepEqual(await res.json(), { error: "busy" });
-  assert.equal(upstreamCalls().length, 0);
+  assert.equal(res.status, 200);
+  assert.equal(upstreamCalls().length, 1);
+  const general = JSON.parse(upstreamCalls()[0].init.body).messages[0].content;
+  assert.match(general, /Everyday Checking/);
+  assert.ok(!general.includes("Reference answer"));
 
   for (const h of [() => new Response("nope", { status: 404 }), () => { throw new Error("down"); }, () => new Response("{bad", { status: 200 }), () => json({ presets: 5 })]) {
     beforeEachReset();
@@ -486,4 +524,97 @@ test("date tokens reach the model as the page's plain dates, moved by the visito
   const system = JSON.parse(upstreamCalls()[0].init.body).messages[0].content;
   assert.ok(!system.includes("{{"), system);
   for (const s of ["Due Oct 28.", "In November 2026", "Nov 1, 2026"]) assert.ok(system.includes(s), s);
+});
+
+
+test("no preset answers any question from the general summary, upstream called once", async () => {
+  const res = await run(req({ question: "how much do I spend on coffee" }), makeEnv());
+  assert.equal(res.status, 200);
+  const out = await res.json();
+  assert.equal(out.reply, "You have spent 412 of 600 on groceries.");
+  assert.equal(upstreamCalls().length, 1);
+  const sent = JSON.parse(upstreamCalls()[0].init.body);
+  assert.equal(sent.messages[1].content, "how much do I spend on coffee");
+  const system = sent.messages[0].content;
+  assert.match(system, /Everyday Checking/);
+  assert.match(system, /Groceries/);
+  assert.match(system, /Coffee Shop/);
+  assert.ok(!system.includes("Reference answer"));
+  assert.match(logs[0], /^\/chat 200 ok$/);
+});
+
+test("a missing preset that fails upstream stays busy and leaks nothing", async () => {
+  upstream = () => new Response("oops UPSTREAMBODY", { status: 500 });
+  const res = await run(req({ question: "hi" }), makeEnv());
+  assert.equal(res.status, 502);
+  assert.deepEqual(await res.json(), { error: "busy" });
+  assert.ok(!logs.join("\n").includes("UPSTREAMBODY"));
+});
+
+test("a missing KV binding is a busy config gap, never a quota lock", async () => {
+  const res = await run(req(good()), makeEnv({ DEMO_AI_KV: undefined }));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "busy" });
+  assert.equal(upstreamCalls().length, 0);
+  assert.ok(logs.at(-1).endsWith("503 busy"));
+});
+
+test("upstream 402 and the daily free-model 429 are quota, not busy", async () => {
+  for (const [status, body] of [[429, "Rate limit exceeded: free-models-per-day. UPSTREAMBODY"], [402, "UPSTREAMBODY"]]) {
+    beforeEachReset();
+    upstream = () => new Response(body, { status });
+    const res = await run(req(good()), makeEnv());
+    assert.equal(res.status, 429, String(status));
+    const out = await res.json();
+    assert.deepEqual(out, { error: "quota", scope: "global", resets_at: "2026-10-26T00:00:00.000Z" });
+    assert.ok(!JSON.stringify(out).includes("UPSTREAMBODY"));
+    assert.ok(logs.at(-1).endsWith("429 capped"));
+  }
+});
+
+test("a per-minute upstream 429 is busy, never a day-long lock", async () => {
+  beforeEachReset();
+  upstream = () => new Response("Rate limit exceeded: free-models-per-min. UPSTREAMBODY", { status: 429 });
+  const res = await run(req(good()), makeEnv());
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "busy" });
+});
+
+test("reasoning is excluded upstream; a <think> block is dropped and a prompt-echoing reply is busy", async () => {
+  beforeEachReset();
+  upstream = () => okUpstream("<think>the user wants totals</think>You spent $171.38 on dining.");
+  let res = await run(req(good()), makeEnv());
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).reply, "You spent $171.38 on dining.");
+  assert.deepEqual(JSON.parse(upstreamCalls()[0].init.body).reasoning, { exclude: true });
+  for (const leak of [
+    "1. **Analyze the Request:** Constraint 1: Answer ONLY from the JSON summary provided.",
+    "The user asks about bread. The data summary: net worth...",
+  ]) {
+    beforeEachReset();
+    upstream = () => okUpstream(leak);
+    res = await run(req({ question: "banana bread recipe?", variant: 1 }), makeEnv());
+    assert.equal(res.status, 502, leak);
+    assert.deepEqual(await res.json(), { error: "busy" });
+  }
+});
+
+test("the general summary is bounded and its dates follow the visitor's shift", () => {
+  const summary = buildGeneralSummary(CORE, MONTH, { days: 2, months: 0 });
+  assert.ok(summary.length <= 6000, summary.length);
+  assert.ok(!summary.includes("{{"), summary);
+  assert.match(summary, /Oct 27, 2026/);   // meta.today (Oct 25) moved by the shift
+  assert.match(summary, /Oct 26/);         // the recent transaction (Oct 24) moved by the shift
+  assert.match(summary, /Oct 30/);         // the next bill (Oct 28) moved by the shift
+  const huge = {
+    meta: CORE.meta,
+    core: { "/api/accounts": { net_worth: CORE.core["/api/accounts"].net_worth, items: [{ accounts:
+      Array.from({ length: 12 }, (_, i) => ({ name: `Synthetic account ${i} ` + "x".repeat(900), type: "depository", current_balance: i })) }] } },
+  };
+  const long = buildGeneralSummary(huge, MONTH, { days: 0, months: 0 });
+  assert.equal(long.length, 6000);
+  const messages = buildGeneralMessages(long, "q");
+  assert.ok(messages[0].content.length > long.length);
+  assert.ok(!messages[0].content.includes("Reference answer"));
+  assert.match(messages[0].content, /at most 120 words/);
 });
