@@ -64,7 +64,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 class Server(ThreadingHTTPServer):
-    request_queue_size = 64
+    request_queue_size = 128   # = macOS kern.ipc.somaxconn; the default of 5 resets a burst of logo requests
     daemon_threads = True
 
 

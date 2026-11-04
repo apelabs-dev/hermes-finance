@@ -52,6 +52,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 class QuietServer(ThreadingHTTPServer):
+    request_queue_size = 128   # the default backlog of 5 resets a page's burst of logo requests (ERR_CONNECTION_RESET)
+    daemon_threads = True
+
     def server_bind(self):  # skip HTTPServer.server_bind's reverse DNS lookup
         socketserver.TCPServer.server_bind(self)
         self.server_name, self.server_port = self.server_address[:2]

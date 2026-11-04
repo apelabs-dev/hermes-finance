@@ -44,9 +44,9 @@
   }
   const DAY_RE = /^(\d{4}-\d{2}-\d{2})([T ].*)?$/, MONTH_RE = /^\d{4}-\d{2}$/;
   const PROSE_RE = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2})\b/g;
-  function moveText(s, sign, prose) {   // one string, moved by SHIFT (sign -1: back)
+  function moveText(s, sign, prose, safe) {   // one string, moved by SHIFT (sign -1: back; safe: an Ask answer's date stays in its month)
     const m = DAY_RE.exec(s);
-    if (m && Number.isFinite(RealDate.parse(m[1]))) return shiftDate(m[1], sign * SHIFT.days, sign * SHIFT.months) + (m[2] || '');
+    if (m && Number.isFinite(RealDate.parse(m[1]))) return (safe ? shiftDate(m[1], sign * SHIFT.days, sign * SHIFT.months) : addDays(m[1], sign * SHIFT.days)) + (m[2] || '');   // app data: plain days (demo_parity proves it)
     if (MONTH_RE.test(s) && Number(s.slice(5)) >= 1 && Number(s.slice(5)) <= 12) return addMonths(s, sign * SHIFT.months);
     if (!prose) return s;
     return s.replace(PROSE_RE, (all, mon, d) => {   // "sent Oct 25": the nearest such day to the build day
@@ -59,9 +59,9 @@
       return `${MONTHS[Number(x.slice(5, 7)) - 1].slice(0, 3)} ${Number(x.slice(8))}`;
     });
   }
-  const moved = (x, sign = 1, prose = true) => !SHIFT.days && !SHIFT.months ? x : Array.isArray(x) ? x.map((v) => moved(v, sign, prose)) :
-    x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [moveText(k, sign, prose), moved(v, sign, prose)])) :
-      typeof x === 'string' ? moveText(x, sign, prose) : x;
+  const moved = (x, sign = 1, prose = true, safe = false) => !SHIFT.days && !SHIFT.months ? x : Array.isArray(x) ? x.map((v) => moved(v, sign, prose, safe)) :
+    x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [moveText(k, sign, prose, safe), moved(v, sign, prose, safe)])) :
+      typeof x === 'string' ? moveText(x, sign, prose, safe) : x;
   const offset = NOW + SHIFT.days * 864e5 - RealDate.now();
   function DemoDate(...args) {
     if (!new.target) return new RealDate(RealDate.now() + offset).toString();
@@ -296,7 +296,7 @@
     }
     const p = ask.presets[id];
     const out = {reply: render(p.reply), sources: p.sources.map((x) => render(x)), stats: clone(p.stats), cards: []};
-    const extra = {preset: id, blocks: moved(renderDeep(p.blocks), 1, false), next: p.next, live: false};
+    const extra = {preset: id, blocks: moved(renderDeep(p.blocks), 1, false, true), next: p.next, live: false};
     if (on) {
       const res = await liveReply(question, id);
       if (res.text) { out.reply = res.text; out.sources = [ask.live.source, ...out.sources]; extra.live = true; }

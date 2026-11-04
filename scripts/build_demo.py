@@ -1319,7 +1319,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.serve:
         from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
         from functools import partial
-        server = ThreadingHTTPServer(('127.0.0.1', args.port), partial(SimpleHTTPRequestHandler, directory=str(out)))
+        class Server(ThreadingHTTPServer):
+            request_queue_size = 128   # the default backlog of 5 resets a page's burst of logo requests
+            daemon_threads = True
+        server = Server(('127.0.0.1', args.port), partial(SimpleHTTPRequestHandler, directory=str(out)))
         print(f'http://127.0.0.1:{server.server_port}/', flush=True)
         try:
             server.serve_forever()

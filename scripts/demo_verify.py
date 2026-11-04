@@ -78,6 +78,8 @@ def orphaned():
     os._exit(0)
 threading.Thread(target=orphaned, daemon=True).start()
 class Server(ThreadingHTTPServer):
+    request_queue_size = 128   # socketserver's default backlog of 5 resets a page's burst of logo requests
+    daemon_threads = True
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)
         self.server_name, self.server_port = self.server_address[:2]

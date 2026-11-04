@@ -106,7 +106,7 @@ def move(x, build_day: date, days: int, months: int, prose: bool = True):
         m = DAY_RE.fullmatch(t)
         if m:
             try:
-                return demo_ask.shift_day(m.group(1), days, months) + (m.group(2) or '')
+                return (date.fromisoformat(m.group(1)) + timedelta(days=days)).isoformat() + (m.group(2) or '')
             except ValueError:
                 pass
         if re.fullmatch(r'\d{4}-\d{2}', t) and 1 <= int(t[5:]) <= 12:
