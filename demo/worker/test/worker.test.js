@@ -1,6 +1,10 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import worker, { setClock, clearCache, config, renderDates, buildGeneralSummary, buildGeneralMessages } from "../src/index.js";
+
+// The shared rule's cases (also run by tests/test_demo_variants.py against the shim and scripts/demo_ask.py).
+const DATE_SHIFT_CASES = JSON.parse(readFileSync(new URL("../../date-shift-cases.json", import.meta.url), "utf8")).cases;
 
 const KEY = "sk-or-v1-TESTKEY-" + "0123456789abcdef".repeat(3).slice(0, 40);
 const SITE = "https://financing.apelabs.dev";
@@ -523,7 +527,14 @@ test("date tokens reach the model as the page's plain dates, moved by the visito
   assert.equal(res.status, 200);
   const system = JSON.parse(upstreamCalls()[0].init.body).messages[0].content;
   assert.ok(!system.includes("{{"), system);
-  for (const s of ["Due Oct 28.", "In November 2026", "Nov 1, 2026"]) assert.ok(system.includes(s), s);
+  for (const s of ["Due Nov 28.", "In November 2026", "Nov 1, 2026"]) assert.ok(system.includes(s), s);
+});
+
+test("the shared date-shift cases: a date never leaves its shifted month", () => {
+  assert.ok(DATE_SHIFT_CASES.length > 10);
+  for (const c of DATE_SHIFT_CASES) {
+    assert.equal(renderDates(c.text, { days: c.days, months: c.months }), c.expected, JSON.stringify(c));
+  }
 });
 
 

@@ -295,6 +295,20 @@ async function loadGeneralSummary(env, variant, shift) {
   return buildGeneralSummary(core, bundle, shift);
 }
 
+// The one date rule (scripts/demo_ask.py shift_day, demo/shim.js shiftDate): a date never leaves
+// month(date) + months. Plain day arithmetic is kept when it lands in that month; otherwise the day-of-month
+// offset is re-placed inside it, clamped to the month's length (and to day 1). So a {{d:}} token and the
+// {{m:}} label of the same answer always name the same month.
+export function shiftDate(v, days, months) {
+  const plain = new Date(Date.parse(`${v}T12:00:00Z`) + days * 864e5).toISOString().slice(0, 10);
+  const k = Number(v.slice(0, 4)) * 12 + Number(v.slice(5, 7)) - 1 + months;
+  const target = `${String(Math.floor(k / 12)).padStart(4, "0")}-${String(k % 12 + 1).padStart(2, "0")}`;
+  if (plain.slice(0, 7) === target) return plain;
+  const last = new Date(Date.UTC(Math.floor(k / 12), k % 12 + 1, 0)).getUTCDate();
+  const day = Math.min(Math.max(Number(v.slice(8, 10)) + days, 1), last);
+  return `${target}-${String(day).padStart(2, "0")}`;
+}
+
 // The presets carry dates as tokens the page renders (scripts/demo_ask.py render, demo/shim.js render):
 // {{d:YYYY-MM-DD}} "Oct 26", {{D:..}} "Oct 26, 2026", {{m:YYYY-MM}} "October 2026", {{M:..}} "Oct 2026",
 // moved by the visitor's shift. The model sees the same plain dates the page shows.
@@ -302,7 +316,7 @@ export function renderDates(text, shift = { days: 0, months: 0 }) {
   return String(text).replace(/\{\{([dDmM]):(\d{4}-\d{2}(?:-\d{2})?)\}\}/g, (_, kind, v) => {
     if (kind === "d" || kind === "D") {
       if (v.length !== 10) return v;
-      const x = new Date(Date.parse(`${v}T12:00:00Z`) + shift.days * 864e5).toISOString().slice(0, 10);
+      const x = shiftDate(v, shift.days, shift.months);
       return `${MONTHS[Number(x.slice(5, 7)) - 1].slice(0, 3)} ${Number(x.slice(8))}${kind === "D" ? `, ${x.slice(0, 4)}` : ""}`;
     }
     const k = Number(v.slice(0, 4)) * 12 + Number(v.slice(5, 7)) - 1 + shift.months;

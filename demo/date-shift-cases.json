@@ -1,0 +1,23 @@
+{
+  "comment": "Shared date-shift cases for demo/shim.js, scripts/demo_ask.py and demo/worker/src/index.js. A date never leaves month(date)+months: plain day arithmetic when it lands in that month, otherwise the day-of-month offset re-placed inside it, clamped to the month length and to day 1.",
+  "cases": [
+    {"text": "{{d:2026-09-28}}", "days": 0, "months": 0, "expected": "Sep 28"},
+    {"text": "{{D:2026-09-28}}", "days": 0, "months": 0, "expected": "Sep 28, 2026"},
+    {"text": "{{m:2026-09}} {{M:2026-09}}", "days": 0, "months": 0, "expected": "September 2026 Sep 2026"},
+    {"text": "{{d:2026-09-28}}", "days": 5, "months": 0, "expected": "Sep 30"},
+    {"text": "{{d:2026-09-23}}", "days": 5, "months": 0, "expected": "Sep 28"},
+    {"text": "{{d:2026-09-18}}", "days": 5, "months": 0, "expected": "Sep 23"},
+    {"text": "{{d:2026-09-28}}", "days": 10, "months": 1, "expected": "Oct 8"},
+    {"text": "{{d:2026-09-23}}", "days": 10, "months": 1, "expected": "Oct 3"},
+    {"text": "{{d:2026-09-18}}", "days": 10, "months": 1, "expected": "Oct 28"},
+    {"text": "{{d:2026-10-26}}", "days": 2, "months": 1, "expected": "Nov 28"},
+    {"text": "{{D:2026-12-30}}", "days": 3, "months": 1, "expected": "Jan 2, 2027"},
+    {"text": "{{m:2026-12}}", "days": 3, "months": 1, "expected": "January 2027"},
+    {"text": "{{D:2026-12-31}}", "days": 1, "months": 1, "expected": "Jan 1, 2027"},
+    {"text": "{{d:2026-11-02}}", "days": -5, "months": 0, "expected": "Nov 1"},
+    {"text": "{{d:2026-01-31}}", "days": 1, "months": 0, "expected": "Jan 31"},
+    {"text": "{{d:2026-02-28}}", "days": 31, "months": 2, "expected": "Apr 30"},
+    {"text": "{{d:2026-03-31}}", "days": 1, "months": 1, "expected": "Apr 1"},
+    {"text": "{{D:2026-10-31}} {{m:2026-10}}", "days": 1, "months": 0, "expected": "Oct 31, 2026 October 2026"}
+  ]
+}
