@@ -9,8 +9,8 @@
   // Demo v2 (t_d31fda2a). The weekly build (scripts/demo_weekly.sh, demo_combine.py) holds 7 variants, one per weekday
   // (Monday 0), each built for its own day: a visitor gets their weekday's (?demo-variant=0-6 picks one). The demo's
   // today is the visitor's today (?demo-today=YYYY-MM-DD or =build sets it): every date in every answer moves by the
-  // same number of days (SHIFT.days) and every month key by the months that moves the build day (SHIFT.months), the
-  // question moved back first, so each answer is the frozen one with its dates moved (scripts/demo_parity.py proves it).
+  // same number of days (SHIFT.days), clamped so it stays in its own month moved by SHIFT.months (shiftDate below),
+  // and every month key moves by SHIFT.months; the question is moved back first, so each answer is the frozen one with its dates moved (scripts/demo_parity.py proves it).
   const ASKED = new URL(location.href).searchParams;
   const VARIANTS = ME.dataset.variants ? ME.dataset.variants.split(',') : null;
   const VARIANT = !VARIANTS ? null : /^[0-6]$/.test(ASKED.get('demo-variant') || '') ? Number(ASKED.get('demo-variant')) :
@@ -21,15 +21,14 @@
   const addMonths = (m, n) => { const k = Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1 + n; return `${String(Math.floor(k / 12)).padStart(4, '0')}-${String(k % 12 + 1).padStart(2, '0')}`; };
   const addDays = (iso, n) => new RealDate(RealDate.parse(`${iso}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
   // The one date rule (scripts/demo_ask.py shift_day, demo/worker/src/index.js shiftDate): a date never leaves
-  // month(date) + months. Plain day arithmetic is kept when it lands in that month; otherwise the day-of-month offset
-  // is re-placed inside it, clamped to the month's length (and to day 1). So a {{d:}} token and the {{m:}} label of
-  // the same answer always name the same month.
+  // month(date) + months. Plain day arithmetic is kept when it lands in that month; a date it would carry out of the
+  // month is clamped to the month's first or last day. So a {{d:}} token and the {{m:}} label of the same answer always
+  // name the same month, dates stay in order, and none moves past the shifted today.
   const daysInMonth = (m) => new RealDate(RealDate.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate();
   function shiftDate(iso, days, months) {
     const plain = addDays(iso, days), target = addMonths(iso.slice(0, 7), months);
     if (plain.slice(0, 7) === target) return plain;
-    const day = Math.min(Math.max(Number(iso.slice(8, 10)) + days, 1), daysInMonth(target));
-    return `${target}-${String(day).padStart(2, '0')}`;
+    return plain.slice(0, 7) < target ? `${target}-01` : `${target}-${String(daysInMonth(target)).padStart(2, '0')}`;
   }
   const BUILD_DAY = new RealDate(NOW).toISOString().slice(0, 10);
   const SHIFT = {days: 0, months: 0};

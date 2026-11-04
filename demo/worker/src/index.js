@@ -296,17 +296,17 @@ async function loadGeneralSummary(env, variant, shift) {
 }
 
 // The one date rule (scripts/demo_ask.py shift_day, demo/shim.js shiftDate): a date never leaves
-// month(date) + months. Plain day arithmetic is kept when it lands in that month; otherwise the day-of-month
-// offset is re-placed inside it, clamped to the month's length (and to day 1). So a {{d:}} token and the
-// {{m:}} label of the same answer always name the same month.
+// month(date) + months. Plain day arithmetic is kept when it lands in that month; a date it would carry out
+// of the month is clamped to the month's first or last day. So a {{d:}} token and the {{m:}} label of the
+// same answer always name the same month, and dates keep their order.
 export function shiftDate(v, days, months) {
   const plain = new Date(Date.parse(`${v}T12:00:00Z`) + days * 864e5).toISOString().slice(0, 10);
   const k = Number(v.slice(0, 4)) * 12 + Number(v.slice(5, 7)) - 1 + months;
   const target = `${String(Math.floor(k / 12)).padStart(4, "0")}-${String(k % 12 + 1).padStart(2, "0")}`;
   if (plain.slice(0, 7) === target) return plain;
+  if (plain.slice(0, 7) < target) return `${target}-01`;
   const last = new Date(Date.UTC(Math.floor(k / 12), k % 12 + 1, 0)).getUTCDate();
-  const day = Math.min(Math.max(Number(v.slice(8, 10)) + days, 1), last);
-  return `${target}-${String(day).padStart(2, "0")}`;
+  return `${target}-${String(last).padStart(2, "0")}`;
 }
 
 // The presets carry dates as tokens the page renders (scripts/demo_ask.py render, demo/shim.js render):

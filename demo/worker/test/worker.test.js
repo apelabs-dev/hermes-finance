@@ -527,7 +527,7 @@ test("date tokens reach the model as the page's plain dates, moved by the visito
   assert.equal(res.status, 200);
   const system = JSON.parse(upstreamCalls()[0].init.body).messages[0].content;
   assert.ok(!system.includes("{{"), system);
-  for (const s of ["Due Nov 28.", "In November 2026", "Nov 1, 2026"]) assert.ok(system.includes(s), s);
+  for (const s of ["Due Nov 1.", "In November 2026", "Nov 1, 2026"]) assert.ok(system.includes(s), s);
 });
 
 test("the shared date-shift cases: a date never leaves its shifted month", () => {

@@ -202,3 +202,21 @@ def test_prose_dates_move_from_their_nearest_year():
     assert demo_parity.move({'2026-12-30': ['sent Dec 29', 'next ~Jan 2, $5', '2026-12', '2026-12-30T10:00:00Z']}, d, 3, 1) == \
         {'2027-01-02': ['sent Jan 1', 'next ~Jan 5, $5', '2027-01', '2027-01-02T10:00:00Z']}
     assert demo_parity.move('Oct 2026 and May 5th', d, 1, 0) == 'Oct 2026 and May 5th'   # (not a "Mon D")
+
+
+def test_the_date_rule_keeps_order_and_the_month_label_for_every_shift():
+    """A shifted month's dates stay inside the shifted month and keep their order (a "latest payments" list
+    stays sorted), for every day of a year of source dates and every shift up to 40 days either way."""
+    from datetime import timedelta
+
+    start = date(2026, 1, 1)
+    days = [(start + timedelta(n)).isoformat() for n in range(366)]
+    for shift in range(-40, 41):
+        for k in (-2, -1, 0, 1, 2):
+            prev = None
+            for iso in days:
+                out = demo_ask.shift_day(iso, shift, k)
+                assert out[:7] == demo_ask.add_months(iso[:7], k), (iso, shift, k, out)
+                if prev and prev[0][:7] == iso[:7]:
+                    assert out >= prev[1], (prev, iso, shift, k, out)
+                prev = (iso, out)

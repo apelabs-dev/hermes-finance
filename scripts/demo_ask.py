@@ -103,15 +103,14 @@ def _days_in_month(month: str) -> int:
 
 def shift_day(iso: str, days: int = 0, months: int = 0) -> str:
     """The one date rule (demo/shim.js shiftDate, demo/worker/src/index.js shiftDate): a date never leaves
-    `month(iso) + months`. Plain day arithmetic is kept when it lands in that month; otherwise the day-of-month
-    offset is re-placed inside it, clamped to the month's length (and to day 1)."""
-    d = date.fromisoformat(iso)
-    plain = d + timedelta(days=days)
+    `month(iso) + months`. Plain day arithmetic is kept when it lands in that month; a date it would carry out
+    of the month is clamped to the month's first or last day. Clamping a day shift keeps dates in order (a
+    "latest payments" list stays sorted) and never moves a date past the shifted today."""
+    plain = (date.fromisoformat(iso) + timedelta(days=days)).isoformat()
     target = add_months(iso[:7], months)
-    if plain.strftime("%Y-%m") == target:
-        return plain.isoformat()
-    day = min(max(d.day + days, 1), _days_in_month(target))
-    return f"{target}-{day:02d}"
+    if plain[:7] == target:
+        return plain
+    return f"{target}-01" if plain[:7] < target else f"{target}-{_days_in_month(target):02d}"
 
 
 def render(text: str, days: int = 0, months: int = 0) -> str:
