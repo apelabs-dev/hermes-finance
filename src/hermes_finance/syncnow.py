@@ -237,8 +237,8 @@ def changes(before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]],
     """{new, updated, removed, balances: [{account_id, label, before, after, item_id, bank, institution_id, name, mask,
     type, subtype}], text}: the balances largest move first (TASK-22f). The text is None when no bank synced (TASK-22c:
     never "Nothing new" then)."""
-    ok = [r for r in results if r.ok]
-    new, updated, removed = (sum(getattr(r, k) for r in ok) for k in ("added", "modified", "removed"))
+    committed = [r for r in results if r.transactions_ok]   # (a partial Item still brought these in)
+    new, updated, removed = (sum(getattr(r, k) for r in committed) for k in ("added", "modified", "removed"))
     moved = []
     for aid, a in after.items():   # (an account the sync just added has no balance that moved)
         was = before[aid]["balance"] if aid in before else a["balance"]
@@ -250,8 +250,9 @@ def changes(before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]],
     parts += [f"{updated} updated"] if updated else []
     parts += [f"{removed} removed"] if removed else []
     parts += [f"{m['label']} {usd(m['before']) if m['before'] is not None else 'new'} → {usd(m['after'])}" for m in moved]
+    landed = any(r.landed for r in results)
     return {"new": new, "updated": updated, "removed": removed, "balances": moved,
-            "text": " · ".join(parts) if parts else "Nothing new" if ok else None}
+            "text": " · ".join(parts) if parts else "Nothing new" if landed else None}
 
 
 def new_transactions(conn: sqlite3.Connection, mark: int, item_ids: list[str]) -> dict[str, Any]:
@@ -307,7 +308,10 @@ def failure(results: list[ItemSyncResult]) -> dict[str, Any] | None:
     bad = [r for r in results if not r.ok]
     if not bad:
         return None
-    if len(bad) == len(results) and len({r.error_code for r in bad}) == 1 and is_transient(bad[0].error_code, bad[0].error_type):
+    landed = any(r.landed for r in results)
+    if (not landed and len(bad) == len(results) and len({r.error_code for r in bad}) == 1
+            and is_transient(bad[0].error_code, bad[0].error_type)):
+        # (an Item that committed data is a partial failure, never "Plaid unreachable")
         return {"unreachable": True, "lines": [UNREACHABLE]}
     login, fix = [r for r in bad if r.error_code == "ITEM_LOGIN_REQUIRED"], []
     if login:
@@ -408,7 +412,8 @@ def finish(conn: sqlite3.Connection, p: dict[str, Any]) -> dict[str, Any]:
         previous = _last_sync(conn)   # TASK-22f: "Nothing new since 6:31 AM."
         mark, before = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM transactions").fetchone()[0], balances(conn)
         results = sync_items(conn, plaid, p["sync"]) if p["sync"] else []
-        c = changes(before, balances(conn), results) | new_transactions(conn, mark, [r.item_id for r in results if r.ok])
+        c = changes(before, balances(conn), results) | new_transactions(
+            conn, mark, [r.item_id for r in results if r.transactions_ok])
     finally:
         _release(p)
     fail = failure(results)   # (TASK-22c: Plaid out of reach is one line, not one error per bank)

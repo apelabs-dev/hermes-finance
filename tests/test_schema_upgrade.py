@@ -359,7 +359,8 @@ def test_failed_holdings_call_writes_no_holding_snapshot(conn, client, fake):
     conn.commit()
     fake.on("/investments/holdings/get", err("INTERNAL_SERVER_ERROR", "API_ERROR", 500))
     (r,) = sync_all(conn, client)
-    assert r.ok and r.extras["investments"].startswith("err")
+    assert not r.ok and r.error_code == "INTERNAL_SERVER_ERROR"      # a granted product failed: not an ok sync
+    assert r.extras["investments"] == "err (INTERNAL_SERVER_ERROR)"
     assert {x[0] for x in conn.execute("SELECT date FROM holding_snapshots")} == {"2026-01-01"}   # stale ones not re-dated
 
 

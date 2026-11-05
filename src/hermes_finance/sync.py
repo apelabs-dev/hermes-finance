@@ -17,6 +17,14 @@ log = logging.getLogger(__name__)
 
 MUTATION_ERROR = "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION"
 MAX_PAGINATION_RESTARTS = 3
+# The Item's stored products are missing/empty/unparseable: fail closed, never assume transactions.
+ITEM_PRODUCTS_UNKNOWN = "ITEM_PRODUCTS_UNKNOWN"
+# /transactions/sync errors that mean the product is not actually granted, whatever the Item's metadata said.
+TRANSACTIONS_NOT_GRANTED_ERRORS = {
+    "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
+}
+# The ledger's internal marker for an Item that simply does not grant transactions: never a Plaid error code.
+TRANSACTIONS_NOT_GRANTED_MARKER = "not in the Item's products"
 # Optional-product errors that just mean "not available for this Item" -> skip quietly.
 TOLERATED_PRODUCT_ERRORS = {
     "PRODUCTS_NOT_SUPPORTED", "PRODUCT_NOT_ENABLED", "PRODUCT_NOT_READY", "INVALID_PRODUCT",
@@ -38,6 +46,31 @@ def is_transient(error_code: str | None, error_type: str | None = None) -> bool:
 
 
 @dataclass
+class Phase:
+    """One data phase of an Item's sync: what was attempted, what it returned, whether it delivered account rows."""
+    attempted: bool = False
+    ok: bool = False
+    skipped: str | None = None          # a tolerated product error: skipped, not a failure
+    error_code: str | None = None
+    error_message: str | None = None
+    error_type: str | None = None
+    accounts: bool = False              # delivered fresh account rows this run
+    rows: int = 0                       # holdings / liability rows written
+    fatal: bool = False                 # a non-tolerated error here makes the Item's sync fail
+    detail: str | None = None           # what a consumer shows for a crash (the exception type)
+
+    @property
+    def outcome(self) -> str | None:
+        if not self.attempted and self.skipped is None:
+            return None
+        if self.skipped is not None:
+            return f"skipped ({self.skipped})"
+        if self.ok:
+            return "ok"
+        return f"err ({self.detail or self.error_code})"
+
+
+@dataclass
 class ItemSyncResult:
     item_id: str
     institution_name: str | None
@@ -49,14 +82,89 @@ class ItemSyncResult:
     error_message: str | None = None
     error_type: str | None = None
     update_status: str | None = None
-    extras: dict[str, str] = field(default_factory=dict)  # balances/liabilities/investments -> outcome
+    phases: dict[str, Phase] = field(default_factory=dict)   # the per-Item data-phase ledger
+    blocked_code: str | None = None     # no ledger could run (unknown products, /item/get failed)
+    blocked_message: str | None = None
+    blocked_type: str | None = None
+
+    def block(self, code: str, message: str | None = None, error_type: str | None = None) -> None:
+        self.blocked_code, self.blocked_message, self.blocked_type = code, message, error_type
+
+    @property
+    def transactions_skipped(self) -> str | None:
+        phase = self.phases.get("transactions")
+        return phase.skipped if phase else None
+
+    @property
+    def transactions_ok(self) -> bool:
+        phase = self.phases.get("transactions")
+        return bool(phase and phase.ok)
+
+    @property
+    def extras(self) -> dict[str, str]:
+        return {name: phase.outcome for name, phase in self.phases.items()
+                if name != "transactions" and phase.outcome is not None}
+
+    @property
+    def data_ok(self) -> bool:
+        return any(phase.ok for phase in self.phases.values())
+
+    @property
+    def landed(self) -> bool:
+        return self.data_ok
+
+    @property
+    def accounts_delivered(self) -> bool:
+        return any(phase.ok and phase.accounts for phase in self.phases.values())
+
+    @property
+    def fresh(self) -> bool:
+        return self.transactions_ok or (self.ok and self.data_ok and self.transactions_skipped is not None)
+
+    def phase_ok(self, name: str) -> bool:
+        phase = self.phases.get(name)
+        return bool(phase and phase.ok)
+
+    def derive(self) -> None:
+        """The one place the ledger becomes the Item's verdict and what its consumers report."""
+        if self.blocked_code is not None:
+            self.ok = False
+            self.error_code, self.error_message, self.error_type = (
+                self.blocked_code, self.blocked_message, self.blocked_type)
+            return
+        failures = [p for p in self.phases.values() if p.attempted and not p.ok and p.skipped is None]
+        fatal = next((p for p in failures if p.fatal), None)
+        if fatal is not None or not self.landed:
+            failure = fatal or (failures[0] if failures else None)
+            self.ok = False
+            if failure is not None:
+                self.error_code = failure.error_code or ("INTERNAL_ERROR" if failure.detail else None)
+                self.error_message = failure.error_message or failure.detail or failure.error_code
+                self.error_type = failure.error_type
+            else:
+                skipped = next((p for p in self.phases.values()
+                                if p.attempted and p.skipped is not None
+                                and p.skipped != TRANSACTIONS_NOT_GRANTED_MARKER), None)
+                if skipped is not None:
+                    self.error_code = skipped.skipped
+                    self.error_message = f"no data was delivered ({skipped.skipped})"
+                    self.error_type = skipped.error_type
+                else:
+                    self.error_code = "NO_DATA"
+                    self.error_message = "no data was delivered"
+            return
+        self.ok = True
+        self.error_code = self.error_message = self.error_type = None
 
     def summary(self) -> str:
         name = self.institution_name or self.item_id
         if not self.ok:
             hint = " (open `finance serve` and click Reconnect)" if self.error_code == "ITEM_LOGIN_REQUIRED" else ""
             return f"{name}: ERROR {self.error_code}{hint}"
-        parts = [f"{name}: +{self.added} ~{self.modified} -{self.removed}"]
+        if self.transactions_skipped:
+            parts = [f"{name}: no transactions ({self.transactions_skipped})"]
+        else:
+            parts = [f"{name}: +{self.added} ~{self.modified} -{self.removed}"]
         parts += [f"{k} {v}" for k, v in self.extras.items()]
         if self.update_status and self.update_status != "HISTORICAL_UPDATE_COMPLETE":
             parts.append(f"plaid status {self.update_status}")
@@ -207,31 +315,50 @@ def _set_item_error(conn: sqlite3.Connection, item_id: str, e: PlaidError) -> No
                      (status, e.error_code, e.error_message, item_id))
 
 
-def _products(item: sqlite3.Row) -> set[str]:
+def _valid_products(value: Any) -> list[str] | None:
+    """The product metadata, only when it is a list of nonempty strings; anything else is not trustworthy."""
+    if not isinstance(value, list) or not value:
+        return None
+    if not all(isinstance(p, str) and p for p in value):
+        return None
+    return value
+
+
+def _granted_products(item: sqlite3.Row) -> set[str] | None:
+    """The Item's granted products, or None when the stored value is missing/empty/malformed (genuinely unknown)."""
+    raw = item["products"]
+    if not raw:
+        return None
     try:
-        return set(json.loads(item["products"] or "[]"))
-    except ValueError:
-        return set()
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    products = _valid_products(parsed)
+    return set(products) if products is not None else None
 
 
 def _refresh_item_meta(conn, client, item) -> sqlite3.Row:
-    """/item/get: learn which optional products were granted (free call)."""
+    """/item/get: learn which optional products were granted (free call). Only a well-formed list is saved."""
     data = client.item_get(item["access_token"])
     it = data.get("item") or {}
-    products = sorted(it.get("products") or [])
+    products = _valid_products(it.get("products"))
+    if products is None:  # malformed/missing: keep the stored value for _granted_products to validate
+        return item
     with conn:
         conn.execute("UPDATE items SET products=?, institution_id=COALESCE(institution_id, ?) WHERE item_id=?",
-                     (json.dumps(products), it.get("institution_id"), item["item_id"]))
+                     (json.dumps(sorted(products)), it.get("institution_id"), item["item_id"]))
     return conn.execute("SELECT * FROM items WHERE item_id=?", (item["item_id"],)).fetchone()
 
 
-def _sync_liabilities(conn, client, item) -> None:
+def _sync_liabilities(conn, client, item) -> tuple[bool, int]:
     data = client.liabilities_get(item["access_token"])
-    upsert_accounts(conn, item["item_id"], data.get("accounts", []))
-    ts, liab = now(), data.get("liabilities") or {}
+    accounts = data.get("accounts", [])
+    upsert_accounts(conn, item["item_id"], accounts)
+    ts, liab, rows = now(), data.get("liabilities") or {}, 0
     with conn:
         for kind in ("credit", "mortgage", "student"):
             for l in liab.get(kind) or []:
+                rows += 1
                 if kind == "credit":
                     aprs = l.get("aprs") or []
                     rate = next((a.get("apr_percentage") for a in aprs if a.get("apr_type") == "purchase_apr"),
@@ -253,17 +380,20 @@ def _sync_liabilities(conn, client, item) -> None:
                      None if l.get("is_overdue") is None else int(bool(l.get("is_overdue"))),
                      rate, _dumps(l), ts),
                 )
+    return bool(accounts), rows
 
 
-def _sync_holdings(conn, client, item) -> None:
+def _sync_holdings(conn, client, item) -> tuple[bool, int]:
     data = client.investments_holdings_get(item["access_token"])
-    upsert_accounts(conn, item["item_id"], data.get("accounts", []))
+    accounts = data.get("accounts", [])
+    upsert_accounts(conn, item["item_id"], accounts)
     securities = {s["security_id"]: s for s in data.get("securities", [])}
+    rows = data.get("holdings", [])
     ts = now()
     with conn:
         # Holdings are a snapshot: positions that disappeared were sold.
         conn.execute("DELETE FROM holdings WHERE item_id=?", (item["item_id"],))
-        for h in data.get("holdings", []):
+        for h in rows:
             sec = securities.get(h.get("security_id"), {})
             conn.execute(
                 """INSERT OR REPLACE INTO holdings (account_id, security_id, item_id, ticker_symbol,
@@ -276,20 +406,30 @@ def _sync_holdings(conn, client, item) -> None:
                  h.get("iso_currency_code") or h.get("unofficial_currency_code"),
                  _dumps({"holding": h, "security": sec}), ts),
             )
+    return bool(accounts), len(rows)
 
 
-def _optional(label: str, fn, result: ItemSyncResult) -> None:
+def _run_data_phase(result: ItemSyncResult, conn: sqlite3.Connection, label: str, fn,
+                    fatal: bool = False) -> None:
+    """Run one optional data phase and write its real outcome into the Item's ledger."""
+    phase = Phase(attempted=True, fatal=fatal)
+    result.phases[label] = phase
     try:
-        fn()
-        result.extras[label] = "ok"
+        accounts, rows = fn()
     except PlaidError as e:
         tolerated = e.error_code in TOLERATED_PRODUCT_ERRORS
-        result.extras[label] = f"skipped ({e.error_code})" if tolerated else f"err ({e.error_code})"
-        if not tolerated:
+        if tolerated:
+            phase.skipped = e.error_code
+        else:
+            phase.error_code, phase.error_message, phase.error_type = e.error_code, e.error_message, e.error_type
+            if fatal:  # a granted product we asked for failed: say so, but keep everything that did land
+                _set_item_error(conn, result.item_id, e)
             log.warning("%s failed for item %s: %s", label, result.item_id, e.error_code)
     except Exception as e:  # a parsing bug in an optional product must not sink the whole sync
-        result.extras[label] = f"err ({type(e).__name__})"
+        phase.error_code, phase.error_message, phase.detail = "INTERNAL_ERROR", type(e).__name__, type(e).__name__
         log.exception("%s failed for item %s", label, result.item_id)
+    else:
+        phase.ok, phase.accounts, phase.rows = True, bool(accounts), rows
 
 
 def sync_item(conn: sqlite3.Connection, client: PlaidClient, item: sqlite3.Row) -> ItemSyncResult:
@@ -299,15 +439,32 @@ def sync_item(conn: sqlite3.Connection, client: PlaidClient, item: sqlite3.Row) 
     log_id = conn.execute("INSERT INTO sync_log (item_id, started_at) VALUES (?, ?)",
                           (item_id, started)).lastrowid
     conn.commit()
-
     try:
-        try:
-            item = _refresh_item_meta(conn, client, item)
-        except PlaidError as e:
-            if e.is_item_error:
-                raise
-            log.warning("item/get failed for %s: %s", item_id, e.error_code)
+        _sync_item_body(conn, client, item, result)
+    except Exception as e:  # a bug here must never leave the Item without a finished sync_log row
+        result.block("INTERNAL_ERROR", type(e).__name__)
+        result.derive()
+        log.exception("item sync crashed for %s", item_id)
+    finally:
+        details = dict(result.extras)
+        if result.transactions_skipped is not None:
+            details["transactions"] = f"skipped ({result.transactions_skipped})"
+        with conn:
+            conn.execute(
+                """UPDATE sync_log SET finished_at=?, added=?, modified=?, removed=?, error=?, details=?
+                   WHERE id=?""",
+                (now(), result.added, result.modified, result.removed,
+                 None if result.ok else f"{result.error_code}: {result.error_message}",
+                 json.dumps(details), log_id))
+    return result
 
+
+def _sync_transactions(conn: sqlite3.Connection, client: PlaidClient, item: sqlite3.Row,
+                       result: ItemSyncResult) -> None:
+    item_id = result.item_id
+    phase = Phase(attempted=True, fatal=True)
+    result.phases["transactions"] = phase
+    try:
         added, modified, removed, accounts, cursor, status = _fetch_all_pages(
             client, item["access_token"], item["cursor"])
         ts = now()
@@ -319,51 +476,108 @@ def sync_item(conn: sqlite3.Connection, client: PlaidClient, item: sqlite3.Row) 
                 conn.execute("UPDATE transactions SET removed=1, updated_at=? WHERE transaction_id=?",
                              (ts, r["transaction_id"]))
             conn.execute(
-                """UPDATE items SET cursor=?, txn_update_status=?, last_sync_at=?, status='active',
+                """UPDATE items SET cursor=?, txn_update_status=?, status='active',
                        error_code=NULL, error_message=NULL WHERE item_id=?""",
-                (cursor, status, ts, item_id))
+                (cursor, status, item_id))
         result.added, result.modified, result.removed = len(added), len(modified), len(removed)
         result.update_status = status
+        phase.ok, phase.accounts = True, bool(accounts)
+    except PlaidError as e:
+        if e.error_code == "PRODUCT_NOT_READY":  # Plaid is still pulling history: not an Item problem
+            result.update_status = "NOT_READY"
+            phase.error_code, phase.error_message, phase.error_type = e.error_code, e.error_message, e.error_type
+            phase.fatal = False
+        elif e.error_code in TRANSACTIONS_NOT_GRANTED_ERRORS:
+            # The Item's metadata said transactions, but Plaid says the product isn't granted: not an Item error.
+            phase.skipped = e.error_code
+            log.info("transactions not granted for %s: %s", item_id, e.error_code)
+        else:
+            phase.error_code, phase.error_message, phase.error_type = e.error_code, e.error_message, e.error_type
+            _set_item_error(conn, item_id, e)
+            log.warning("transactions sync failed for %s: %s", item_id, e.error_code)
+    except Exception as e:  # unexpected: keep going with the other Items, cursor untouched
+        phase.error_code, phase.error_message, phase.detail = "INTERNAL_ERROR", type(e).__name__, type(e).__name__
+        log.exception("transactions sync crashed for %s", item_id)
+
+
+def _sync_data_phases(conn: sqlite3.Connection, client: PlaidClient, item: sqlite3.Row,
+                      result: ItemSyncResult, products: set[str]) -> None:
+    item_id = result.item_id
+
+    def balances():
+        accounts = client.accounts_get(item["access_token"]).get("accounts", [])
+        upsert_accounts(conn, item_id, accounts)
+        conn.commit()
+        return bool(accounts), 0
+
+    # balances is the Item's only data source only when nothing else was granted.
+    balance_is_only = not ({"transactions", "investments", "liabilities"} & products)
+    _run_data_phase(result, conn, "balances", balances, fatal=balance_is_only)
+    if "liabilities" in products:
+        _run_data_phase(result, conn, "liabilities", lambda: _sync_liabilities(conn, client, item), fatal=True)
+    if "investments" in products:
+        _run_data_phase(result, conn, "investments", lambda: _sync_holdings(conn, client, item), fatal=True)
+
+
+def _sync_item_body(conn: sqlite3.Connection, client: PlaidClient, item: sqlite3.Row,
+                    result: ItemSyncResult) -> None:
+    item_id = result.item_id
+    products: set[str] | None = None
+    try:
+        try:
+            item = _refresh_item_meta(conn, client, item)
+        except PlaidError as e:
+            if e.is_item_error:
+                raise
+            log.warning("item/get failed for %s: %s", item_id, e.error_code)
+        products = _granted_products(item)
     except PlaidError as e:
         if e.error_code == "PRODUCT_NOT_READY":  # Plaid is still pulling history: not an Item problem
             result.update_status = "NOT_READY"
         else:
-            result.ok, result.error_code, result.error_message = False, e.error_code, e.error_message
-            result.error_type = e.error_type
+            result.block(e.error_code, e.error_message, e.error_type)
             _set_item_error(conn, item_id, e)
-            log.warning("transactions sync failed for %s: %s", item_id, e.error_code)
+        log.warning("item/get failed for %s: %s", item_id, e.error_code)
     except Exception as e:  # unexpected: keep going with the other Items, cursor untouched
-        result.ok, result.error_code, result.error_message = False, "INTERNAL_ERROR", type(e).__name__
-        log.exception("transactions sync crashed for %s", item_id)
+        result.block("INTERNAL_ERROR", type(e).__name__)
+        log.exception("item sync crashed for %s", item_id)
 
-    if result.ok:
-        def balances():
-            upsert_accounts(conn, item_id, client.accounts_get(item["access_token"]).get("accounts", []))
-            conn.commit()
-        _optional("balances", balances, result)
-        products = _products(item)
-        if "liabilities" in products:
-            _optional("liabilities", lambda: _sync_liabilities(conn, client, item), result)
-        if "investments" in products:
-            _optional("investments", lambda: _sync_holdings(conn, client, item), result)
+    if products is None:
+        # /item/get itself failed with an Item error (PRODUCT_NOT_READY and the like): no product state, fail closed.
+        if result.blocked_code is None:
+            result.block(ITEM_PRODUCTS_UNKNOWN, "the Item's granted products are unknown")
+            log.warning("products unknown for %s; no product was synced", item_id)
+    else:
+        if "transactions" not in products:
+            result.phases["transactions"] = Phase(skipped=TRANSACTIONS_NOT_GRANTED_MARKER)
+        else:
+            _sync_transactions(conn, client, item, result)
+        txn = result.phases.get("transactions")
+        if not (txn and txn.attempted and not txn.ok and txn.skipped is None and txn.fatal):
+            _sync_data_phases(conn, client, item, result, products)
+
+    result.derive()
+
+    if result.accounts_delivered:  # never re-date a snapshot from balances that did not arrive this run
         try:  # net worth history; a failure here must not fail the sync
             snapshot_balances(conn, item_id)
         except sqlite3.Error:
             log.exception("balance snapshot failed for item %s", item_id)
-        if result.extras.get("investments") == "ok":
-            try:  # portfolio history, same rules
-                snapshot_holdings(conn, item_id)
-            except sqlite3.Error:
-                log.exception("holding snapshot failed for item %s", item_id)
-
-    with conn:
-        conn.execute(
-            """UPDATE sync_log SET finished_at=?, added=?, modified=?, removed=?, error=?, details=?
-               WHERE id=?""",
-            (now(), result.added, result.modified, result.removed,
-             None if result.ok else f"{result.error_code}: {result.error_message}",
-             json.dumps(result.extras), log_id))
-    return result
+    if result.phase_ok("investments"):
+        try:  # portfolio history, same rules
+            snapshot_holdings(conn, item_id)
+        except sqlite3.Error:
+            log.exception("holding snapshot failed for item %s", item_id)
+    if result.fresh:
+        ts = now()
+        with conn:
+            if result.ok:  # a clean sync: mark the Item fresh and clear any old error
+                conn.execute(
+                    """UPDATE items SET last_sync_at=?, status='active', error_code=NULL, error_message=NULL
+                       WHERE item_id=?""",
+                    (ts, item_id))
+            else:  # transactions landed but a later phase failed: keep that failure, still record the sync
+                conn.execute("UPDATE items SET last_sync_at=? WHERE item_id=?", (ts, item_id))
 
 
 def sync_all(conn: sqlite3.Connection, client: PlaidClient, item_id: str | None = None) -> list[ItemSyncResult]:
@@ -377,9 +591,9 @@ def sync_all(conn: sqlite3.Connection, client: PlaidClient, item_id: str | None 
 def sync_items(conn: sqlite3.Connection, client: PlaidClient, items: list[sqlite3.Row]) -> list[ItemSyncResult]:
     """Sync these Items (rows of `items`), then what follows a sync (TASK-22: syncnow.run picks them)."""
     results = [sync_item(conn, client, item) for item in items]
-    if any(r.ok for r in results):
+    if any(r.transactions_ok for r in results):  # a partial Item still committed transactions: classify them
         classify.apply(conn)
-    if any(r.extras.get("investments") == "ok" for r in results):
+    if any(r.phase_ok("investments") for r in results):
         try:  # holding logos not cached yet (one fetch per ticker, ever); a failure never fails the sync
             logos.refresh_security_logos(conn)
         except Exception:
