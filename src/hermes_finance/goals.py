@@ -63,6 +63,11 @@ def accounts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return insights.counted_networth_accounts(conn)
 
 
+def _excluded_ids(conn: sqlite3.Connection) -> set[str]:
+    """Accounts net worth still knows but the account policy leaves out (a read filter, not a deletion)."""
+    return {a["id"] for a in insights.networth_accounts(conn)} - {a["id"] for a in accounts(conn)}
+
+
 def _asset(a: dict[str, Any]) -> bool:
     return a["group"] in insights.ASSET_GROUPS and a["group"] not in ("vehicles", "property")
 
@@ -179,14 +184,22 @@ def _debts(conn: sqlite3.Connection, today: date) -> dict[str, dict[str, Any]]:
 
 
 def _goal_json(conn: sqlite3.Connection, g: sqlite3.Row, today: date, by_id: dict[str, dict[str, Any]],
-               cover: dict[int, float], flow: dict[str, Any], debts: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
+               cover: dict[int, float], flow: dict[str, Any], debts: dict[str, dict[str, Any]] | None,
+               excluded: set[str] | None = None) -> dict[str, Any]:
     acct = by_id.get(g["account_id"]) if g["account_id"] else None
     out: dict[str, Any] = {"id": g["id"], "kind": g["kind"], "name": g["name"], "target": g["target"],
                            "icon": g["icon"], "colour": g["colour"],
                            "target_month": g["target_month"], "track": g["track"], "account_id": g["account_id"],
                            "account": _account_json(acct), "earmark": g["earmark"], "start_balance": g["start_balance"],
                            "created_at": g["created_at"], "archived_at": g["archived_at"], "missing_account": False,
-                           "short": None, "entries": [], "pace": None, "payoff": None}
+                           "excluded_account": False, "short": None, "entries": [], "pace": None, "payoff": None}
+    if g["account_id"] and acct is None and g["account_id"] in (excluded or set()):
+        # A reversible policy filter, not a deletion: the goal keeps its stored fields and presents no figure at all.
+        out.update(excluded_account=True, missing_account=False, account=None, progress=None, pct=None, left=None,
+                   done=False, short=None, pace=None, payoff=None, entries=[])
+        if g["kind"] == "save" and g["track"] in ("earmark", "manual"):
+            out["entry_count"] = 0
+        return out
     if g["kind"] == "monthly":
         cur = flow["months"][-1]
         progress = cur["net"]
@@ -275,12 +288,13 @@ def payload(conn: sqlite3.Connection, today: date, archived: bool = False) -> di
     rows = _rows(conn, archived=True)
     accts = accounts(conn)
     by_id = {a["id"]: a for a in accts}
+    excluded = _excluded_ids(conn)
     cover = _earmark_cover(rows, by_id)
     flow = insights.cashflow(conn, 6, today)
     needs_debts = any(g["kind"] == "payoff" for g in rows)
     debts = _debts(conn, today) if needs_debts else None
     live = [g for g in rows if g["archived_at"] is None]
-    goals = [_goal_json(conn, g, today, by_id, cover, flow, debts) for g in live]
+    goals = [_goal_json(conn, g, today, by_id, cover, flow, debts, excluded) for g in live]
     earmarked: dict[str, float] = {}
     whole: dict[str, str] = {}
     for g in live:
@@ -291,14 +305,14 @@ def payload(conn: sqlite3.Connection, today: date, archived: bool = False) -> di
     assets = [{**_account_json(a), "earmarked": _r(earmarked.get(a["id"], 0.0)),
                "unassigned": _r(max(a["balance"] - earmarked.get(a["id"], 0.0), 0.0)), "whole_goal": whole.get(a["id"])}
               for a in accts if _asset(a)]
-    saves = [g for g in goals if g["kind"] == "save" and g["target"]]
+    saves = [g for g in goals if g["kind"] == "save" and g["target"] and not g["excluded_account"]]
     monthly = next((g for g in goals if g["kind"] == "monthly"), None)
     return {
         "appearance": {"icons": list(ICONS), "colours": list(COLOURS)},
         "today": today.isoformat(),
         "month": insights.month_of(today),
         "goals": goals,
-        "archived": [_goal_json(conn, g, today, by_id, cover, flow, debts) for g in rows if g["archived_at"]] if archived else None,
+        "archived": [_goal_json(conn, g, today, by_id, cover, flow, debts, excluded) for g in rows if g["archived_at"]] if archived else None,
         "archived_count": sum(1 for g in rows if g["archived_at"]),
         "monthly": monthly,
         "cashflow": flow["months"],
@@ -319,7 +333,8 @@ def tile(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
     if not rows:
         return {"count": 0, "monthly": None, "top": None}
     p = payload(conn, today)
-    saves = [g for g in p["goals"] if g["kind"] == "save" and g["target"] and not g["missing_account"]]
+    saves = [g for g in p["goals"] if g["kind"] == "save" and g["target"] and not g["missing_account"]
+             and not g["excluded_account"]]
     open_ = [g for g in saves if not g["done"]]
     top = max(open_ or saves, key=lambda g: (g["pct"] or 0, -g["id"]), default=None)
     m = p["monthly"]
@@ -489,6 +504,9 @@ def edit(conn: sqlite3.Connection, goal_id: Any, data: dict[str, Any], today: da
             raise GoalError("only a goal that follows part of an account has an amount set aside", field="earmark")
         a = {x["id"]: x for x in accounts(conn)}.get(g["account_id"])
         if a is None:
+            if g["account_id"] in _excluded_ids(conn):
+                raise GoalError("the account policy excludes its account · include it again on Accounts",
+                                field="earmark")
             raise GoalError("its account isn't there any more", field="earmark")
         amount = _amount(data["earmark"], "earmark", "The amount set aside", allow_zero=True)
         if round(amount * 100) > round((g["earmark"] or 0) * 100):  # more set aside: it must still fit
@@ -574,6 +592,9 @@ def text(p: dict[str, Any]) -> str:
         head = {"save": "Save up", "payoff": "Pay off", "monthly": "Monthly savings"}[g["kind"]]
         src = (f" · {g['account']['label']}" if g["account"] else "") + (
             {"account": " (whole account)", "earmark": " (part of it)", "manual": " (logged by hand)"}.get(g["track"] or "", ""))
+        if g.get("excluded_account"):
+            lines.append(f"#{g['id']} {g['name']} [{head}{src}]: its account is excluded by the account policy")
+            continue
         pct = "-" if g["pct"] is None else f"{g['pct']:.0f}%"
         line = f"#{g['id']} {g['name']} [{head}{src}]: {m(g['progress'])} of {m(g['target'])} ({pct})"
         if g["kind"] == "monthly":

@@ -61,6 +61,18 @@
     const iconName = goalIcon(g);
     const rgb = goalRGB(g);
     const color = goalColour(g);
+    if (g.excluded_account) {
+      // The account policy is a reversible read filter, not a deleted account: no ring, no figure, no pace or archive
+      // advice. The card still opens the edit sheet.
+      const el = h('section', {class: 'card goal', dataset: {goal: String(g.id)}, tabindex: '0', role: 'button',
+        'aria-label': `${g.name}: its account is excluded by the account policy · open to change it`},
+      h('div', {class: 'hd'}, ibadge(iconName, rgb), h('span', {class: 'grow'}, h('b', {}, g.name), h('span', {}, KIND_LABEL[g.kind]))),
+      h('p', {class: 'gpace'}, h('span', {class: 'mut'}, 'Its account is excluded by the account policy')));
+      const open = () => editSheet(g);
+      el.addEventListener('click', (e) => { if (!e.target.closest('button')) open(); });
+      el.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); open(); } });
+      return el;
+    }
     const ratio = g.target ? g.progress / g.target : 0;
     let fig;
     if (g.kind === 'payoff') {
@@ -165,7 +177,7 @@
   }
 
   function summaryCard(d) {
-    const saves = d.goals.filter((g) => g.kind === 'save' && g.target);
+    const saves = d.goals.filter((g) => g.kind === 'save' && g.target && !g.excluded_account);
     const t = d.totals;
     return card({cls: 'gsum', title: 'Saving toward', icon: 'target', rgb: RGB.acc, extra: small(plural(saves.length, 'goal'))},
       saves.length ? [bigMoney(t.saved, 's'),
@@ -215,7 +227,7 @@
     openSheet([h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, 'Archived goals'), closeBtn()),
       h('p', {}, 'Kept as they were. Bring one back to follow it again.'),
       h('div', {class: 'opts'}, (d.archived || []).map((g) => h('div', {class: 'li'}, ibadge(goalIcon(g), goalRGB(g), 's'),
-        h('span', {class: 'grow'}, h('b', {}, g.name), h('span', {}, `${KIND_LABEL[g.kind]} · ${pctText(g)}`)),
+        h('span', {class: 'grow'}, h('b', {}, g.name), h('span', {}, `${KIND_LABEL[g.kind]} · ${g.excluded_account ? 'excluded' : pctText(g)}`)),
         h('button', {class: 'btn sm ghost', type: 'button', onclick: async () => {
           try {
             await post('/api/goals/edit', {id: g.id, archived: false});
@@ -445,7 +457,7 @@
     const sheet = X.$('sheet');
     const inputs = {};
     const kids = [h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, g.name), closeBtn()),
-      h('p', {}, `${KIND_LABEL[g.kind]} · ${pctText(g)}${g.target ? ` of ${money(g.target)}` : ''}`)];
+      h('p', {}, `${KIND_LABEL[g.kind]} · ${g.excluded_account ? 'excluded' : pctText(g)}${!g.excluded_account && g.target ? ` of ${money(g.target)}` : ''}`)];
     const flds = h('div', {class: 'flds'});
     const name = h('input', {id: 'ge-name', 'aria-label': 'Name', maxlength: '60', value: g.name});
     inputs.name = name;

@@ -25,7 +25,7 @@ TRANSACTIONS_NOT_GRANTED_MARKER = "not in the Item's products"
 # holdings and liabilities still refresh while the Item reports the transactions failure (decided 2026-11-05).
 # Any other fatal transactions error (ITEM_LOGIN_REQUIRED, a broken token) leaves the whole Item unfresh: no snapshot.
 TRANSACTIONS_PRODUCT_REJECTIONS = {
-    "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
+    "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED", "ACCESS_NOT_GRANTED",
 }
 # Optional-product errors that just mean "not available for this Item" -> skip quietly.
 TOLERATED_PRODUCT_ERRORS = {
@@ -411,6 +411,12 @@ def _sync_holdings(conn, client, item) -> tuple[bool, int]:
     return bool(accounts), len(rows)
 
 
+def _first_fatal_failure(result: ItemSyncResult) -> Phase | None:
+    """derive()'s own rule: the first fatal phase that failed (in phase order)."""
+    return next((p for p in result.phases.values()
+                 if p.attempted and not p.ok and p.skipped is None and p.fatal), None)
+
+
 def _run_data_phase(result: ItemSyncResult, conn: sqlite3.Connection, label: str, fn,
                     fatal: bool = False) -> None:
     """Run one optional data phase and write its real outcome into the Item's ledger."""
@@ -425,7 +431,10 @@ def _run_data_phase(result: ItemSyncResult, conn: sqlite3.Connection, label: str
         else:
             phase.error_code, phase.error_message, phase.error_type = e.error_code, e.error_message, e.error_type
             if fatal:  # a granted product we asked for failed: say so, but keep everything that did land
-                _set_item_error(conn, result.item_id, e)
+                # Only the first fatal phase writes: the row must agree with derive(), sync_log.error and
+                # _item_json(), so a later phase's failure must not overwrite the verdict already reported.
+                if _first_fatal_failure(result) is phase:
+                    _set_item_error(conn, result.item_id, e)
             log.warning("%s failed for item %s: %s", label, result.item_id, e.error_code)
     except Exception as e:  # a parsing bug in an optional product must not sink the whole sync
         phase.error_code, phase.error_message, phase.detail = "INTERNAL_ERROR", type(e).__name__, type(e).__name__

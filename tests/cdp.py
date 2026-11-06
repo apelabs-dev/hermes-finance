@@ -41,7 +41,9 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterator
+from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
 from hermes_finance.cdp_client import WebSocket, WebSocketTimeout  # the minimal RFC 6455 client the app's Carfax lookup uses
 
@@ -185,6 +187,19 @@ PEND = """(() => {
 })();"""
 READY_NOW = f"(window.__appear ? window.__appear(() => {DRAWN}, 8000, 'the page drawn').catch(() => true) : {READY_POLL})"
 SETTLED = "(window.__settled ? window.__settled() : " + SETTLE.replace("res(true)", "res('')") + ")"
+# A page's clock, moved to a test's own day (Chrome.pin_clock). A page takes "this month" from `new Date()` while its
+# fixture was built for a fixed day: the two disagree from the first day of the next month on, which is how 13 gate
+# checks went red on 2026-11-01 (October literals against November's fixture). It is a shift, not a freeze: time still
+# runs (Chart.js's animator reads Date.now() every frame), the page just runs it at the fixture's day.
+CLOCK = """(() => {
+  const R = Date, SKEW = NOW - R.now();
+  class Pinned extends R {
+    constructor(...a) { if (a.length) super(...a); else super(R.now() + SKEW); }
+    static now() { return R.now() + SKEW; }
+  }
+  Pinned.parse = R.parse; Pinned.UTC = R.UTC;
+  window.Date = Pinned;
+})();"""
 
 
 # what a test sets up in its Chrome that a replacement one (Chrome._recycle) gets too; every Emulation.* override as well
@@ -1148,6 +1163,14 @@ class Chrome:
         self.call("Emulation.setDeviceMetricsOverride", width=width, height=height,
                   deviceScaleFactor=scale or (2 if mobile else 1), mobile=mobile)
 
+    def pin_clock(self, today: date) -> None:
+        """Run every document this Chrome opens at `today` (local noon: no day or month edge; `CLOCK` shifts the page's
+        clock, it doesn't freeze it), so a page that takes its month from the browser and a fixture built for `today`
+        can never disagree. Set it once, before the first goto(): it stays for every later document, and a
+        Chrome._recycle re-installs it (STICKY)."""
+        noon = datetime.combine(today, datetime.min.time()).replace(hour=12)
+        self.call("Page.addScriptToEvaluateOnNewDocument", source=CLOCK.replace("NOW", str(int(noon.timestamp() * 1000))))
+
     def goto(self, url: str, ready: bool = True) -> None:
         """_goto(), and if it fails (the page didn't load, wasn't drawn, or DevTools stopped answering), this Chrome is
         replaced before the error goes on: slow-mode run 4 (t_d2b88168) had one page wedge its renderer, and every later
@@ -1382,3 +1405,17 @@ class Server:
     def close(self) -> None:
         self.srv.shutdown()
         self.srv.server_close()
+
+    def api(self, path: str, **params) -> dict:
+        """One of the app's own JSON answers from this server, read over loopback as the page reads it (a test may not
+        use urlopen: conftest turns it off). `month` and the rest go in the query string; None is left out."""
+        qs = urlencode({k: v for k, v in params.items() if v is not None})
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=15)
+        try:
+            conn.request("GET", path + (f"?{qs}" if qs else ""))
+            resp = conn.getresponse()
+            body = resp.read()
+            assert resp.status == 200, (path, qs, resp.status, body[:200])
+            return json.loads(body)
+        finally:
+            conn.close()

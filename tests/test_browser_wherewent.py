@@ -116,3 +116,34 @@ def test_a_partly_hidden_group_row_shows_only_what_the_chart_shows(site):
             assert b.problems() == []
         finally:
             b.js(post.replace('CATS', '[]'))
+
+
+def test_a_group_whose_counted_categories_are_all_hidden_shows_its_full_month(site):
+    """Hiding every counted category of a group leaves the group shown (an uncounted category is still on the chart),
+    so its row keeps the full-month amount and reads `hidden · N payments` instead of `$0 · 0 payments`."""
+    post = ("fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+            "body: JSON.stringify({chart_excluded_categories: CATS})}).then((r) => r.status)")
+    with Chrome() as b:
+        b.size(1280, 1000)
+        b.goto(f'{site.url}/#/overview?month=2026-10')
+        b.settle()
+        ov = b.js("fetch('/api/overview?month=2026-10').then((r) => r.json())")
+        g = next(g for g in ov['spend_groups']
+                 if any(c['count'] for c in g['categories']) and not all(c['count'] for c in g['categories']))
+        hide = sorted(c['category'] for c in g['categories'] if c['count'])
+        assert b.js(post.replace('CATS', repr(hide))) == 200
+        try:
+            b.goto(f'{site.url}/#/overview?month=2026-10&r=1')
+            b.settle()
+            row = b.js(f"""(() => {{ const r = [...document.querySelectorAll('.wherewent .crow')]
+                .find((x) => x.querySelector('b').textContent === {g['group']!r});
+              return {{amt: r.querySelector('.amt').textContent, sub: r.querySelector('.grow > span').textContent,
+                       spend: r.dataset.spend, off: r.classList.contains('off')}}; }})()""")
+            assert not row['off'], row
+            assert float(row['amt'].replace('$', '').replace(',', '')) == pytest.approx(g['spend'], abs=0.5), row
+            assert row['sub'].startswith('hidden · '), row
+            assert f"{g['count']} payment{'s' if g['count'] != 1 else ''}" in row['sub'], row
+            assert float(row['spend']) == pytest.approx(g['spend'], abs=0.005), row      # data-spend keeps the full month
+            assert b.problems() == []
+        finally:
+            b.js(post.replace('CATS', '[]'))

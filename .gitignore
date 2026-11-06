@@ -32,3 +32,8 @@ data-review/
 
 # the local symlink to the live database directory
 /data
+
+# untracked run artifacts: screenshots and data backups never belong in a commit
+# (recurrence guard for the 1ba4970 `git add -A` sweep)
+backups/
+shots/

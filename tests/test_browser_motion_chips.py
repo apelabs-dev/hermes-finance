@@ -5,6 +5,10 @@ Motion A: the bars refill and the charts grow (400ms) on a page switch and a mon
 and never under prefers-reduced-motion. Before it, the bars filled once per session and the charts never animated.
 Alert chips: an even grid (2 columns on a desktop, 1 on a phone) instead of content-width chips in ragged rows, with the
 broken connection (the one with a Reconnect button) first.
+
+The demo DB is built for the fixed day below and the browser's clock is pinned to it (Chrome.pin_clock): the Overview takes
+"this month" from `new Date()`, so unpinned the page asked for the month the gate itself ran in and, from 2026-11-01 on,
+drew two chips from an October fixture (its 4 alerts include the two cap alerts that went missing).
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from hermes_finance import db
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
 TODAY = date(2026, 10, 20)
+MONTH = TODAY.isoformat()[:7]
 
 # what animated in the MS after ACT: mo-bar CSS animations started, and whether any Chart.js chart was animating
 SAMPLE = """(async () => {
@@ -58,6 +63,7 @@ def site(tmp_path_factory):
 @pytest.fixture(scope="module")
 def browser():
     with Chrome() as b:
+        b.pin_clock(TODAY)   # the page's "today" is the fixture's, whatever day this gate runs on
         yield b
 
 
@@ -118,11 +124,19 @@ CHIPS = """(() => { const s = document.querySelector('#page .alerts'); const sr 
               clipped: c.scrollWidth > c.clientWidth + 1, reconnect: !!c.querySelector('button')}; })}; })()"""
 
 
+def strip_count(d: dict) -> int:
+    """How many chips the Overview's strip holds for this month's payload (app.js alertsStrip): its cap and connection
+    alerts, the cards with a minimum due, and the one "all healthy" line when nothing is broken."""
+    return len(d["alerts"]) + len(d["cards_due"] or []) + (0 if d["connections"]["broken"] else 1)
+
+
 def test_desktop_alert_chips_are_an_even_two_column_grid_broken_connection_first(browser, site):
     load(browser, site)
     s = browser.js(CHIPS)
     chips = s["chips"]
-    assert s["display"] == "grid" and len(chips) >= 3, s
+    want = strip_count(site.api("/api/overview", month=MONTH))   # the fixture's month: what the page must be showing
+    assert s["display"] == "grid" and len(chips) == want, (len(chips), want, s)
+    assert want >= 3, want                                        # the two cap alerts are in there, not just a connection
     assert chips[0]["tag"] == "DIV" and chips[0]["reconnect"], chips[0]   # the one that needs you comes first
     rows = {}
     for c in chips:

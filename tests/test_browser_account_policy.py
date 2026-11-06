@@ -335,3 +335,41 @@ def test_custom_sheet_everything_preset_is_absolute_over_policy_hidden(tmp_path,
         assert insights.net_worth(conn, history=False)["custom"]["assets"] == 1100.0
     finally:
         conn.close()
+
+
+def test_goals_page_tells_the_truth_about_a_policy_excluded_account(tmp_path):
+    """A goal made before its account is excluded by the account policy is not a missing account and is not $0.00."""
+    import demo_data
+    from datetime import date
+    from hermes_finance import goals, insights
+
+    today = date(2026, 11, 5)
+    path = tmp_path / "finance.db"
+    conn = db.connect(path)
+    demo_data.build(conn, today=today)
+    g = goals.create(conn, {"kind": "save", "name": "Emergency fund", "target": 12000, "track": "account",
+                            "account_id": "acc_nova_sav"}, today)
+    insights.save_excluded_accounts(conn, ["acc_nova_sav"])
+    conn.close()
+
+    srv = Server(path, today=today)
+    try:
+        with Chrome() as b:
+            for width, height in ((1280, 900), (390, 844)):
+                b.size(width, height, scale=1)
+                b.goto(f"{srv.url}/?t={time.time():.3f}#/goals")
+                b.settle()
+                assert b.js("document.documentElement.scrollWidth <= innerWidth + 1")
+                card = f'[data-goal="{g["id"]}"]'
+                text = b.js(f"(() => {{const el=document.querySelector({json.dumps(card)}); "
+                            "return el ? el.textContent.replace(/\\s+/g, ' ').trim() : null;})()")
+                assert "Its account is excluded by the account policy" in text
+                assert "$0.00" not in text
+                assert "archive this goal" not in text
+                assert "isn't there any more" not in text and "isn\u2019t there any more" not in text
+                assert b.js(f"document.querySelectorAll({json.dumps(card + ' .gfig')}).length") == 0
+                assert "$" not in b.js(f"(() => {{const f=document.querySelector({json.dumps(card + ' .gfig')}); "
+                                       "return f ? f.textContent : '';})()")
+            assert b.problems() == []
+    finally:
+        srv.close()

@@ -92,18 +92,22 @@
         return {spend: part.get(x.name) || 0, count: on.reduce((s, c) => s + c.count, 0),
           note: `${off.length === 1 ? off[0].category : `${off.length} categories`} hidden`};
       };
-      const rows = entries.map((x) => [x, partial(x)]).map(([x, p]) => h('div', {class: `crow${x.off ? ' off' : ''}`,
-        dataset: {spend: x.spend.toFixed(2), ...(p ? {shown: p.spend.toFixed(2)} : {})}},
-        h('button', {class: 'ctog', type: 'button', 'aria-pressed': String(x.off),
-          'aria-label': `${x.off ? 'Show' : 'Hide'} ${x.name} ${x.off ? 'in' : 'from'} the chart`,
-          dataset: {key: x.name, wwfocus: `toggle:${x.name}`}, onclick: () => toggle(x.keys, x.off, `toggle:${x.name}`)}, x.group ? ibadge(CATI[x.tile] || 'tag', x.group.rgb, 's') : badge(x.tile, 's')),
-        h(x.group ? 'button' : 'a', {class: 'crowl', ...(x.group ? {type: 'button',
-          'aria-label': `Explore ${x.name} categories`, dataset: {wwfocus: `drill:${x.name}`}, onclick: () => drill(x.group)} : {href: x.href})},
-          h('span', {class: 'grow'}, h('b', {}, x.name),
-            h('span', {}, x.off ? `hidden · ${plural(x.count, 'payment')}`
-              : `${pctOf(part.get(x.name) || 0, included)} · ${plural(p ? p.count : x.count, 'payment')}${p ? ` · ${p.note}` : ''}`)),
-          h('span', {class: 'amt v'}, money(p ? p.spend : x.spend))),
-        x.group ? h('a', {class: 'wwpayments', href: x.href, 'aria-label': `View ${x.name} payments`, title: `View ${x.name} payments`}, icon('chevr')) : null));
+      const rows = entries.map((x) => [x, partial(x)]).map(([x, p]) => {
+        const allHidden = !!p && !p.count;      // every counted category is hidden -> nothing shown for this group
+        const offRow = x.off || allHidden;      // display shape only, not the chart state
+        return h('div', {class: `crow${x.off ? ' off' : ''}`,
+          dataset: {spend: x.spend.toFixed(2), ...(p ? {shown: p.spend.toFixed(2)} : {})}},
+          h('button', {class: 'ctog', type: 'button', 'aria-pressed': String(x.off),
+            'aria-label': `${x.off ? 'Show' : 'Hide'} ${x.name} ${x.off ? 'in' : 'from'} the chart`,
+            dataset: {key: x.name, wwfocus: `toggle:${x.name}`}, onclick: () => toggle(x.keys, x.off, `toggle:${x.name}`)}, x.group ? ibadge(CATI[x.tile] || 'tag', x.group.rgb, 's') : badge(x.tile, 's')),
+          h(x.group ? 'button' : 'a', {class: 'crowl', ...(x.group ? {type: 'button',
+            'aria-label': `Explore ${x.name} categories`, dataset: {wwfocus: `drill:${x.name}`}, onclick: () => drill(x.group)} : {href: x.href})},
+            h('span', {class: 'grow'}, h('b', {}, x.name),
+              h('span', {}, offRow ? `hidden · ${plural(x.count, 'payment')}`
+                : `${pctOf(part.get(x.name) || 0, included)} · ${plural(p ? p.count : x.count, 'payment')}${p ? ` · ${p.note}` : ''}`)),
+            h('span', {class: 'amt v'}, money(allHidden ? x.spend : (p ? p.spend : x.spend)))),
+          x.group ? h('a', {class: 'wwpayments', href: x.href, 'aria-label': `View ${x.name} payments`, title: `View ${x.name} payments`}, icon('chevr')) : null);
+      });
       const fixed = CHART.fixed.filter((n) => CHART.hidden.has(n) || d.categories.some((c) => c.category === n && c.count));
       const allFixed = fixed.length && fixed.every((n) => CHART.hidden.has(n));
       fill(body, heading, top, h('div', {class: 'leg'}, rows),

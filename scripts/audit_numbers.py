@@ -1612,6 +1612,8 @@ def check_batch_c(A: Audit, S: "Site", ov: dict, acc: dict, bp: dict, rec: dict,
     balances = {a["account_id"]: a["current"] or 0.0 for i in acc["net_worth"]["institutions"] for a in i["accounts"]}
     balances.update({f"manual:{m['id']}": m["balance"] for m in acc["manual"] if not m["archived_at"]})
     for x in g["goals"]:
+        if x.get("excluded_account"):
+            continue                      # the policy leaves its account out of every read: no figure to check
         if x["kind"] == "save" and x["track"] == "account" and not x["missing_account"]:
             A.eq(f"goal {x['name']}: progress = the account's balance ({x['account']['label']})", x["progress"],
                  balances.get(x["account_id"]))
@@ -1622,11 +1624,11 @@ def check_batch_c(A: Audit, S: "Site", ov: dict, acc: dict, bp: dict, rec: dict,
         if x["kind"] == "payoff" and not x["missing_account"]:
             A.eq(f"goal {x['name']}: paid down = start - what it owes now", x["progress"],
                  max(x["start_balance"] - balances.get(x["account_id"], 0), 0))
-        if x["target"]:
+        if x["target"] and x["progress"] is not None:
             A.eq(f"goal {x['name']}: % = progress / target", x["pct"], x["progress"] / x["target"] * 100)
     per: dict[str, list[dict]] = {}
     for x in g["goals"]:
-        if x["kind"] == "save" and x["track"] == "earmark":
+        if x["kind"] == "save" and x["track"] == "earmark" and not x.get("excluded_account"):
             per.setdefault(x["account_id"], []).append(x)
     for aid, xs in per.items():
         bal = max(balances.get(aid, 0.0), 0.0)
@@ -1642,6 +1644,8 @@ def check_batch_c(A: Audit, S: "Site", ov: dict, acc: dict, bp: dict, rec: dict,
     G = dom.get("goals") or {}
     shown = {c["id"]: c for c in G.get("cards", [])}
     for x in g["goals"]:
+        if x.get("excluded_account"):
+            continue                      # its card says so and shows no figure
         c = shown.get(x["id"])
         if c is None:
             A.ok(f"Goals page: goal {x['name']} has a card", False, got=None, want=x["id"])

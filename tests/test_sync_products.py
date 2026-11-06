@@ -179,6 +179,7 @@ def test_transactions_rejected_by_plaid_fails_the_item(conn, client, fake):
 
 @pytest.mark.parametrize("code", [
     "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
+    "ACCESS_NOT_GRANTED",
 ])
 def test_transactions_product_rejection_is_a_visible_item_error(conn, client, fake, code):
     add_item(conn, products=("transactions",), cursor="c0")
@@ -288,6 +289,7 @@ def test_an_unknown_product_item_does_not_stop_later_items(conn, client, fake):
 
 @pytest.mark.parametrize("code", [
     "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
+    "ACCESS_NOT_GRANTED",
 ])
 def test_transactions_rejection_does_not_skip_mixed_item_data_phases(conn, client, fake, code):
     add_item(conn, products=("transactions", "investments"), cursor="c0")

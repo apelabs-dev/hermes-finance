@@ -1535,14 +1535,17 @@ Goals never change net worth, budgets or any other total.
 
 JSON: {today, month, goals: [{id, kind: save|payoff|monthly, name, target, target_month, track: account|earmark|manual,
         account: {id, name, mask, institution, kind, group, balance, label} | null, earmark, start_balance, progress, pct,
-        left, done, short: {amount, covered} | null, missing_account, pace: {growth_90d, per_month, on_pace_month,
+        left, done, short: {amount, covered} | null, missing_account, excluded_account, pace: {growth_90d, per_month, on_pace_month,
         months_to_go, need_per_month, months_left} | null, payoff: {payoff_month, payments_left, method,
         monthly_payment} | null, entries, (monthly) month, income, spending, months}], monthly, cashflow,
        suggestions: [{id, name, mask, institution, balance, label, subtype, vault}], accounts: [{..., earmarked,
        unassigned, whole_goal}], debts, totals: {count, save_count, saving_target, saved, pct}, archived_count}
   progress: a whole account's balance; part of one: the amount set aside (short: the account now holds less than its
   goals set aside, newest first); entries: what you logged; pay off: paid down since the goal was made; monthly: this
-  month's income - spending. on_pace_month: from the last 90 days (about a third of it a month)."""
+  month's income - spending. on_pace_month: from the last 90 days (about a third of it a month).
+  excluded_account: true when the account policy leaves its account out (a reversible read filter, not a missing
+  account). Such a goal follows no figures (progress, pct, left, done, short and pace are null) and is left out of the
+  saving totals until the policy includes its account again."""
 
 
 def cmd_goals(args) -> int:

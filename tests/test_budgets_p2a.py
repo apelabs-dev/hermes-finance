@@ -18,8 +18,10 @@ Browser side (tests/cdp.py, a throwaway loopback server on the same kind of DB):
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import pytest
@@ -164,11 +166,15 @@ def test_the_finer_note_is_gone_from_the_code():
 
 pytestmark_browser = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
 KEYS = {"Enter": 13, " ": 32}
+# The browser fixture's own day (HF_TODAY pins it, for the date-rollover proof): its DB, the server's `today` and — through
+# Chrome.pin_clock — the page's clock all read this one date, so the month the page draws is the month the fixture has.
+BROWSER_TODAY = date.fromisoformat(os.environ["HF_TODAY"]) if os.environ.get("HF_TODAY") else date.today()
+BROWSER_MONTH = BROWSER_TODAY.isoformat()[:7]
 
 
 @pytest.fixture(scope="module")
 def site(tmp_path_factory):
-    today = date.today()
+    today = BROWSER_TODAY
     srv = Server(build(tmp_path_factory.mktemp("p2ab") / "finance.db", today), today=today)
     try:
         yield srv
@@ -179,7 +185,33 @@ def site(tmp_path_factory):
 @pytest.fixture(scope="module")
 def chrome():
     with Chrome() as b:
+        b.pin_clock(BROWSER_TODAY)
         yield b
+
+
+def money(n: float, cents: bool = False) -> str:
+    """The app's money() / money2(): Intl's rounding (half away from zero, not truncation: 410.9 wears "$411"), and cents
+    only when they aren't .00 (moneyParts drops a .00 tail)."""
+    v = float(n or 0)
+    q = Decimal(repr(v)).quantize(Decimal("0.01" if cents else "1"), rounding=ROUND_HALF_UP)
+    whole, _, frac = (f"{abs(q):,.2f}" if cents else f"{abs(q):,.0f}").partition(".")
+    tail = f".{frac}" if cents and frac != "00" else ""
+    return ("-" if v < 0 else "") + f"${whole}{tail}"
+
+
+def suggestion(c: dict) -> float | None:
+    """What the cap editor offers for this category: its suggestion, shown only when it differs from the amount the field
+    holds (app.js capEditor's `offer`: a suggestion equal to what is set is no suggestion at all). Capped rows use the
+    history-based `suggested`; an uncapped row with no history offers its `starter` (budgets.js openEditor)."""
+    current = c["base_cap"] if c.get("base_cap") is not None else c["cap"]
+    sug = c["suggested"] if c["cap"] is not None or c["suggested"] is not None else c["starter"]
+    return sug if sug is not None and sug != current else None
+
+
+def editor_sug_text(c: dict) -> str | None:
+    """The sheet's `.bx-sug`, as the page writes it, or None when there is nothing to offer."""
+    sug = suggestion(c)
+    return None if sug is None else f"Suggested {money(sug)} · Use"
 
 
 def go(b, site, width, fresh=True):
@@ -378,15 +410,17 @@ def test_the_editors_remove_sits_at_the_footers_far_end_and_never_wraps(chrome, 
                 toEnd: f.right - parseFloat(ps.paddingRight) - r.right,   // the footer's content box: on a phone its box runs edge to edge (sticky)
                  inside: r.left >= s.left && r.right <= s.right && r.bottom <= s.bottom,
                 after: r.left >= cancel.right - 1 || r.top >= cancel.bottom - 1, order: save.left < cancel.left,
-                sug: !!sh.querySelector('.bx-sug')}; })()"""
-    for cat, has_sug in (("Groceries", False), ("Eating Out", True)):
+                sug: (sh.querySelector('.bx-sug') || {}).textContent || null}; })()"""
+    budgets = {c["category"]: c for c in site.api("/api/budgets", month=BROWSER_MONTH)["categories"]}
+    for cat in ("Groceries", "Eating Out"):
+        want_sug = editor_sug_text(budgets[cat])      # the server's own suggestion for this fixture's month
         b.js("(() => { const p = document.querySelector('tr.c[data-category=\"%s\"] .plan'); p.scrollIntoView({block: 'center'}); p.click(); })()" % cat)
         b.js("new Promise((r) => setTimeout(r, 450))")
         got = b.js(probe)
         assert got["text"] == "Remove budget" and got["label"] == f"Remove the {cat} budget" and got["icon"], got
         assert got["lines"] == 1 and got["inside"], (cat, got)
         assert abs(got["h"] - got["sh"]) <= (6 if width <= 600 else 1), (cat, got)   # Save's height; on a phone Save is 46, Remove 40 (+44px hit area)
-        assert got["sug"] == has_sug and got["after"] and got["order"], (cat, got)
+        assert got["sug"] == want_sug and got["after"] and got["order"], (cat, got, want_sug)
         assert got["toEnd"] <= 1, (width, cat, got)                                     # at the footer's far end
         b.js("document.querySelector('#sheet .bx-foot button.p + button').click()")
         b.js("new Promise((r) => setTimeout(r, 300))")

@@ -481,6 +481,91 @@ def test_R5_a_goal_cannot_follow_a_policy_excluded_account(conn):
     assert not [s for s in goals.payload(conn, date(2026, 9, 28))["suggestions"] if s["id"] == "acc_goal"]
 
 
+TODAY = date(2026, 9, 28)
+
+
+def _excluded_goal_scene(conn):
+    """A whole-account save goal made before the policy excludes its account."""
+    bank(conn)
+    acct(conn, "acc_goal", "item_a", "Savings", subtype="savings", current=500.0, mask="3333")
+    acct(conn, "acc_other", "item_a", "Savings 2", subtype="savings", current=50.0, mask="4444")
+    return goals.create(conn, {"kind": "save", "name": "Rainy day", "target": 1000, "track": "account",
+                               "account_id": "acc_goal"}, TODAY)
+
+
+def _payload_goal(conn, goal_id):
+    return next(g for g in goals.payload(conn, TODAY)["goals"] if g["id"] == goal_id)
+
+
+def test_a_goal_on_a_policy_excluded_account_is_excluded_not_missing(conn):
+    # The account policy is a reversible read filter, not a deletion: the goal must say so and present no figure.
+    g = _excluded_goal_scene(conn)
+    insights.save_excluded_accounts(conn, ["acc_goal"])
+
+    x = _payload_goal(conn, g["id"])
+    assert x["excluded_account"] is True
+    assert x["missing_account"] is False
+    assert x["progress"] is None and x["pct"] is None and x["left"] is None
+    assert x["short"] is None and x["account"] is None and x["done"] is False
+    assert x["pace"] is None and x["payoff"] is None and x["entries"] == []
+
+    p = goals.payload(conn, TODAY)
+    assert p["totals"]["count"] == 1                  # every goal is still counted
+    assert p["totals"]["save_count"] == 0             # but an unknown progress is never added as 0
+    assert p["totals"]["saving_target"] == 0.0
+    assert p["totals"]["saved"] == 0.0
+    assert p["totals"]["pct"] is None
+    assert goals.tile(conn, TODAY)["top"] is None
+
+
+def test_goals_text_names_the_policy_instead_of_a_missing_account(conn):
+    _excluded_goal_scene(conn)
+    insights.save_excluded_accounts(conn, ["acc_goal"])
+    text = goals.text(goals.payload(conn, TODAY))
+    line = next(x for x in text.splitlines() if x.startswith("#") and "Rainy day" in x)
+    assert "excluded by the account policy" in line
+    assert "isn't there any more" not in text
+    assert "$" not in line
+
+
+def test_an_earmark_edit_on_an_excluded_account_names_the_policy(conn):
+    bank(conn)
+    acct(conn, "acc_goal", "item_a", "Savings", subtype="savings", current=500.0, mask="3333")
+    g = goals.create(conn, {"kind": "save", "name": "Rainy day", "target": 1000, "track": "earmark",
+                            "account_id": "acc_goal", "earmark": 200}, TODAY)
+    insights.save_excluded_accounts(conn, ["acc_goal"])
+    with pytest.raises(goals.GoalError) as raised:
+        goals.edit(conn, g["id"], {"earmark": 250}, TODAY)
+    assert "account policy" in str(raised.value)
+    assert "isn't there any more" not in str(raised.value)
+    assert raised.value.field == "earmark"
+
+
+def test_clearing_the_policy_restores_every_goal_figure(conn):
+    g = _excluded_goal_scene(conn)
+    before = _payload_goal(conn, g["id"])
+    captured = (before["progress"], before["pct"], before["left"], before["done"], before["account"]["label"])
+    insights.save_excluded_accounts(conn, ["acc_goal"])
+    assert _payload_goal(conn, g["id"])["excluded_account"] is True
+
+    insights.save_excluded_accounts(conn, [])
+    after = _payload_goal(conn, g["id"])
+    assert after["excluded_account"] is False
+    assert (after["progress"], after["pct"], after["left"], after["done"], after["account"]["label"]) == captured
+
+
+def test_a_goal_on_an_account_net_worth_never_knew_is_still_missing(conn):
+    bank(conn)
+    acct(conn, "acc_other", "item_a", "Savings 2", subtype="savings", current=50.0, mask="4444")
+    with conn:
+        conn.execute("INSERT INTO goals (kind, name, target, track, account_id, created_at, updated_at, icon, colour) "
+                     "VALUES ('save', 'Ghost', 1000, 'account', 'acc_gone', ?, ?, 'piggy-bank', '#4fd1a5')",
+                     (db.now(), db.now()))
+    x = next(g for g in goals.payload(conn, TODAY)["goals"] if g["name"] == "Ghost")
+    assert x["missing_account"] is True
+    assert x["excluded_account"] is False
+
+
 @pytest.mark.parametrize("raw, ids, shape", [
     (json.dumps("acc_b"), [], "invalid"),                    # a valid JSON scalar is not a policy
     (json.dumps({"ids": ["acc_b"]}), [], "invalid"),         # nor an object

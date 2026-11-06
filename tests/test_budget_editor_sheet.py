@@ -7,31 +7,115 @@ switch on the right) and the footer Save · Cancel ... Remove budget (red, trash
 
 Behaviour is the old inline editor's: same API calls, same validation, same three entry points (a capped category's Planned,
 a group's Planned, the "No budget yet" Set buttons). Chrome (tests/cdp.py) on the synthetic `features` DB (test_budgets_p2a.build:
-Eating Out has $250 + $124 rolled over from last month, Other Health has its switch off, Groceries spent more than its cap),
+Eating Out has $250 + what rolled over from last month, Other Health has its switch off, Groceries spent more than its cap),
 plus a $700 Transport group budget.
+
+Every figure the sheet is compared against is read from the app's own `/api/budgets` answer for this fixture's month, never
+copied from one month's numbers: the month the page draws is the fixture's and the browser's clock is pinned to it
+(Chrome.pin_clock; HF_TODAY runs the whole gate as if today were another date), so a month rollover can't turn these green
+data red again.
 """
 from __future__ import annotations
 
 import calendar
 import json
+import os
 import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import pytest
 
 from cdp import Chrome, Server, find_chrome
-from hermes_finance import db, groupbudget
+from hermes_finance import db, groupbudget, insights, rollover
 from test_budgets_p2a import build as build_features
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
-TODAY = date.today()
+# HF_TODAY=YYYY-MM-DD builds the fixture for that day, serves it as that day and pins the browser's clock to it (the
+# date-rollover proof): with it unset, today.
+TODAY = date.fromisoformat(os.environ["HF_TODAY"]) if os.environ.get("HF_TODAY") else date.today()
+MONTH = TODAY.isoformat()[:7]
 CUR = calendar.month_name[TODAY.month]
-PREV = calendar.month_name[(TODAY.month - 2) % 12 + 1]
 PHONE, DESKTOP = 390, 1280
 VK = {"Enter": 13, "Escape": 27, "Backspace": 8, "Tab": 9}
+
+
+def money(n: float, cents: bool = False) -> str:
+    """The app's money() / money2(): Intl's rounding (half away from zero, not truncation: 410.9 wears "$411"), and cents
+    only when they aren't .00 (moneyParts drops a .00 tail)."""
+    v = float(n or 0)
+    q = Decimal(repr(v)).quantize(Decimal("0.01" if cents else "1"), rounding=ROUND_HALF_UP)
+    whole, _, frac = (f"{abs(q):,.2f}" if cents else f"{abs(q):,.0f}").partition(".")
+    tail = f".{frac}" if cents and frac != "00" else ""
+    return ("-" if v < 0 else "") + f"${whole}{tail}"
+
+
+def jsnum(x: float) -> str:
+    """String(x) in the page: a field's value and a placeholder are text, and 250 reads "250" (250.0 would not)."""
+    return str(int(x)) if float(x).is_integer() else repr(float(x))
+
+
+def month_name(month: str) -> str:
+    return calendar.month_name[int(month[5:7])]
+
+
+def previous(month: str) -> str:
+    """The month before `month`, with the app's own arithmetic (insights.add_months: rollover.js calls the same rule)."""
+    return insights.add_months(month, -1)
+
+
+def budgets(site) -> dict:
+    """The page's own answer for the month it shows (its clock is pinned to the fixture's day)."""
+    return site.api("/api/budgets", month=MONTH)
+
+
+def cat_row(d: dict, name: str) -> dict:
+    return next(c for c in d["categories"] if c["category"] == name)
+
+
+def editor_amount(c: dict) -> float | None:
+    """What the editor's field holds: the cap you set (`base_cap`), else the cap (budgets.js openEditor)."""
+    return c["base_cap"] if c.get("base_cap") is not None else c["cap"]
+
+
+def suggestion(c: dict) -> float | None:
+    """What the sheet offers: its suggestion, shown only when it differs from the amount in the field (app.js capEditor's
+    `offer`). Capped rows use the history-based `suggested`; an uncapped row with no history offers its `starter`."""
+    sug = c["suggested"] if c["cap"] is not None or c["suggested"] is not None else c["starter"]
+    return sug if sug is not None and sug != editor_amount(c) else None
+
+
+def suggestion_text(c: dict) -> str | None:
+    """The sheet's `.bx-sug` as the page writes it, or None when there is nothing to offer."""
+    sug = suggestion(c)
+    return None if sug is None else f"Suggested {money(sug)} · Use"
+
+
+def rollover_state(c: dict) -> str:
+    """rollover.js's row text for this category, from the app's own figures: what rolled in (or what would have), from the
+    month before the one on screen."""
+    prev, cur = month_name(previous(MONTH)), month_name(MONTH)
+    base = editor_amount(c)
+    if base is None:              # no budget: the switch is off and disabled, whatever it was before
+        return "Set a budget first; then what’s left each month can carry into the next."
+    if c.get("rollover") is not None:
+        amount = c["rollover"]["amount"]
+        return f"Adding {prev}’s {money(amount, True)} to {cur}" if amount > 0 else f"On · nothing was left in {prev}"
+    left = rollover.carry(base, c["last_month"])
+    return f"Off · turn on to add {prev}’s {money(left, True)} to {cur}" if left > 0 else f"Off · {cur} starts fresh"
+
+
+def rollover_state_turned_on(c: dict) -> str:
+    """rollover.js's row text once the switch is on: what this month gains (rollover.carry, the app's own rule)."""
+    prev, cur = month_name(previous(MONTH)), month_name(MONTH)
+    base = editor_amount(c)
+    assert base is not None, c           # a category with no budget has no switch to turn on
+    carried = rollover.carry(base, c["last_month"])
+    return f"Adding {prev}’s {money(carried, True)} to {cur}" if carried > 0 else f"On · nothing was left in {prev}"
+
 
 CAT_PLAN = 'tr.c[data-category="Eating Out"] .plan'
 GROUP_PLAN = 'tr.g[data-group="Food"] .gplan'          # no budget of its own: Planned is its caps' sum
@@ -61,6 +145,7 @@ def site(tmp_path_factory):
 @pytest.fixture(scope="module")
 def chrome():
     with Chrome() as b:
+        b.pin_clock(TODAY)   # the page's "today" is the fixture's: the sheet and the server can't read two months
         yield b
 
 
@@ -230,19 +315,27 @@ def test_the_header_has_the_rows_badge_the_name_and_the_figures(chrome, site, na
 def test_the_field_is_labelled_and_the_suggestion_is_offered_only_when_it_differs(chrome, site):
     b = chrome
     go(b, site, DESKTOP)
+    d = budgets(site)
+    eating = cat_row(d, "Eating Out")
+    groc = cat_row(d, "Groceries")
     entry(b, "category")
     assert q(b, "#sheet label.bx-field .bx-lab") == "Monthly budget"
     assert q(b, "#sheet label.bx-field input", "el.getAttribute('aria-label')") == "Monthly budget for Eating Out"
-    assert q(b, "#sheet .bx-sug") == "Suggested $150 · Use"           # last month's habit, differs from the $250 set
-    assert q(b, "#sheet label.bx-field input", "el.value") == "250"     # the amount you set, not the cap in force
+    # the app's own suggestion for this fixture: offered, because it differs from the amount the field holds
+    want = suggestion_text(eating)
+    assert want is not None and suggestion(eating) != editor_amount(eating), eating
+    assert q(b, "#sheet .bx-sug") == want
+    amount = editor_amount(eating)
+    assert amount is not None, eating                                    # Eating Out has a budget in this fixture
+    assert q(b, "#sheet label.bx-field input", "el.value") == jsnum(amount)   # the amount you set, not the cap in force
     key(b, "Escape")
-    click(b, 'tr.c[data-category="Groceries"] .plan')                    # its suggestion equals its cap: nothing offered
-    assert q(b, "#sheet .bx-sug") is None
+    click(b, 'tr.c[data-category="Groceries"] .plan')          # offered only when it differs from the amount set
+    assert q(b, "#sheet .bx-sug") == suggestion_text(groc), groc
     key(b, "Escape")
     click(b, GROUP_PLAN)
     assert q(b, "#sheet label.bx-field input", "el.getAttribute('aria-label')") == "Monthly budget for the Food group"
     assert q(b, "#sheet .bx-lab") == "Monthly budget" and q(b, "#sheet .bx-sug") is None
-    assert q(b, "#sheet input", "el.placeholder") == "904.7"
+    assert q(b, "#sheet input", "el.placeholder") == jsnum(next(g for g in d["groups"] if g["name"] == "Food")["caps_total"])
     assert q(b, "#sheet .bx-roll") is None, "a group budget has no roll-over row"
 
 
@@ -329,20 +422,18 @@ ROLL = """(() => { const r = document.querySelector('#sheet .bx-roll'), sw = r.q
           rule: getComputedStyle(r).borderTopStyle}; })()"""
 
 
-@pytest.mark.parametrize("category,checked,state", [
-    ("Eating Out", "true", f"Adding {PREV}’s $124 to {CUR}"),
-    ("Other Transport", "true", f"On · nothing was left in {PREV}"),
-    ("Other Health", "false", f"Off · turn on to add {PREV}’s $185.91 to {CUR}"),
-    ("Groceries", "false", f"Off · {CUR} starts fresh"),
-])
+@pytest.mark.parametrize("category", ["Eating Out", "Other Transport", "Other Health", "Groceries"])
 @pytest.mark.parametrize("width", [PHONE, DESKTOP])
-def test_the_rollover_is_a_settings_row_with_the_switch_on_the_right(chrome, site, width, category, checked, state):
+def test_the_rollover_is_a_settings_row_with_the_switch_on_the_right(chrome, site, width, category):
     b = chrome
     go(b, site, width)
+    d = budgets(site)
+    c = cat_row(d, category)
     click(b, f'tr.c[data-category="{category}"] .plan')
     r = b.js(ROLL)
-    assert r["label"] == "Roll over what’s left" and r["state"] == state, r
-    assert r["role"] == "switch" and r["checked"] == checked and not r["disabled"], r
+    assert r["label"] == "Roll over what’s left" and r["state"] == rollover_state(c), (r, c)
+    assert r["role"] == "switch" and r["checked"] == ("true" if c.get("rollover") is not None else "false") \
+        and not r["disabled"], r
     assert r["aria"] == f"Roll over what's left in {category}", r
     assert r["sw"]["left"] >= r["grow"]["right"] - 0.5, r                       # the switch is to the right of the label
     assert abs((r["sw"]["top"] + r["sw"]["bottom"]) / 2 - (r["grow"]["top"] + r["grow"]["bottom"]) / 2) <= 3, r
@@ -362,6 +453,10 @@ def test_a_category_without_a_budget_says_to_set_one_first(chrome, site):
 def test_the_switch_saves_at_once_and_the_sheet_stays_open_with_the_new_state(chrome, tmp_path):
     b = chrome
     with own_site(tmp_path, b, DESKTOP) as (srv, path):
+        health = cat_row(srv.api("/api/budgets", month=MONTH), "Other Health")
+        base = editor_amount(health)
+        assert base is not None, health           # the fixture sets this one a budget and leaves its switch off
+        on_text = rollover_state_turned_on(health)      # "Adding <last month>’s <what rolled in> to <this month>"
         click(b, 'tr.c[data-category="Other Health"] .plan')
         sub_before = q(b, "#sheet .bx-sub")
         assert "Off ·" in b.js(ROLL)["state"]
@@ -372,11 +467,12 @@ def test_the_switch_saves_at_once_and_the_sheet_stays_open_with_the_new_state(ch
         assert rollovers(path) == ["Eating Out", "Other Health", "Other Transport"]
         assert sheet_open(b) and q(b, "#sheet #sheet-title") == "Other Health", "the sheet stays open"
         r = b.js(ROLL)
-        assert r["checked"] == "true" and r["state"] == f"Adding {PREV}’s $185.91 to {CUR}" and not r["disabled"], r
+        assert r["checked"] == "true" and r["state"] == on_text and not r["disabled"], (r, on_text)
         assert b.js("document.activeElement.getAttribute('role')") == "switch", "focus stays on the switch"
         # the header's figures follow (the cap in force grew by what rolled in), as does the page behind
         plan = q(b, 'tr.c[data-category="Other Health"] .plan')
-        assert plan == "$411" and f"of {plan} in {CUR}" in q(b, "#sheet .bx-sub") != sub_before, (plan, q(b, "#sheet .bx-sub"))
+        assert plan == money(base + rollover.carry(base, health["last_month"])) \
+            and f"of {plan} in {CUR}" in q(b, "#sheet .bx-sub") != sub_before, (plan, q(b, "#sheet .bx-sub"))
         assert q(b, 'tr.c[data-category="Other Health"] .plan .roll svg', "true") is True
         assert "Rollover on for" in q(b, "#toast")
         # and off again
@@ -384,7 +480,7 @@ def test_the_switch_saves_at_once_and_the_sheet_stays_open_with_the_new_state(ch
         pause(b, 800)
         assert rollovers(path) == ["Eating Out", "Other Transport"]
         r = b.js(ROLL)
-        assert sheet_open(b) and r["checked"] == "false" and r["state"] == f"Off · turn on to add {PREV}’s $185.91 to {CUR}", r
+        assert sheet_open(b) and r["checked"] == "false" and r["state"] == rollover_state(health), (r, health)
         assert b.problems() == []
 
 

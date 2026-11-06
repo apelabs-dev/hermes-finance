@@ -240,28 +240,38 @@ def strip_new(d: dict) -> dict:
     for blk in (out.get("networth"), (out.get("accounts") or {}).get("net_worth")):
         if isinstance(blk, dict) and blk.get("in_transit") == []:
             del blk["in_transit"]
-    # account policy (#12): the payload gained these keys; the denylist blocks and per-account flags are set aside, and
-    # every pre-existing number — balance, net, totals, per-row amounts — is still compared exactly. A policy that
-    # actually excluded an account on a gate DB would change those numbers and must still fail here.
+    # account policy (#12): the payload gained these keys. Set aside only when neutral — a per-row `excluded` that is
+    # false, exclusion counts at 0, a policy that excludes nothing and an `account_policy` with nothing configured — so
+    # every pre-existing number (balance, net, totals, per-row amounts) is still compared exactly. A policy that really
+    # excluded an account on a gate DB changes those numbers and must still fail here. `networth_excluded` and
+    # `networth_presets` stay set aside unconditionally: `networth.custom.excluded` is still compared, so they are
+    # needed to reach it.
     acc = out.get("accounts")
     if isinstance(acc, dict):
-        for k in ("account_policy", "networth_excluded", "networth_presets"):
-            acc.pop(k, None)
-        if isinstance(acc.get("net_worth"), dict):
-            acc["net_worth"] = {k: v for k, v in acc["net_worth"].items() if k != "policy"}
+        acc.pop("networth_excluded", None)
+        acc.pop("networth_presets", None)
+        policy = acc.get("account_policy")
+        if isinstance(policy, dict) and policy.get("configured_count") == 0:
+            del acc["account_policy"]
+        nw = acc.get("net_worth")
+        if isinstance(nw, dict) and isinstance(nw.get("policy"), dict) and nw["policy"].get("excluded_count") == 0:
+            del nw["policy"]
         for item in acc.get("items") or []:
             if isinstance(item, dict):
                 for k in ("excluded_account_count", "excluded_transaction_count"):
-                    item.pop(k, None)
-                item["accounts"] = [{k: v for k, v in a.items() if k != "excluded"}
+                    if item.get(k) == 0:
+                        del item[k]
+                item["accounts"] = [{k: v for k, v in a.items() if not (k == "excluded" and v is False)}
                                     for a in item.get("accounts") or [] if isinstance(a, dict)]
-        acc["manual"] = [{k: v for k, v in m.items() if k != "excluded"}
+        acc["manual"] = [{k: v for k, v in m.items() if not (k == "excluded" and v is False)}
                          for m in acc.get("manual") or [] if isinstance(m, dict)]
     if isinstance(out.get("networth"), dict):
-        out["networth"] = {k: v for k, v in out["networth"].items() if k != "policy"}
+        policy = out["networth"].get("policy")
+        if isinstance(policy, dict) and policy.get("excluded_count") == 0:
+            del out["networth"]["policy"]
         if isinstance(out["networth"].get("groups"), list):
             out["networth"]["groups"] = [
-                {**g, "accounts": [{k: v for k, v in a.items() if k != "excluded"}
+                {**g, "accounts": [{k: v for k, v in a.items() if not (k == "excluded" and v is False)}
                                    for a in g.get("accounts") or [] if isinstance(a, dict)]}
                 if isinstance(g, dict) else g for g in out["networth"]["groups"]]
     # polish acctchange (26d0185): each net-worth group carries its `month_start` / `month_change`, set aside as new
@@ -291,6 +301,42 @@ def strip_new(d: dict) -> dict:
     if isinstance(pace, dict) and pace.get("one_offs") == [] and pace.get("one_off_total") == 0.0:
         del pace["one_offs"], pace["one_off_total"]
     return _no_task21(out)
+
+
+def _account_policy_payload(excluded, account_count, transaction_count, configured, policy_excluded):
+    return {
+        "transactions": {"rows": []},
+        "accounts": {
+            "networth_excluded": [], "networth_presets": [],
+            "account_policy": {"configured_count": configured},
+            "net_worth": {"policy": {"excluded_count": policy_excluded}},
+            "items": [{"excluded_account_count": account_count,
+                       "excluded_transaction_count": transaction_count,
+                       "accounts": [{"name": "a", "excluded": excluded}]}],
+            "manual": [{"name": "m", "excluded": excluded}],
+        },
+        "networth": {"policy": {"excluded_count": policy_excluded},
+                     "groups": [{"accounts": [{"name": "g", "excluded": excluded}]}]},
+    }
+
+
+def test_strip_new_keeps_a_non_neutral_account_policy():
+    """#12 is set aside only when neutral: a policy that really excluded an account, or has one configured, changes the
+    numbers and must stay in the compared payload."""
+    kept = strip_new(_account_policy_payload(True, 1, 2, 1, 1))
+    assert kept["accounts"]["account_policy"] == {"configured_count": 1}
+    assert kept["accounts"]["net_worth"]["policy"] == {"excluded_count": 1}
+    assert kept["accounts"]["items"] == [{"excluded_account_count": 1, "excluded_transaction_count": 2,
+                                          "accounts": [{"name": "a", "excluded": True}]}]
+    assert kept["accounts"]["manual"] == [{"name": "m", "excluded": True}]
+    assert kept["networth"]["policy"] == {"excluded_count": 1}
+    assert kept["networth"]["groups"] == [{"accounts": [{"name": "g", "excluded": True}]}]
+    neutral = strip_new(_account_policy_payload(False, 0, 0, 0, 0))
+    assert "account_policy" not in neutral["accounts"] and "policy" not in neutral["accounts"]["net_worth"]
+    assert neutral["accounts"]["items"] == [{"accounts": [{"name": "a"}]}]
+    assert neutral["accounts"]["manual"] == [{"name": "m"}]
+    assert "policy" not in neutral["networth"] and neutral["networth"]["groups"] == [{"accounts": [{"name": "g"}]}]
+    assert "networth_excluded" not in neutral["accounts"] and "networth_presets" not in neutral["accounts"]
 
 
 # hotfix 2026-09-29 (deb0246): a month-based bill billed on the same day of the month now comes back on that day instead of

@@ -241,6 +241,10 @@ def sync_state(kind: str, ready: str) -> list[str]:
     return [f"{SYNC_JS}({json.dumps(kind)})", click("#syncnow"), pinned]
 
 
+REVEAL_NB = ("(() => { const m = document.querySelector('#page .nb button.more');"
+             " if (m && m.getAttribute('aria-expanded') === 'false') m.click(); return 1; })()")
+
+
 # (name, page, steps, scope, when): steps are JS run in order after the page loads (each followed by a short wait);
 # scope is where the checks look (page | modal | panel | drawer | txpanel | syncp); when: "all" or "phone" / "wide" only, or
 # (TASK-19) "dock" / "nodock": 1400px and wider, where the transaction sheet docks beside the table, or narrower.
@@ -259,7 +263,7 @@ STATES: list[tuple[str, str, list[str], str, str]] = [
     # into each no-budget row's own Details panel, so it had nothing left to reveal. This state now opens ONE row's
     # suggestion disclosure instead, which is where the suggestion text actually lives, and it asserts that panel's
     # money is whole. The "Set" control keeps its own state (`budgets-set-budget`).
-    ("budgets-suggestions", "budgets", [click("#page .nb .nbrow .help-trigger")], "page", "all"),
+    ("budgets-suggestions", "budgets", [REVEAL_NB, click("#page .nb .nbrow .help-trigger")], "page", "all"),
     ("investments-by-type", "investments", [click("#page .seg button[data-k=type]")], "page", "all"),
     ("investments-all-time", "investments", [click("#page .seg button[data-r=all]")], "page", "all"),
     ("debt-cards-open", "debt", [click("#page .dg .hd[aria-expanded]")], "page", "all"),
@@ -764,11 +768,43 @@ for (const cv of [...document.querySelectorAll('canvas')].filter((c) => roots.so
     if (nz === 1) {
       const arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
       const r = (arc.innerRadius + arc.outerRadius) / 2, dpr = ch.currentDevicePixelRatio;
-      const px = [-1, 0, 1].map((dx) => [...cv.getContext('2d').getImageData(Math.round((arc.x + dx) * dpr), Math.round((arc.y - r) * dpr), 1, 1).data]);
+      const conf = ch.options || {}, dso = ds.options || {};
+      const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+      const opt = (k, d) => num(conf[k], num(dso[k], num(ds[k], d)));
+      const sweepDeg = Math.abs(opt('circumference', 360)), rotation = opt('rotation', 0);
+      const sweep = Math.abs(arc.circumference);
+      // The ring's start/end edge is a radial line through x = arc.x (12 o'clock), anti-aliased by the
+      // rasteriser. Sample a fixed window of device pixels either side of that seam, never on it, at three
+      // radii: a seam confined to the centre three columns cx-1..cx+1 is tolerated, while any unlit run of
+      // 4+ device pixels covering the seam reaches the -2/+2 samples. The app's 3 CSS px separator at dpr 1
+      // is centred on the seam and covers cx-1..cx+1 (caught by borderWidth, not by these samples); the
+      // plant paints 3 device px from cx-2 (columns -2..0 at dpr 1) so it does reach the -2 sample.
+      // Every sample must be the slice colour: no majority vote.
+      const pad = Math.max(0, Math.min(6, (arc.outerRadius - arc.innerRadius) / 2 - 2));
+      const g = cv.getContext('2d'), cw = cv.width, chh = cv.height, samples = [];
+      const cx = Math.round(arc.x * dpr);
+      for (const rad of [r - pad, r, r + pad]) for (const d of [-4, -3, -2, 2, 3, 4]) {
+        const x = cx + d, y = Math.round((arc.y - rad) * dpr);
+        if (x >= 0 && y >= 0 && x < cw && y < chh) samples.push([x, y, ...g.getImageData(x, y, 1, 1).data]);
+      }
       const want = ds.backgroundColor[ds.data.findIndex((v) => v > 0)];
-      const rgb = [1, 3, 5].map((i) => parseInt(want.slice(i, i + 2), 16));
-      const notch = ds.borderWidth !== 0 || px.some((p) => p[3] < 250 || p.slice(0, 3).some((v, i) => Math.abs(v - rgb[i]) > 24));
-      if (notch) fail('charts', 'a one-slice doughnut with a notch at 12 o\'clock', [cv], {borderWidth: ds.borderWidth, top: px});
+      const hex = String(want).match(/^#([0-9a-f]{6})$/i);
+      const detail = {arc: {x: +arc.x.toFixed(2), y: +arc.y.toFixed(2), r: +r.toFixed(2),
+        startAngle: +arc.startAngle.toFixed(4), circumference: +arc.circumference.toFixed(4),
+        rotation, optionCircumference: sweepDeg}, dpr,
+        canvas: {css: [+C.width.toFixed(2), +C.height.toFixed(2)], device: [cw, chh]},
+        borderWidth: ds.borderWidth, samples};
+      if (sweep < 2 * Math.PI - 1e-3 || sweepDeg < 360 - 0.06)
+        fail('charts', `a one-slice doughnut drawn as a partial ring (sweep ${Math.min(sweep * 180 / Math.PI, sweepDeg).toFixed(1)} deg)`, [cv], detail);
+      if (!hex) {
+        detail.sliceColour = want;
+        fail('charts', 'a one-slice doughnut whose slice colour could not be read', [cv], detail);
+      } else {
+        const rgb = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
+        const notch = ds.borderWidth !== 0 || samples.length < 3 ||
+          samples.some((p) => p[5] < 250 || p.slice(2, 5).some((v, i) => Math.abs(v - rgb[i]) > 24));
+        if (notch) fail('charts', 'a one-slice doughnut with a notch at 12 o\'clock', [cv], detail);
+      }
     }
   }
 }
@@ -1675,6 +1711,71 @@ CUTNUM_PLANT_JS = r"""(() => {
 })()"""
 CUTNUM_UNPLANT_JS = ("(() => { document.querySelectorAll('[id^=plant-cutnum-]').forEach((e) => e.remove()); return 1; })()")
 
+
+# charts: a synthetic card with six doughnuts. Four must be caught: a one-slice ring carrying the app's 2+ slice
+# separator (borderWidth 3), a one-slice ring whose 350-degree sweep leaves a wedge at 12 o'clock, the same open ring
+# rotated so the wedge is at 6 o'clock (the pixels at 12 are solid there: only the drawn geometry can catch it), and a
+# closed ring with 3 CSS px of the card colour painted over it at 12 o'clock (the pixel path alone). Two controls: a
+# one-slice ring with no separator and a full sweep on a fractional CSS width, where the start/end seam is not on a
+# device pixel boundary, and the same closed ring with 1 device pixel of the card colour painted over it (the
+# anti-aliased seam: a blend there must not read as a notch).
+CHART_PLANT_JS = r"""(() => {
+  const holder = Object.assign(document.createElement('div'), {id: 'plantchart-card', className: 'card'});
+  holder.style.cssText = 'display:flex;gap:12px;align-items:flex-start;width:fit-content';
+  document.getElementById('page').append(holder);
+  const make = (id, cls, w, h, opts) => {
+    const box = Object.assign(document.createElement('div'), {id});
+    box.style.cssText = `position:relative;width:${w}px;height:${h}px;flex:0 0 auto`;
+    const cv = Object.assign(document.createElement('canvas'), {className: cls});
+    cv.style.cssText = 'display:block;width:100%;height:100%';
+    box.append(cv);
+    holder.append(box);
+    (window.__plantcharts = window.__plantcharts || []).push(new window.Chart(cv, {type: 'doughnut',
+      data: {labels: ['plantchart', 'plantchart-hidden'], datasets: [{data: [100, 0],
+        backgroundColor: ['#7bd88f', '#0b0d12'], borderWidth: opts.borderWidth}]},
+      options: {responsive: true, maintainAspectRatio: false, animation: false, cutout: '76%', layout: {padding: 6},
+        rotation: opts.rotation == null ? 0 : opts.rotation,
+        circumference: opts.circumference == null ? 360 : opts.circumference,
+        plugins: {legend: {display: false}, tooltip: {enabled: false}}}}));
+  };
+  // A fixed-size, non-responsive chart: nothing can redraw it after the paint. `paint` is null for the 1-device-pixel
+  // seam control, else the width in CSS px painted over the ring at 12 o'clock (the app's separator is 3 CSS px).
+  const painted = (id, cls, paint) => {
+    const w = 200, h = 200, dpr = window.devicePixelRatio || 1;
+    const box = Object.assign(document.createElement('div'), {id});
+    box.style.cssText = `position:relative;width:${w}px;height:${h}px;flex:0 0 auto`;
+    const cv = Object.assign(document.createElement('canvas'), {className: cls, width: w, height: h});
+    cv.style.cssText = `display:block;width:${w}px;height:${h}px`;
+    box.append(cv);
+    holder.append(box);
+    const ch = new window.Chart(cv, {type: 'doughnut',
+      data: {labels: ['plantchart', 'plantchart-hidden'], datasets: [{data: [100, 0],
+        backgroundColor: ['#7bd88f', '#0b0d12'], borderWidth: 0}]},
+      options: {responsive: false, maintainAspectRatio: false, animation: false, cutout: '76%', layout: {padding: 6},
+        devicePixelRatio: dpr, rotation: 0, circumference: 360,
+        plugins: {legend: {display: false}, tooltip: {enabled: false}}}});
+    (window.__plantcharts = window.__plantcharts || []).push(ch);
+    const arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
+    const cdpr = ch.currentDevicePixelRatio, cx = Math.round(arc.x * cdpr), g = ch.ctx;
+    g.save();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#161b25';   // the card's own fill (app.css .card): what shows through a real notch
+    if (paint == null) g.fillRect(cx, 0, 1, ch.canvas.height);
+    else g.fillRect(cx - 2 * cdpr, 0, Math.round(paint * cdpr), ch.canvas.height);
+    g.restore();
+  };
+  make('plantchart-a', 'plantchart-border', 200, 200, {borderWidth: 3});
+  make('plantchart-b', 'plantchart-open', 200, 200, {borderWidth: 0, circumference: 350});
+  make('plantchart-d', 'plantchart-open-away', 200, 200, {borderWidth: 0, circumference: 350, rotation: 180});
+  make('plantchart-c', 'plantchart-control', 167.7, 167.7, {borderWidth: 0});
+  painted('plantchart-e', 'plantchart-seam-control', null);
+  painted('plantchart-f', 'plantchart-seam-plant', 3);
+  return 1;
+})()"""
+CHART_UNPLANT_JS = ("(() => { (window.__plantcharts || []).forEach((c) => c.destroy()); window.__plantcharts = [];"
+                    " const h = document.getElementById('plantchart-card'); if (h) h.remove(); return 1; })()")
+
+
 def selftest(b: Chrome, base: str, emit) -> None:
     """Plant one bug per new check on the Overview at 1440 (where the tiles sit side by side; TASK-20's tap check at 390,
     a phone, and TEST-SPEED's overflow there, where the page is clipped); each must be flagged, a correct control beside
@@ -1733,6 +1834,16 @@ def selftest(b: Chrome, base: str, emit) -> None:
     b.js(CUTNUM_UNPLANT_JS)
     settled("cutnum plants removed")
     left += [v for v in b.js(f"{CHECK_JS}('page')")["violations"] if any(x in json.dumps(v) for x in ("plantcut", "plantnum"))]
+    # charts: the separator, the open ring and the 3 px painted notch are caught; the fractional-width full ring and
+    # the 1 px painted AA seam are not
+    b.js(CHART_PLANT_JS)
+    settled("chart plants")
+    judge("charts", [json.dumps(v) for v in b.js(f"{CHECK_JS}('page')")["violations"] if v["check"] == "charts"],
+          ("plantchart-border", "plantchart-open", "plantchart-open-away", "plantchart-seam-plant"),
+          ("plantchart-control", "plantchart-seam-control"))
+    b.js(CHART_UNPLANT_JS)
+    settled("chart plants removed")
+    left += [v for v in b.js(f"{CHECK_JS}('page')")["violations"] if "plantchart" in json.dumps(v)]
     # TASK-20, tap (phones only): at 390 a planted 30px button and a lone small link are caught; the same button with a
     # transparent 44px ::before hit box, and a link inside a sentence, are not
     b.size(390, HEIGHT[390])

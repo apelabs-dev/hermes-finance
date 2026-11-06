@@ -225,7 +225,15 @@ def test_a_groups_details_popover(tmp_path, width, food):
         assert q(b, PANEL) is None
 
         # any group with bills lists them merged, in the group's taxonomy order
-        billed = next(g for g in d["groups"] if any((cats.get(n) or {}).get("bills_due") for n in g["categories"]))
+        rendered = b.js("""[...document.querySelectorAll('#page tr.g[data-group]')].filter((r) =>
+            r.querySelector('.help-trigger[data-help="budget-group"]')?.getClientRects().length)
+            .map((r) => r.dataset.group)""")
+        due = [g["name"] for g in d["groups"] if any((cats.get(n) or {}).get("bills_due") for n in g["categories"])]
+        named = [name for name in due if name in rendered]
+        if not due:   # the fixture itself carries no bills due this month: nothing to look at, say so out loud
+            pytest.skip(f"this month's fixture has no bills due for any group ({due})")
+        assert named, (f"a group has bills due but no row is rendered for it (due: {due}; rows rendered: {rendered})")
+        billed = group(d, named[0])
         merged = [bill for n in billed["categories"] for bill in (cats.get(n) or {}).get("bills_due", [])]
         sel = f'tr.g[data-group={json.dumps(billed["name"])}] .help-trigger[data-help="budget-group"]'
         tap(b, sel)

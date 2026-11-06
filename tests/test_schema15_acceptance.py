@@ -54,8 +54,10 @@ ADDED_COLUMNS = {   # (table, column): (type, notnull, default as declared, the 
 ADDED_FOREIGN_KEYS = {"chat": {("rule_deletions", "detached_by", "id", "NO ACTION", "NO ACTION", "NONE")}, "rules": set()}
 ADDED_OBJECTS = {"chat": {("table", "rule_deletions"), ("trigger", "trg_classifications_detached_changed")},
                  "rules": set()}
-CHANGED_OBJECTS = {"chat": {("table", "classifications"), ("view", "v_transactions")},   # v_transactions: reads receipts
-                   "rules": {("table", "pending_actions"), ("view", "v_transactions")}}  # v_transactions: applies the account policy
+CHANGED_OBJECTS = {"chat": {("table", "classifications")},
+                   "rules": {("table", "pending_actions")}}
+# v_transactions changed on both lanes: the chat lane reads receipts, the rules lane applies the account policy
+V20_OBJECTS = {("view", "v_transactions")}
 NONE = (set(), set(), set())
 # connect() now goes on to 16 (polish P0), the same on either lane: category_groups (filled), categories' group_id / icon /
 # sort (filled by the step, not left at a default), the 23 new categories and the new Plaid codes, and the car-payment
@@ -333,9 +335,9 @@ def _assert_converged(conn: sqlite3.Connection, lane: str, before: dict, fresh: 
     assert parents.changes(fresh, after) == NONE, "not a new database's schema: (extra, missing, different) objects"
     assert after == fresh
     assert parents.changes(before, after) == (ADDED_OBJECTS[lane] | V16_OBJECTS | V18_OBJECTS, set(),
-                                              CHANGED_OBJECTS[lane] | {("table", "categories"), ("table", "goals")})
+                                              CHANGED_OBJECTS[lane] | V20_OBJECTS | {("table", "categories"), ("table", "goals")})
     columns = {**{k: v[:3] for k, v in ADDED_COLUMNS[lane].items()}, **V16_COLUMNS, **V17_COLUMNS}
-    for kind, table in CHANGED_OBJECTS[lane] | {("table", "categories"), ("table", "goals")}:
+    for kind, table in CHANGED_OBJECTS[lane] | V20_OBJECTS | {("table", "categories"), ("table", "goals")}:
         if kind != "table":
             continue
         old, new = before[(kind, table)], after[(kind, table)]
