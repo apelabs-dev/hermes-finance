@@ -1544,8 +1544,8 @@ JSON: {today, month, goals: [{id, kind: save|payoff|monthly, name, target, targe
   goals set aside, newest first); entries: what you logged; pay off: paid down since the goal was made; monthly: this
   month's income - spending. on_pace_month: from the last 90 days (about a third of it a month).
   excluded_account: true when the account policy leaves its account out (a reversible read filter, not a missing
-  account). Such a goal follows no figures (progress, pct, left, done, short and pace are null) and is left out of the
-  saving totals until the policy includes its account again."""
+  account). Such a goal follows no figures (progress, pct, left, short, pace and payoff are null; done is false) and is
+  left out of the saving totals until the policy includes its account again."""
 
 
 def cmd_goals(args) -> int:

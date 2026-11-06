@@ -177,14 +177,17 @@
   }
 
   function summaryCard(d) {
-    const saves = d.goals.filter((g) => g.kind === 'save' && g.target && !g.excluded_account);
+    const all = d.goals.filter((g) => g.kind === 'save' && g.target);
+    const saves = all.filter((g) => !g.excluded_account);
     const t = d.totals;
-    return card({cls: 'gsum', title: 'Saving toward', icon: 'target', rgb: RGB.acc, extra: small(plural(saves.length, 'goal'))},
+    return card({cls: 'gsum', title: 'Saving toward', icon: 'target', rgb: RGB.acc, extra: small(plural(all.length, 'goal'))},
       saves.length ? [bigMoney(t.saved, 's'),
         h('div', {class: 'sub'}, `of ${money(t.saving_target)} · `, h('b', {}, `${Math.round(t.pct || 0)}%`)),
         h('div', {class: 'stk', role: 'img', 'aria-label': saves.map((g) => `${g.name} ${money(Math.min(g.progress, g.target))}`).join(', ')},
           saves.map((g) => h('i', {style: {width: `${(Math.min(Math.max(g.progress, 0), g.target) / t.saving_target) * 100}%`, background: goalColour(g)}})))]
-        : h('p', {class: 'sub'}, 'No Save up goal yet. A target turns a savings account into progress you can see.'),
+        : h('p', {class: 'sub'}, all.length
+          ? 'Its account is excluded by the account policy, so the saving total waits until the policy includes it.'
+          : 'No Save up goal yet. A target turns a savings account into progress you can see.'),
       h('button', {class: 'ghost-row', type: 'button', dataset: {add: 'goal'}, 'aria-label': 'Add a new goal',
         onclick: () => newGoalSheet('save')},
         ibadge('plus', RGB.acc, 's'),

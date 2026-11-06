@@ -368,6 +368,12 @@ def test_goals_page_tells_the_truth_about_a_policy_excluded_account(tmp_path):
                 assert "archive this goal" not in text
                 assert "isn't there any more" not in text and "isn\u2019t there any more" not in text
                 assert b.js(f"document.querySelectorAll({json.dumps(card + ' .gfig')}).length") == 0
+                # the summary card sits above the grid: with the only Save up goal excluded it must not claim there is none
+                summary = b.js("(() => {const el=document.querySelector('.gsum'); "
+                               "return el ? el.textContent.replace(/\\s+/g, ' ').trim() : null;})()")
+                assert summary, "the Goals page has no summary card"
+                assert "No Save up goal yet" not in summary, summary
+                assert "excluded by the account policy" in summary, summary
                 assert "$" not in b.js(f"(() => {{const f=document.querySelector({json.dumps(card + ' .gfig')}); "
                                        "return f ? f.textContent : '';})()")
             assert b.problems() == []

@@ -1644,12 +1644,12 @@ def check_batch_c(A: Audit, S: "Site", ov: dict, acc: dict, bp: dict, rec: dict,
     G = dom.get("goals") or {}
     shown = {c["id"]: c for c in G.get("cards", [])}
     for x in g["goals"]:
-        if x.get("excluded_account"):
-            continue                      # its card says so and shows no figure
         c = shown.get(x["id"])
         if c is None:
             A.ok(f"Goals page: goal {x['name']} has a card", False, got=None, want=x["id"])
             continue
+        if x.get("excluded_account"):
+            continue                      # its card says so and shows no figure
         A.eq(f"Goals page {x['name']}: the figure = progress", money(c["big"]), x["progress"], tol=0.5)
         A.eq(f"Goals page {x['name']}: short flag shown exactly when short", bool(c.get("short")), bool(x["short"]))
     T = dom["overview"].get("goals")
