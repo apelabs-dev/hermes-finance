@@ -55,7 +55,7 @@ ADDED_FOREIGN_KEYS = {"chat": {("rule_deletions", "detached_by", "id", "NO ACTIO
 ADDED_OBJECTS = {"chat": {("table", "rule_deletions"), ("trigger", "trg_classifications_detached_changed")},
                  "rules": set()}
 CHANGED_OBJECTS = {"chat": {("table", "classifications"), ("view", "v_transactions")},   # v_transactions: reads receipts
-                   "rules": {("table", "pending_actions")}}
+                   "rules": {("table", "pending_actions"), ("view", "v_transactions")}}  # v_transactions: applies the account policy
 NONE = (set(), set(), set())
 # connect() now goes on to 16 (polish P0), the same on either lane: category_groups (filled), categories' group_id / icon /
 # sort (filled by the step, not left at a default), the 23 new categories and the new Plaid codes, and the car-payment

@@ -98,7 +98,7 @@ def test_upgrade_from_v1_keeps_every_row_and_adds_snapshots(data_dir, client, fa
 
     conn = db.connect(path)  # the live DB is upgraded exactly like this on the next start
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert dump(conn) == before
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(balance_snapshots)")]
     assert cols == ["account_id", "date", "current", "available", "iso_currency"]
@@ -171,7 +171,7 @@ def test_upgrade_from_v2_keeps_every_row_and_adds_ai_tables(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert dump(conn, V2_TABLES) == before
     assert columns(conn, "ai_runs") == (["run_id", "created_at", "applied_at", "queued_groups", "queued_txns",
                                          "summary_json"], ["run_id"])
@@ -281,7 +281,7 @@ def test_upgrade_from_v3_keeps_every_row_and_adds_manual_tables(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert dump(conn, V3_TABLES) == before
     assert columns(conn, "manual_accounts") == (
         ["id", "kind", "name", "institution", "subtype", "balance", "credit_limit", "interest_rate", "original_amount",
@@ -413,7 +413,7 @@ def test_upgrade_from_v4_keeps_every_row_and_adds_the_logo_caches(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert dump(conn, V4_TABLES) == before
     assert columns(conn, "institutions") == (["institution_id", "name", "logo_png", "logo_source", "primary_color", "url",
                                               "fetched_at"], ["institution_id"])
@@ -465,7 +465,7 @@ def test_upgrade_from_v5_keeps_every_row_and_adds_settings(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert dump(conn, V5_TABLES) == before
     assert columns(conn, "settings") == (["key", "value", "updated_at"], ["key"])
     with pytest.raises(sqlite3.IntegrityError):
@@ -515,7 +515,7 @@ def test_upgrade_from_v6_adds_valuation(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert dump(conn, V6_TABLES) == before                          # every old value kept
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(manual_accounts)")]
     assert cols[-10:] == ["vin", "vehicle_trim", "mileage", "mileage_as_of", "zip_code", "address", "vin_decoded",
@@ -624,7 +624,7 @@ def _upgrade_and_check(path: Path, raw: sqlite3.Connection, tables: list[str]) -
     before = dump(raw, tables)
     raw.close()
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert dump(conn, tables) == before
     assert set(V11_NEW + V12_NEW + V13_NEW + V14_NEW + ["pending_actions"]) <= _names(conn) and "v_spend_lines" in _names(conn, "view")
     fresh = db.connect(path.parent / "fresh.db")

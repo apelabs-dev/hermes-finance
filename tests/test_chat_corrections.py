@@ -269,7 +269,7 @@ def test_upgrade_to_v14_marks_every_earlier_pending_action_as_an_mcp_agents(data
     conn.close()
     conn = db.connect(path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
         assert [(a["client"], a["origin"], a["held"]) for a in mcp_state.pending(conn)] == [
             ("Ask", "mcp", False), ("Claude Desktop", "mcp", False), (None, "mcp", False)]
         assert all(chat._own(conn, a["id"]) is None for a in mcp_state.pending(conn))

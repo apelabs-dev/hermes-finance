@@ -9,12 +9,13 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Iterable, Sequence
 
-from . import config
+from . import config, insights
 from .money import money
 from .db import blocked_duplicates, slots_used
 
 
 def status(conn: sqlite3.Connection) -> dict[str, Any]:
+    policy = set(insights.excluded_accounts(conn))
     items = []
     for it in conn.execute("SELECT * FROM v_items ORDER BY created_at"):
         item = dict(it)
@@ -23,14 +24,30 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
             """SELECT account_id, name, official_name, mask, type, subtype, current_balance,
                       available_balance, credit_limit, iso_currency, updated_at
                FROM accounts WHERE item_id=? ORDER BY type, name""", (it["item_id"],))]
-        item["transaction_count"] = conn.execute(
+        item["excluded_account_count"] = 0
+        for a in item["accounts"]:
+            a["excluded"] = a["account_id"] in policy
+            item["excluded_account_count"] += 1 if a["excluded"] else 0
+        total = conn.execute(
             "SELECT COUNT(*) FROM transactions WHERE item_id=? AND removed=0", (it["item_id"],)).fetchone()[0]
+        item["transaction_count"] = conn.execute(
+            "SELECT COUNT(*) FROM v_transactions WHERE item_id=?", (it["item_id"],)).fetchone()[0]
+        item["excluded_transaction_count"] = total - item["transaction_count"]
         items.append(item)
+    pol = insights.account_policy_status(conn)
     return {
         "slots_used": slots_used(conn),
         "slot_limit": config.SLOT_LIMIT,
         "blocked_duplicate_links": blocked_duplicates(conn),
         "items": items,
+        "account_policy": {
+            "configured_count": pol["configured_count"],
+            "resolved_count": pol["resolved_count"],
+            "unresolved_count": pol["unresolved_count"],
+            "coverage": pol["coverage"],
+            "accounts": [{"item": a["institution"], "name": a["name"], "mask": a["mask"]}
+                         for a in pol["accounts"]],
+        },
         "data_age": data_age(conn),   # TASK-22: so an agent can decide to sync first
     }
 
@@ -66,6 +83,17 @@ def status_text(s: dict[str, Any]) -> str:
         n = s["blocked_duplicate_links"]
         lines.append(f"  note: {n} duplicate Link completion{'' if n == 1 else 's'} {'was' if n == 1 else 'were'} "
                      f"blocked before exchange; Plaid may have counted {'it' if n == 1 else 'them'}.")
+    pol = s.get("account_policy") or {}
+    if pol.get("configured_count") or pol.get("coverage") == "invalid":
+        if pol.get("coverage") == "invalid":
+            lines.append(f"Account policy: the saved setting is invalid; {pol.get('configured_count', 0)} excluded, "
+                         f"{pol.get('unresolved_count', 0)} unresolved (invalid)")
+        else:
+            lines.append(f"Account policy: {pol['configured_count']} excluded, {pol['unresolved_count']} unresolved "
+                         f"({pol['coverage']})")
+        for a in pol["accounts"]:
+            lines.append(f"  left out: {a['item'] or '?'} · {account_name(a['name'], a['mask']) or '?'} "
+                         f"••{a['mask'] or '----'}")
     if not s["items"]:
         lines.append("No Items connected yet. Run `finance serve` and click 'Connect a bank'.")
     for it in s["items"]:
@@ -74,13 +102,16 @@ def status_text(s: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"[{state}] {it['institution_name'] or it['institution_id']}  item={it['item_id']}{err}")
         lines.append(f"  last sync: {it['last_sync_at'] or 'never'}  transactions: {it['transaction_count']}"
-                     f"  products: {','.join(it['products']) or '-'}"
+                     + (f" ({it['excluded_transaction_count']} hidden by the account policy)"
+                        if it.get("excluded_transaction_count") else "")
+                     + f"  products: {','.join(it['products']) or '-'}"
                      + (f"  plaid: {it['txn_update_status']}" if it["txn_update_status"] else ""))
         for a in it["accounts"]:
             lines.append(
                 f"    {account_name(a['name'], a['mask']) or '?'} ••{a['mask'] or '----'}  {a['type']}/{a['subtype']}  "
                 f"current {money(a['current_balance'])}  available {money(a['available_balance'])}"
                 + (f"  limit {money(a['credit_limit'])}" if a["credit_limit"] is not None else "")
+                + ("  left out by the account policy" if a.get("excluded") else "")
                 + f" {a['iso_currency'] or ''}")
     return "\n".join(lines)
 

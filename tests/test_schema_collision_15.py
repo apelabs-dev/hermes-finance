@@ -77,7 +77,7 @@ def test_a_v14_database_from_either_branch_converges_on_both_lanes_ddl(data_dir,
     raw.close()
 
     conn = db.connect(path)                      # 14 < 15, so the cumulative step runs (and v16 after it)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert "rule_deletions" in {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "detached_by" in _columns(conn, "classifications")
     assert {"origin", "held_by"} <= _columns(conn, "pending_actions")
@@ -103,5 +103,5 @@ def test_a_v14_database_from_either_branch_converges_on_both_lanes_ddl(data_dir,
     before = _shape(conn)
     conn.close()
     again = db.connect(path)
-    assert _shape(again) == before and again.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert _shape(again) == before and again.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     again.close()

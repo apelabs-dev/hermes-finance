@@ -99,7 +99,7 @@ def test_v15_to_v16_twice_keeps_every_transaction_in_its_category(data_dir):
     raw.close()
 
     conn = db.connect(path)   # the app's own startup path upgrades it
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     # every transaction keeps its category (v19's renames keep the ids), but for Plaid's defaults: v19 re-files them by
     # today's map, so the gas station, the coffee and the car payment land where a new sync would put them
     after = {**before, "t_cvs": "Other Health", "t_park": "Other Shopping",
@@ -130,7 +130,7 @@ def test_v15_to_v16_twice_keeps_every_transaction_in_its_category(data_dir):
         conn.execute("PRAGMA user_version = 15")                                  # as if it stopped before v16 was written
     conn.close()
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     assert snapshot(conn) == done and categories_of(conn) == after
 
     # the next sync's classify finds Plaid's defaults already where it would put them; the user's, the rule's and the

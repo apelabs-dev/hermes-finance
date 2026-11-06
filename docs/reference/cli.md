@@ -20,6 +20,7 @@ Every `finance` command, with its `--help` exactly as the code prints it. Run th
 | [`ai-apply`](#finance-ai-apply) | apply the AI's decisions for an ai-queue run (validated, atomic, once) |
 | [`manual`](#finance-manual) | accounts Plaid can't see: list / add / edit / archive |
 | [`networth-custom`](#finance-networth-custom) | list or change which accounts the Custom net worth counts |
+| [`account-policy`](#finance-account-policy) | list or change the accounts left out of every read |
 | [`match-payments`](#finance-match-payments) | apply new bank payments to loans and credit cards by their match pattern (source auto; never a connected card's payment) |
 | [`loan-match`](#finance-loan-match) | alias of match-payments |
 | [`loan-apply`](#finance-loan-apply) | apply one bank transaction to a loan (e.g. a payment the pattern misses) |
@@ -51,13 +52,13 @@ Every `finance` command, with its `--help` exactly as the code prints it. Run th
 
 ```text
 usage: finance [-h] [-v]
-               {serve,sync,status,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,rules}
+               {serve,sync,status,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,rules}
                ...
 
 Plaid -> local SQLite budgeting pipeline
 
 positional arguments:
-  {serve,sync,status,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,rules}
+  {serve,sync,status,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,rules}
     serve               local budgeting dashboard; connect / reconnect banks
     sync                pull transactions, balances, liabilities, holdings
     status              items, accounts, balances, errors, slots used
@@ -71,6 +72,7 @@ positional arguments:
     ai-apply            apply the AI's decisions for an ai-queue run (validated, atomic, once)
     manual              accounts Plaid can't see: list / add / edit / archive
     networth-custom     list or change which accounts the Custom net worth counts
+    account-policy      list or change the accounts left out of every read
     match-payments      apply new bank payments to loans and credit cards by their match pattern
                         (source auto; never a connected card's payment)
     loan-match          alias of match-payments
@@ -461,6 +463,29 @@ JSON: {today, changed: true | false | null, excluded: [id], custom: {assets, deb
        accounts: [{id, source: plaid|manual, name, mask, institution, kind, group, group_label, balance, signed,
                    counted}]}
   changed: null when nothing was asked to change.
+```
+
+## `finance account-policy` {#finance-account-policy}
+
+```text
+usage: finance account-policy [-h] [--exclude ID [ID ...]] [--include ID [ID ...]] [--import FILE]
+                              [--clear] [--list] [--json]
+
+List or change the account policy: the accounts left out of spending, holdings, net worth and every other read. Stored separately from Custom net worth's selection.
+
+options:
+  -h, --help            show this help message and exit
+  --exclude ID [ID ...]
+                        leave these accounts out (repeatable)
+  --include ID [ID ...]
+                        count these accounts again (repeatable)
+  --import FILE         load a JSON list of ids, or {"excluded_accounts": [...]} (replaces the
+                        saved list)
+  --clear               count every account (empty the policy)
+  --list                show the saved policy and whether each id resolves (the default)
+  --json                print the saved ids, the unresolved ids and the count
+
+An id is a Plaid account_id, or manual:<id>. An id that is not a current account is kept (a bank can be temporarily removed) and reported as unresolved.
 ```
 
 ## `finance match-payments` {#finance-match-payments}

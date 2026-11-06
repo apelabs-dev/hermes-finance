@@ -7,6 +7,7 @@ import json
 import pytest
 
 from conftest import TOKEN_A, TOKEN_B, account, add_item, err, item_row, page, txn
+from hermes_finance import syncnow
 from hermes_finance.sync import sync_all
 
 SYNC = "/transactions/sync"
@@ -161,21 +162,44 @@ def test_investments_error_is_not_hidden(conn, client, fake):
     assert log["error"].startswith("INTERNAL_SERVER_ERROR: ")
 
 
-def test_transactions_rejected_by_plaid_is_not_an_item_error(conn, client, fake):
-    add_item(conn, products=("transactions", "investments"), cursor="c0")
-    fake.on("/item/get", {"item": {"products": ["transactions", "investments"]}})
+def test_transactions_rejected_by_plaid_fails_the_item(conn, client, fake):
+    add_item(conn, products=("transactions",), cursor="c0")
+    fake.on("/item/get", {"item": {"products": ["transactions"]}})
     fake.on(SYNC, err("PRODUCT_NOT_ENABLED"))
-    fake.on("/investments/holdings/get", holdings_route())
 
     (r,) = sync_all(conn, client)
 
-    assert r.ok
-    assert r.transactions_skipped == "PRODUCT_NOT_ENABLED"
-    assert "no transactions (PRODUCT_NOT_ENABLED)" in r.summary()
-    assert conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0] == 1
+    assert not r.ok and r.error_code == "PRODUCT_NOT_ENABLED"
+    assert r.transactions_skipped is None
+    assert r.summary() == "Chase: ERROR PRODUCT_NOT_ENABLED"
     row = item_row(conn)
-    assert row["status"] == "active" and row["error_code"] is None
-    assert row["cursor"] == "c0"
+    assert row["status"] == "error" and row["error_code"] == "PRODUCT_NOT_ENABLED"
+    assert row["cursor"] == "c0" and row["last_sync_at"] is None
+
+
+@pytest.mark.parametrize("code", [
+    "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
+])
+def test_transactions_product_rejection_is_a_visible_item_error(conn, client, fake, code):
+    add_item(conn, products=("transactions",), cursor="c0")
+    fake.on("/item/get", {"item": {"products": ["transactions"]}})
+    fake.on(SYNC, err(code))
+
+    (r,) = sync_all(conn, client)
+
+    assert r.ok is False
+    assert r.error_code == code
+    row = item_row(conn)
+    assert row["status"] == "error" and row["error_code"] == code
+    assert row["error_message"]
+    assert row["last_sync_at"] is None
+    log = conn.execute("SELECT error FROM sync_log").fetchone()
+    assert log["error"].startswith(code + ": ")
+    assert syncnow._item_json(r)["error"] is not None
+    failure = syncnow.failure([r])
+    assert failure is not None and failure["lines"][0].startswith("Couldn't sync ")
+    assert "ERROR " in r.summary()
+    assert "no transactions (" not in r.summary()
 
 
 @pytest.mark.parametrize("invalid", [
@@ -260,3 +284,63 @@ def test_an_unknown_product_item_does_not_stop_later_items(conn, client, fake):
     assert not first.ok and first.error_code == "ITEM_PRODUCTS_UNKNOWN"
     assert second.ok and second.transactions_ok and second.added == 1
     assert item_row(conn, "item_b")["cursor"] == "cb"
+
+
+@pytest.mark.parametrize("code", [
+    "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
+])
+def test_transactions_rejection_does_not_skip_mixed_item_data_phases(conn, client, fake, code):
+    add_item(conn, products=("transactions", "investments"), cursor="c0")
+    fake.on("/item/get", {"item": {"products": ["transactions", "investments"]}})
+    fake.on(SYNC, err(code))
+    fake.on("/investments/holdings/get", holdings_route())
+
+    (r,) = sync_all(conn, client)
+
+    assert r.ok is False and r.error_code == code
+    assert f"ERROR {code}" in r.summary()
+    assert "no transactions (" not in r.summary()
+    row = item_row(conn)
+    assert row["status"] == "error" and row["error_code"] == code
+    assert row["error_message"]
+    assert row["last_sync_at"] is None and row["cursor"] == "c0"
+    log = conn.execute("SELECT error FROM sync_log").fetchone()
+    assert log["error"].startswith(code + ": ")
+    assert syncnow._item_json(r)["error"] is not None
+    assert syncnow.failure([r])["lines"][0].startswith("Couldn't sync ")
+    assert conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM holding_snapshots").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM balance_snapshots").fetchone()[0] == 2
+    assert fake.paths() == ["/item/get", SYNC, "/accounts/get", "/investments/holdings/get"]
+    assert r.phases["transactions"].ok is False
+    assert r.extras == {"balances": "ok", "investments": "ok"}
+    c = syncnow.changes({}, {}, [r])
+    assert c["text"] is None
+    assert "Nothing new" not in syncnow.summary_line(c)
+
+
+def test_transactions_rejection_does_not_skip_liabilities_phase(conn, client, fake):
+    add_item(conn, products=("transactions", "investments", "liabilities"), cursor="c0")
+    fake.on("/item/get", {"item": {"products": ["transactions", "investments", "liabilities"]}})
+    fake.on(SYNC, err("PRODUCT_NOT_ENABLED"))
+    fake.on("/investments/holdings/get", holdings_route())
+    fake.on("/liabilities/get", {
+        "accounts": [account("acc_cc", "Card", "9999", "credit", "credit card", 250.0, 4750.0, 5000.0)],
+        "liabilities": {"credit": [{"account_id": "acc_cc", "last_statement_balance": 200.0,
+                                    "minimum_payment_amount": 25.0, "next_payment_due_date": "2026-10-10",
+                                    "is_overdue": False, "aprs": [{"apr_type": "purchase_apr",
+                                                                   "apr_percentage": 24.99}]}],
+                        "mortgage": None, "student": None}})
+
+    (r,) = sync_all(conn, client)
+
+    paths = fake.paths()
+    assert paths == ["/item/get", SYNC, "/accounts/get", "/liabilities/get", "/investments/holdings/get"]
+    assert paths.index("/liabilities/get") > paths.index(SYNC)
+    liabilities = conn.execute("SELECT * FROM liabilities").fetchone()
+    assert liabilities["kind"] == "credit" and liabilities["last_statement_balance"] == 200.0
+    assert conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0] == 1
+    assert r.phases["transactions"].ok is False
+    assert r.extras == {"balances": "ok", "liabilities": "ok", "investments": "ok"}
+    assert item_row(conn)["error_code"] == "PRODUCT_NOT_ENABLED"
+    assert r.ok is False and r.error_code == "PRODUCT_NOT_ENABLED"

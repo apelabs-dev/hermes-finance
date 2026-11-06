@@ -57,7 +57,7 @@ def test_v16_to_v17_preserves_existing_defaults_and_choices(tmp_path, monkeypatc
     conn.close()
     conn = db.connect(path)
     try:
-        assert conn.execute('PRAGMA user_version').fetchone()[0] == 19
+        assert conn.execute('PRAGMA user_version').fetchone()[0] == db.SCHEMA_VERSION
         upgraded = [tuple(r) for r in conn.execute('SELECT * FROM goals ORDER BY id')]
         assert [r[:-2] for r in upgraded] == original
         assert [r[-2] for r in upgraded] == ['piggy-bank', 'pencil', 'split', 'piggy-bank', 'card', 'card', 'handcoins']
@@ -137,4 +137,4 @@ def test_v17_resumes_a_partially_added_appearance(conn, partial_column):
         conn.execute('PRAGMA user_version=16')
     db.init_schema(conn)
     assert tuple(conn.execute('SELECT icon,colour FROM goals').fetchone()) == ('pencil', '#4fd1a5')
-    assert conn.execute('PRAGMA user_version').fetchone()[0] == 19
+    assert conn.execute('PRAGMA user_version').fetchone()[0] == db.SCHEMA_VERSION

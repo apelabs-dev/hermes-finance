@@ -19,12 +19,14 @@ MUTATION_ERROR = "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION"
 MAX_PAGINATION_RESTARTS = 3
 # The Item's stored products are missing/empty/unparseable: fail closed, never assume transactions.
 ITEM_PRODUCTS_UNKNOWN = "ITEM_PRODUCTS_UNKNOWN"
-# /transactions/sync errors that mean the product is not actually granted, whatever the Item's metadata said.
-TRANSACTIONS_NOT_GRANTED_ERRORS = {
-    "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
-}
 # The ledger's internal marker for an Item that simply does not grant transactions: never a Plaid error code.
 TRANSACTIONS_NOT_GRANTED_MARKER = "not in the Item's products"
+# /transactions/sync rejections about the product or its consent: the Item's OTHER data is unaffected, so balances,
+# holdings and liabilities still refresh while the Item reports the transactions failure (decided 2026-11-05).
+# Any other fatal transactions error (ITEM_LOGIN_REQUIRED, a broken token) leaves the whole Item unfresh: no snapshot.
+TRANSACTIONS_PRODUCT_REJECTIONS = {
+    "PRODUCT_NOT_ENABLED", "PRODUCTS_NOT_SUPPORTED", "INVALID_PRODUCT", "ADDITIONAL_CONSENT_REQUIRED",
+}
 # Optional-product errors that just mean "not available for this Item" -> skip quietly.
 TOLERATED_PRODUCT_ERRORS = {
     "PRODUCTS_NOT_SUPPORTED", "PRODUCT_NOT_ENABLED", "PRODUCT_NOT_READY", "INVALID_PRODUCT",
@@ -487,10 +489,6 @@ def _sync_transactions(conn: sqlite3.Connection, client: PlaidClient, item: sqli
             result.update_status = "NOT_READY"
             phase.error_code, phase.error_message, phase.error_type = e.error_code, e.error_message, e.error_type
             phase.fatal = False
-        elif e.error_code in TRANSACTIONS_NOT_GRANTED_ERRORS:
-            # The Item's metadata said transactions, but Plaid says the product isn't granted: not an Item error.
-            phase.skipped = e.error_code
-            log.info("transactions not granted for %s: %s", item_id, e.error_code)
         else:
             phase.error_code, phase.error_message, phase.error_type = e.error_code, e.error_message, e.error_type
             _set_item_error(conn, item_id, e)
@@ -553,7 +551,10 @@ def _sync_item_body(conn: sqlite3.Connection, client: PlaidClient, item: sqlite3
         else:
             _sync_transactions(conn, client, item, result)
         txn = result.phases.get("transactions")
-        if not (txn and txn.attempted and not txn.ok and txn.skipped is None and txn.fatal):
+        blocked = txn is not None and txn.attempted and not txn.ok and txn.skipped is None and txn.fatal
+        # A product/consent rejection says nothing about the Item's other data: refresh it. Any other fatal
+        # transactions error means the Item itself is not usable this run, so no phase runs and no snapshot is written.
+        if not blocked or (txn is not None and txn.error_code in TRANSACTIONS_PRODUCT_REJECTIONS):
             _sync_data_phases(conn, client, item, result, products)
 
     result.derive()

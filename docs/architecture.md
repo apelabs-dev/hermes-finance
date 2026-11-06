@@ -17,7 +17,7 @@ flowchart LR
         tools["Agent tools<br/>tooldefs.py"]
         reads["Read-only answers<br/>reads.py, insights.py, portfolio.py"]
         sync["Sync<br/>sync.py, syncnow.py, link.py"]
-        db[("data/finance.db<br/>SQLite, schema v19")]
+        db[("data/finance.db<br/>SQLite, schema v20")]
         secrets[["secrets.env<br/>keys"]]
         plugin["Hermes plugin<br/>hermes_plugin/"]
         stdio["finance mcp<br/>(stdio)"]
@@ -74,7 +74,7 @@ flowchart LR
 
 ## The database
 
-`db.py` owns the schema. `SCHEMA_VERSION` is **19**, stored in `PRAGMA user_version`.
+`db.py` owns the schema. `SCHEMA_VERSION` is **20**, stored in `PRAGMA user_version`.
 
 - `db.connect()` creates the data directory (0700) and the file (0600), turns on WAL, and runs `init_schema()` when the
   stored version is behind. `init_schema()` is idempotent: `CREATE TABLE IF NOT EXISTS`, guarded `ALTER TABLE ... ADD

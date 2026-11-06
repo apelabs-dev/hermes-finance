@@ -18,6 +18,7 @@ from datetime import date
 from typing import Any
 
 from . import alpaca, insights, manual
+from .db import account_policy_sql
 
 _r = insights._r
 
@@ -61,18 +62,23 @@ def _latest_on_or_before(series: dict[str, float], day: str) -> float | None:
 
 def _investment_series(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     """name -> {"values": {date: value}, "until": archived date or None}: one per Plaid account (sum of its
-    holding snapshots per day) and one per manual investment account (its balance history)."""
+    holding snapshots per day) and one per manual investment account (its balance history). Accounts in the account
+    policy contribute nothing."""
     out: dict[str, dict[str, Any]] = {}
+    policy = set(insights.excluded_accounts(conn))
     for r in conn.execute(
-            """SELECT s.account_id, s.date, SUM(COALESCE(s.value, 0)) FROM holding_snapshots s
+            f"""SELECT s.account_id, s.date, SUM(COALESCE(s.value, 0)) FROM holding_snapshots s
                JOIN accounts a ON a.account_id = s.account_id JOIN items i ON i.item_id = a.item_id
-               WHERE i.removed_at IS NULL GROUP BY s.account_id, s.date"""):
+               WHERE i.removed_at IS NULL AND {account_policy_sql("a")}
+               GROUP BY s.account_id, s.date"""):
         out.setdefault(f"plaid:{r[0]}", {"values": {}, "until": None})["values"][r[1]] = r[2]
     for r in conn.execute(
             """SELECT h.manual_account_id, h.date, h.balance, m.archived_at FROM manual_balance_history h
                JOIN manual_accounts m ON m.id = h.manual_account_id WHERE m.kind = 'investment'"""):
+        if insights.manual_nw_id(r[0]) in policy:
+            continue
         out.setdefault(f"manual:{r[0]}", {"values": {}, "until": insights.local_day(r[3])})["values"][r[1]] = r[2]
-    values = alpaca.value_series(conn)  # TASK-19: the Alpaca live account's daily equity (None: not ACTIVE that day)
+    values = alpaca.value_series(conn) if alpaca.ACCOUNT_ID not in policy else {}  # TASK-19: the Alpaca live account
     if values:
         out[f"plaid:{alpaca.ACCOUNT_ID}"] = {"values": values, "until": None}
     return out
@@ -123,19 +129,21 @@ RESIDUAL_MIN = 0.01 - 1e-9  # a balance/holdings gap under a cent isn't shown
 
 
 def investments(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
+    policy = set(insights.excluded_accounts(conn))
     accts = conn.execute(
-        """SELECT a.account_id, a.name, a.official_name, a.mask, a.subtype, a.current_balance, a.updated_at,
+        f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.subtype, a.current_balance, a.updated_at,
                   i.institution_name, i.institution_id, i.item_id
            FROM accounts a JOIN items i ON i.item_id = a.item_id
-           WHERE i.removed_at IS NULL AND a.type = 'investment' ORDER BY i.created_at, a.name""").fetchall()
-    accts += alpaca.networth_rows(conn)  # TASK-19: Alpaca (read-only API) at its equity, while ACTIVE
+           WHERE i.removed_at IS NULL AND a.type = 'investment' AND {account_policy_sql("a")}
+           ORDER BY i.created_at, a.name""").fetchall()
+    accts += [a for a in alpaca.networth_rows(conn) if a["account_id"] not in policy]  # TASK-19: Alpaca, while ACTIVE
     holdings = conn.execute(
-        """SELECT h.*, a.name AS account_name, a.mask, sl.ticker IS NOT NULL AS has_logo FROM holdings h
+        f"""SELECT h.*, a.name AS account_name, a.mask, sl.ticker IS NOT NULL AS has_logo FROM holdings h
            JOIN accounts a ON a.account_id = h.account_id JOIN items i ON i.item_id = a.item_id
            LEFT JOIN security_logos sl ON sl.ticker = UPPER(h.ticker_symbol) AND sl.png IS NOT NULL
-           WHERE i.removed_at IS NULL AND a.type = 'investment'
+           WHERE i.removed_at IS NULL AND a.type = 'investment' AND {account_policy_sql("a")}
            ORDER BY COALESCE(h.institution_value, 0) DESC, h.security_id""").fetchall()
-    extra = alpaca.holding_rows(conn)  # its positions and cash, so its value = its holdings (no residual)
+    extra = [h for h in alpaca.holding_rows(conn) if h["account_id"] not in policy]  # its positions and cash
     if extra:
         holdings = sorted([*holdings, *extra], key=lambda h: (-(h["institution_value"] or 0.0), h["security_id"]))
     by_acct: dict[str, float] = defaultdict(float)
@@ -155,7 +163,8 @@ def investments(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
                          # has that its holdings + cash don't (negative when the holdings are worth more)
                          "residual": _r(value - by_acct[a["account_id"]]) if count else 0.0,
                          **(alpaca.account_extra(conn) if a["account_id"] == alpaca.ACCOUNT_ID else {})})
-    manual_rows = [manual.describe(conn, r, today) for r in manual.rows(conn) if r["kind"] == "investment"]
+    manual_rows = [manual.describe(conn, r, today) for r in manual.rows(conn)
+                   if r["kind"] == "investment" and insights.manual_nw_id(r["id"]) not in policy]
     for m in manual_rows:
         kind = MANUAL_TYPE.get(m["subtype"] or "other", "Other")
         accounts.append({"id": f"manual:{m['id']}", "manual_id": m["id"], "name": m["name"], "official_name": None,
@@ -257,12 +266,14 @@ def _matched(conn: sqlite3.Connection, row: sqlite3.Row, limit: int = 24) -> lis
 
 
 def debt(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
+    policy = set(insights.excluded_accounts(conn))
     liab = {(r["account_id"]): r for r in conn.execute(
         "SELECT * FROM liabilities ORDER BY CASE kind WHEN 'credit' THEN 0 ELSE 1 END")}
     plaid = conn.execute(
-        """SELECT a.account_id, a.name, a.official_name, a.mask, a.type, a.subtype, a.current_balance, a.credit_limit,
+        f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.type, a.subtype, a.current_balance, a.credit_limit,
                   a.updated_at, i.institution_name, i.institution_id FROM accounts a JOIN items i ON i.item_id = a.item_id
-           WHERE i.removed_at IS NULL AND a.type IN ('credit', 'loan') ORDER BY i.created_at, a.name""").fetchall()
+           WHERE i.removed_at IS NULL AND a.type IN ('credit', 'loan') AND {account_policy_sql("a")}
+           ORDER BY i.created_at, a.name""").fetchall()
     cards, loans, others = [], [], []
     for a in plaid:
         l = liab.get(a["account_id"])
@@ -287,7 +298,7 @@ def debt(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
                           "next_payment": base["due_date"], "last_payment": None, "payments": [], "history": [],
                           "match_pattern": None, "balance_as_of": None, "stale": False})
     for r in manual.rows(conn):
-        if r["kind"] not in manual.LIABILITY_KINDS:
+        if r["kind"] not in manual.LIABILITY_KINDS or insights.manual_nw_id(r["id"]) in policy:
             continue
         m = manual.describe(conn, r, today)
         base = {"id": m["id"], "manual": True, "name": m["name"], "official_name": None, "institution": m["institution"],

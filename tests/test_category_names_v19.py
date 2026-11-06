@@ -110,7 +110,7 @@ def test_v18_to_v19_renames_by_id_and_refiles_only_plaid_defaults(data_dir):
     raw.close()
 
     conn = db.connect(path)   # the app's own startup path upgrades it
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     # the names, each on its old id; the category Other keeps its name, in the group now called Misc
     now = dict(rows(conn, "SELECT name, id FROM categories"))
     assert {n: now[n] for n in ("Other Transport", "Other Shopping", "Other Health", "Other")} == \
@@ -164,7 +164,7 @@ def test_v18_to_v19_renames_by_id_and_refiles_only_plaid_defaults(data_dir):
         conn.execute("PRAGMA user_version = 18")                  # as if it stopped before v19 was written
     conn.close()
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert snapshot(conn) == done
     # the next sync's classify agrees with where v19 put Plaid's defaults
     classify.apply(conn)
@@ -197,7 +197,7 @@ def test_a_hand_made_category_with_the_new_name_stops_the_upgrade_and_writes_not
     raw.commit()
     raw.close()
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert rows(conn, "SELECT name, monthly_cap FROM categories WHERE id = ?", mine) == [("Mine", 40)]
     assert categories_of(conn) == AFTER
     conn.close()

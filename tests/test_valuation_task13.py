@@ -748,7 +748,7 @@ def test_upgrade_from_v7_rebuilds_asset_valuations_and_keeps_every_row(data_dir)
     raw.close()
 
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     after = [tuple(r)[:10] for r in conn.execute("SELECT * FROM asset_valuations ORDER BY id")]
     assert after == before                                             # every row, every value
     assert [tuple(r)[10:] for r in conn.execute("SELECT * FROM asset_valuations")] == [(None, None, None)] * 2

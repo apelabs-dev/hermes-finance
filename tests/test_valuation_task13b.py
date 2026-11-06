@@ -527,7 +527,7 @@ def test_upgrade_from_v8_links_the_only_auto_loan_and_adds_the_image_cache(data_
     config.ensure_data_dir(path.parent)
     before = make_v8(path)
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     after = [tuple(r) for r in conn.execute("SELECT * FROM manual_accounts ORDER BY id")]
     assert [a[:-1] for a in after] == before                                    # every old value kept
     assert [(r["kind"], r["linked_loan_id"]) for r in conn.execute("SELECT * FROM manual_accounts ORDER BY id")] == \

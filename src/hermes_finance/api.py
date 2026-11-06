@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from . import (alpaca, bills, classify, goals, groupbudget, insights, logos, manual, mcp_state, portfolio, prefs, report, txmeta,
                valuation)
-from .db import now
+from .db import account_policy_sql, now
 
 # Only these image hosts are ever handed to the browser (they're also the CSP img-src).
 IMAGE_HOSTS = frozenset({"plaid-merchant-logos.plaid.com", "plaid-category-icons.plaid.com"})
@@ -292,9 +292,9 @@ def transaction_coverage(conn: sqlite3.Connection) -> str | None:
     Empty items have no observed boundary; ignore them rather than inventing one.
     Removed items and removed transactions do not establish current coverage.
     """
-    return conn.execute("SELECT MAX(first_month) FROM (SELECT MIN(substr(t.date, 1, 7)) AS first_month "
-                        "FROM items i JOIN transactions t ON t.item_id = i.item_id AND t.removed = 0 "
-                        "WHERE i.removed_at IS NULL GROUP BY i.item_id)").fetchone()[0]
+    return conn.execute(f"SELECT MAX(first_month) FROM (SELECT MIN(substr(t.date, 1, 7)) AS first_month "
+                        f"FROM items i JOIN transactions t ON t.item_id = i.item_id AND t.removed = 0 "
+                        f"WHERE i.removed_at IS NULL AND {account_policy_sql('t')} GROUP BY i.item_id)").fetchone()[0]
 
 
 def _totals(conn: sqlite3.Connection, where: list[str], args: list[Any], kind: str, amount: tuple[str, list[Any]],
@@ -338,9 +338,9 @@ def facets(conn: sqlite3.Connection, kind: str, for_categories: tuple[list[str],
     tagged = dict(conn.execute(f"SELECT tt.tag_id, COUNT(DISTINCT v.transaction_id) FROM v_transactions v JOIN transaction_tags tt "
                                f"ON tt.transaction_id = v.transaction_id WHERE {base(w)} GROUP BY tt.tag_id", a).fetchall())
     tags = [{"name": r["name"], "count": tagged.get(r["id"], 0)} for r in conn.execute(
-        "SELECT tg.id, tg.name, COUNT(t.transaction_id) AS n FROM tags tg JOIN transaction_tags tt ON tt.tag_id = tg.id "
-        "JOIN transactions t ON t.transaction_id = tt.transaction_id AND t.removed = 0 "
-        "GROUP BY tg.id ORDER BY n DESC, tg.name COLLATE NOCASE")]
+        f"SELECT tg.id, tg.name, COUNT(t.transaction_id) AS n FROM tags tg JOIN transaction_tags tt ON tt.tag_id = tg.id "
+        f"JOIN transactions t ON t.transaction_id = tt.transaction_id AND t.removed = 0 AND {account_policy_sql('t')} "
+        f"GROUP BY tg.id ORDER BY n DESC, tg.name COLLATE NOCASE")]
     return {"categories": cats, "groups": groups, "uncategorized": uncategorized, "tags": tags}
 
 
@@ -439,12 +439,13 @@ def cards_due(conn: sqlite3.Connection, today: date, days: int = insights.DUE_SO
     return [{"account_id": r["account_id"], "name": r["name"], "institution_name": r["institution_name"],
              "mask": r["mask"], "amount": r["minimum_payment_amount"], "due": r["next_payment_due_date"]}
             for r in conn.execute(
-                """SELECT a.account_id, a.name, a.mask, i.institution_name, l.minimum_payment_amount,
+                f"""SELECT a.account_id, a.name, a.mask, i.institution_name, l.minimum_payment_amount,
                           l.next_payment_due_date
                    FROM liabilities l JOIN accounts a ON a.account_id = l.account_id
                    JOIN items i ON i.item_id = a.item_id
                    WHERE i.removed_at IS NULL AND l.kind = 'credit' AND l.minimum_payment_amount > 0
-                     AND l.next_payment_due_date BETWEEN ? AND ? ORDER BY l.next_payment_due_date""",
+                     AND l.next_payment_due_date BETWEEN ? AND ? AND {account_policy_sql("a")}
+                   ORDER BY l.next_payment_due_date""",
                 (today.isoformat(), end))]
 
 
@@ -590,8 +591,10 @@ def sparks(conn: sqlite3.Connection, today: date, days: int = 60) -> dict[str, l
     """Daily balance per Plaid account for the last `days` days, from real snapshots only."""
     since = date.fromordinal(today.toordinal() - days).isoformat()
     out: dict[str, list[float]] = {}
-    for r in conn.execute("SELECT account_id, current FROM balance_snapshots WHERE date >= ? AND current IS NOT NULL "
-                          "ORDER BY date", (since,)):
+    for r in conn.execute(
+            f"""SELECT s.account_id, s.current FROM balance_snapshots s JOIN accounts a ON a.account_id = s.account_id
+                WHERE s.date >= ? AND s.current IS NOT NULL AND {account_policy_sql("a")}
+                ORDER BY s.date""", (since,)):
         out.setdefault(r["account_id"], []).append(r["current"])
     return out
 
@@ -606,6 +609,10 @@ def accounts(conn: sqlite3.Connection, params: dict[str, str] | None = None,
             for r in conn.execute("SELECT account_id, interest_rate, minimum_payment_amount, next_payment_due_date "
                                   "FROM liabilities WHERE kind = 'credit'")}
     return {**s, "net_worth": insights.net_worth(conn, today=today), "connected_institution_ids": connected,
+            "networth_excluded": insights.networth_excluded(conn),   # Custom's full saved selection, policy included
+            # The sheet's presets, computed over the full eligible universe (policy-hidden ids included): the same
+            # lists `finance networth-custom --reset` / `--preset cash-and-debts` save, so the two cannot drift.
+            "networth_presets": {"everything": [], "cash_and_debts": insights.cash_preset(conn)},
             "manual": manual.summary(conn, today)["accounts"], "sparks": sparks(conn, today),
             "liabilities": liab, "institutions": logos.institutions_payload(conn),
             "valuation": valuation.providers(conn, today),
@@ -638,23 +645,30 @@ def match_preview(conn: sqlite3.Connection, params: dict[str, str], today: date)
     if kind not in manual.MATCH_KINDS:
         raise ApiError(f"kind must be one of {', '.join(manual.MATCH_KINDS)}")
     account_id = int_param(params.get("id"), 0, 0, 999_999_999, "id") or None
+    destination_excluded = (account_id is not None
+                            and insights.manual_nw_id(account_id) in set(insights.excluded_accounts(conn)))
     pattern = text_param(params.get("pattern"), "pattern")
     if not pattern and kind == "credit_card":
+        if destination_excluded:
+            return {"suggestions": []}
         since = date.fromordinal(today.toordinal() - manual.SUGGEST_DAYS).isoformat()
         labels = [" ".join((t["name"] or t["merchant_name"] or "").split())
                   for t in manual.unpaired_card_payments(conn, today, since)]
         return {"suggestions": list(dict.fromkeys(x for x in labels if x))[:5]}
     if not pattern:
+        if destination_excluded:
+            return {"suggestions": []}
         rows = conn.execute(
             f"""SELECT COALESCE(NULLIF(TRIM(t.merchant_name), ''), TRIM(t.name)) AS label, COUNT(*) AS n,
                        MAX(t.date) AS last, t.amount
-                FROM transactions t WHERE t.removed = 0 AND t.pending = 0 AND t.amount > 0 AND {LOAN_PFC}
+                FROM transactions t WHERE t.removed = 0 AND t.pending = 0 AND t.amount > 0 AND {account_policy_sql("t")}
+                  AND {LOAN_PFC}
                 GROUP BY label HAVING n >= 2 ORDER BY last DESC LIMIT 5""").fetchall()
         return {"suggestions": [r["label"] for r in rows if r["label"]]}
     pattern = " ".join(pattern.split())
     if len(pattern) < manual.MATCH_MIN:
         raise ApiError(f"pattern needs at least {manual.MATCH_MIN} characters", field="match_pattern")
-    found = manual.matching_transactions(conn, pattern)
+    found = [] if destination_excluded else manual.matching_transactions(conn, pattern)
     amounts = sorted(t["amount"] for t in found)
     last = found[0] if found else None
     return {"pattern": pattern, "kind": kind, "preview": manual.match_preview(conn, pattern, today, account_id),
@@ -697,7 +711,8 @@ def category_groups(conn: sqlite3.Connection, params: dict[str, str] | None = No
 # Dashboard preferences every device shares (the `settings` table, one JSON value per key). Only the "Where it went"
 # chart reads chart_excluded_categories: no total, budget, alert, pace or read command ever does. networth_excluded
 # (TASK-15) is the Custom net worth's selection, the accounts it leaves out (insights.networth_excluded).
-SETTING_KEYS = ("chart_excluded_categories", "networth_excluded")
+# excluded_accounts is the separate account policy: the accounts left out of every read (db.account_policy_sql).
+SETTING_KEYS = ("chart_excluded_categories", "networth_excluded", "excluded_accounts")
 MAX_EXCLUDED = 50
 
 
@@ -713,6 +728,7 @@ def chart_excluded(conn: sqlite3.Connection) -> list[str]:
 def settings(conn: sqlite3.Connection, params: dict[str, str] | None = None, today: date | None = None) -> dict[str, Any]:
     return {"chart_excluded_categories": chart_excluded(conn), "fixed_categories": list(insights.FIXED_CATEGORIES),
             "networth_excluded": insights.networth_excluded(conn),
+            "excluded_accounts": insights.excluded_accounts(conn),
             "mcp": mcp_settings(conn),
             "prefs": prefs.public(conn)}   # TASK-18: the Settings page's values (sync & alerts, region, ...)
 
@@ -752,16 +768,19 @@ def _chart_setting(conn: sqlite3.Connection, value: Any) -> list[str]:
 
 
 def save_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
-    """{"chart_excluded_categories": [category, ...], "networth_excluded": [account id, ...]}, either or both.
+    """{"chart_excluded_categories": [category, ...], "networth_excluded": [account id, ...],
+    "excluded_accounts": [account id, ...]}, any one or more.
     networth_excluded: the accounts the Custom net worth leaves out, as `finance networth --json` shows their ids (a
     Plaid account_id, or "manual:<id>"). An id that isn't a current account (unknown, archived, a removed bank's) is
-    dropped, and the answer says so in `note` (with `dropped`); the rest is saved."""
+    dropped, and the answer says so in `note` (with `dropped`); the rest is saved.
+    excluded_accounts: the account policy (every read leaves them out). Unlike networth_excluded, an id that isn't a
+    current account is kept, and the answer reports the ones that resolve to no account in `unresolved`."""
     unknown = sorted(set(data) - set(SETTING_KEYS))
     if unknown:
         raise ApiError(f"unknown setting {unknown[0]!r}")
     if not any(k in data for k in SETTING_KEYS):
-        raise ApiError("a setting is required: chart_excluded_categories (a list of category names) or "
-                       "networth_excluded (a list of account ids)", field="chart_excluded_categories")
+        raise ApiError("a setting is required: chart_excluded_categories (a list of category names), "
+                       "networth_excluded or excluded_accounts (a list of account ids)", field="chart_excluded_categories")
     chart = _chart_setting(conn, data["chart_excluded_categories"]) if "chart_excluded_categories" in data else None
     ids = data.get("networth_excluded")
     if "networth_excluded" in data:
@@ -769,17 +788,30 @@ def save_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, A
             raise ApiError("networth_excluded must be a list of account ids", field="networth_excluded")
         if len(ids) > insights.MAX_NETWORTH_EXCLUDED:
             raise ApiError(f"networth_excluded takes at most {insights.MAX_NETWORTH_EXCLUDED} ids", field="networth_excluded")
-    if chart is not None:  # everything is validated by now: both are saved, or (a 400 above) neither
+    policy_ids = data.get("excluded_accounts")
+    if "excluded_accounts" in data:
+        if (not isinstance(policy_ids, list)
+                or not all(isinstance(x, str) and x.strip() for x in policy_ids)):
+            raise ApiError("excluded_accounts must be a list of non-empty account ids", field="excluded_accounts")
+        if len(policy_ids) > insights.MAX_EXCLUDED_ACCOUNTS:
+            raise ApiError(f"excluded_accounts takes at most {insights.MAX_EXCLUDED_ACCOUNTS} ids",
+                           field="excluded_accounts")
+    if chart is not None:  # everything is validated by now: all are saved, or (a 400 above) none
         with conn:
             conn.execute("INSERT INTO settings (key, value, updated_at) VALUES ('chart_excluded_categories', ?, ?) "
                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
                          (json.dumps(chart), now()))
     dropped = insights.save_networth_excluded(conn, ids)[1] if ids is not None else []
+    if policy_ids is not None:
+        insights.save_excluded_accounts(conn, policy_ids)
     out = settings(conn)
     if dropped:
         shown = ", ".join(repr(x[:MAX_TEXT]) for x in dropped[:5]) + (f" and {len(dropped) - 5} more" if len(dropped) > 5 else "")
         out.update(dropped=dropped, note=f"{len(dropped)} unknown account id{'s' if len(dropped) != 1 else ''} dropped "
                                          f"(not a current account): {shown}")
+    if policy_ids is not None:
+        pol = insights.account_policy_status(conn)
+        out.update(unresolved=pol["unresolved"], coverage=pol["coverage"])
     return out
 
 

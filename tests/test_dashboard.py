@@ -679,6 +679,7 @@ def test_chart_exclusions_round_trip_and_persist(dash, conn):
     assert get(dash, "/api/settings")[2] == {"chart_excluded_categories": [],
                                              "fixed_categories": ["Rent & Utilities", "Subscriptions", "Internet & Phone"],
                                              "networth_excluded": [],   # TASK-15: Custom leaves nothing out here
+                                             "excluded_accounts": [],   # the account policy: nothing left out
                                              "mcp": {"allow_writes": False, "last_used": None, "pending": 0},  # TASK-17
                                              "prefs": prefs.public(conn)}   # TASK-18: the Settings page's values
     status, d = post(dash, "/api/settings", {"chart_excluded_categories": ["rent & utilities", "Travel", "Travel"]})

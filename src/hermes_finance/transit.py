@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Iterable
 
 from . import manual
 from .money import money
@@ -61,45 +61,59 @@ def _label(card: sqlite3.Row) -> str:
     return f"{bank} ••{card['mask']}" if card["mask"] else f"{bank} {card['name'] or ''}".strip()
 
 
-def entries(conn: sqlite3.Connection, today: date) -> list[dict[str, Any]]:
+def _not_excluded(alias: str, excluded: set[str]) -> tuple[str, list[str]]:
+    """A NOT IN clause for one alias's account_id, and its parameters (nothing when the policy is empty)."""
+    if not excluded:
+        return "", []
+    marks = ", ".join("?" * len(excluded))
+    return f" AND {alias}.account_id NOT IN ({marks})", list(excluded)
+
+
+def entries(conn: sqlite3.Connection, today: date, excluded: Iterable[str] = ()) -> list[dict[str, Any]]:
     """Today's payments in transit, oldest first: {transaction_id, date, amount, from_account, card_id, card, mask,
-    institution, label, line}."""
+    institution, label, line}. `excluded` is the account policy's id set: an excluded source transaction, candidate
+    card, own-account transfer or posted inflow never contributes to the adjustment."""
+    skip = set(excluded)
+    card_clause, card_args = _not_excluded("a", skip)
     cards = conn.execute(
-        """SELECT a.account_id, a.name, a.mask, a.current_balance, i.institution_name FROM accounts a
-           JOIN items i ON i.item_id = a.item_id WHERE i.removed_at IS NULL AND a.type = 'credit'
-           ORDER BY i.created_at, a.account_id""").fetchall()
+        f"""SELECT a.account_id, a.name, a.mask, a.current_balance, i.institution_name FROM accounts a
+           JOIN items i ON i.item_id = a.item_id WHERE i.removed_at IS NULL AND a.type = 'credit'{card_clause}
+           ORDER BY i.created_at, a.account_id""", card_args).fetchall()
     if not cards:
         return []
     since = (today - timedelta(days=DAYS)).isoformat()
+    source_clause, source_args = _not_excluded("t", skip)
     rows = conn.execute(
         f"""SELECT t.transaction_id, t.account_id, t.date, t.name, t.merchant_name, t.amount, a.name AS account_name,
                    a.mask AS account_mask
             FROM transactions t JOIN accounts a ON a.account_id = t.account_id JOIN items i ON i.item_id = t.item_id
             WHERE t.removed = 0 AND t.pending = 0 AND t.amount > 0 AND a.type = 'depository' AND i.removed_at IS NULL
-              AND t.date >= ? AND t.date <= ? AND {manual.CARD_PAYMENT_SQL}
-            ORDER BY t.date, t.transaction_id""", (since, today.isoformat())).fetchall()
+              AND t.date >= ? AND t.date <= ? AND {manual.CARD_PAYMENT_SQL}{source_clause}
+            ORDER BY t.date, t.transaction_id""", (since, today.isoformat(), *source_args)).fetchall()
     owed = {c["account_id"]: c["current_balance"] or 0.0 for c in cards}
     answered: set[str] = set()
     out = []
+    transfer_clause, transfer_args = _not_excluded("u", skip)
+    inflow_clause, inflow_args = _not_excluded("transactions", skip)
     for t in rows:
         card = _card(f"{t['name'] or ''} {t['merchant_name'] or ''}".casefold(), cards)
         if card is None:
             continue
         # a transfer to another of your own bank accounts, not a card payment
         if conn.execute(
-                """SELECT 1 FROM transactions u JOIN accounts a ON a.account_id = u.account_id
+                f"""SELECT 1 FROM transactions u JOIN accounts a ON a.account_id = u.account_id
                    JOIN items i ON i.item_id = u.item_id
                    WHERE u.removed = 0 AND i.removed_at IS NULL AND a.type = 'depository' AND u.account_id <> ?
-                     AND ABS(-u.amount - ?) <= ? AND ABS(julianday(u.date) - julianday(?)) <= ?""",
-                (t["account_id"], t["amount"], CENTS + 1e-9, t["date"], DAYS)).fetchone():
+                     AND ABS(-u.amount - ?) <= ? AND ABS(julianday(u.date) - julianday(?)) <= ?{transfer_clause}""",
+                (t["account_id"], t["amount"], CENTS + 1e-9, t["date"], DAYS, *transfer_args)).fetchone():
             continue
         if manual.card_pair(conn, t["transaction_id"]):
             continue
         inflow = next((r[0] for r in conn.execute(
-            """SELECT transaction_id FROM transactions WHERE account_id = ? AND removed = 0 AND amount < 0
-                 AND ABS(-amount - ?) <= ? AND ABS(julianday(date) - julianday(?)) <= ?
+            f"""SELECT transaction_id FROM transactions WHERE account_id = ? AND removed = 0 AND amount < 0
+                 AND ABS(-amount - ?) <= ? AND ABS(julianday(date) - julianday(?)) <= ?{inflow_clause}
                ORDER BY ABS(julianday(date) - julianday(?)), date, transaction_id""",
-            (card["account_id"], t["amount"], CENTS + 1e-9, t["date"], DAYS, t["date"]))
+            (card["account_id"], t["amount"], CENTS + 1e-9, t["date"], DAYS, *inflow_args, t["date"]))
             if r[0] not in answered), None)
         if inflow is not None:          # the card posted it
             answered.add(inflow)

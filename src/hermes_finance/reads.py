@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from . import api, insights, manual, portfolio, report, txmeta, usage, valuation
+from .db import account_policy_sql
 from .money import money2
 
 _r = insights._r
@@ -234,8 +235,9 @@ def _accounts(conn: sqlite3.Connection, query: str) -> tuple[dict[str, Any], ...
     q = _text(query, "--account")
     fold = q.casefold()
     rows = conn.execute(
-        """SELECT a.account_id, a.name, a.official_name, a.mask, a.type, i.institution_name
+        f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.type, i.institution_name
            FROM accounts a LEFT JOIN items i ON i.item_id = a.item_id
+           WHERE {account_policy_sql("a")}
            ORDER BY i.created_at, a.name, a.account_id""").fetchall()
     tiers = (lambda a: a["account_id"] == q,
              lambda a: a["mask"] == q,
@@ -471,7 +473,8 @@ def networth(conn: sqlite3.Connection, today: date, history: bool = False, custo
     for m in manual.summary(conn, today)["accounts"]:
         nw_id = insights.manual_nw_id(m["id"])
         by_group[m["group"]].append(
-            {"source": "manual", "id": m["id"], "nw_id": nw_id, "counted": nw_id not in left, "name": m["name"],
+            {"source": "manual", "id": m["id"], "nw_id": nw_id, "counted": nw_id not in left and not m.get("excluded"),
+             "excluded": bool(m.get("excluded")), "name": m["name"],
              "mask": None, "institution": m["institution"], "type": m["kind"], "subtype": m["subtype_label"],
              "balance": m["balance"], "signed": m["signed"], "limit": m["credit_limit"], "as_of": m["as_of"],
              "stale": m["stale"], "approx": m.get("approx", False),
@@ -501,6 +504,7 @@ def networth(conn: sqlite3.Connection, today: date, history: bool = False, custo
         "mode": "cash_only" if cash_only else "custom" if custom else "all",
         "assets": top["assets"], "debts": top["debts"], "net": top["net"],
         "custom": nw["custom"],
+        "policy": nw["policy"],
         **({"cash_only": {k: nw["custom"][k] for k in ("assets", "debts", "net")}} if cash_only else {}),
         "groups": groups,
         # TASK-22: card payments in transit, counted in the net above (in Custom, only those to a card it counts)
@@ -523,7 +527,7 @@ def networth_custom(conn: sqlite3.Connection, today: date, changed: bool | None 
             "custom": {k: nw["custom"][k] for k in ("assets", "debts", "net")}, "all": {k: nw[k] for k in ("assets", "debts", "net")},
             "accounts": [{**{k: a[k] for k in ("id", "source", "name", "mask", "institution", "kind", "group")},
                           "group_label": labels[a["group"]], "balance": _r(a["balance"]), "signed": a["signed"],
-                          "counted": a["id"] not in left} for a in accounts]}
+                          "excluded": a["excluded"], "counted": a["counted"] and a["id"] not in left} for a in accounts]}
 
 
 def valuation_json(m: dict[str, Any]) -> dict[str, Any]:

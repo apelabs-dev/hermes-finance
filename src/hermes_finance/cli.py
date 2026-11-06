@@ -138,7 +138,7 @@ def cmd_sync(args) -> int:
         emit(r.summary())
     ok = sum(r.ok for r in results)
     emit(f"synced {ok}/{len(results)} item(s)")
-    c = syncnow.changes(before, syncnow.balances(conn), results)
+    c = syncnow.changes(before, syncnow.balances(conn), results, insights.excluded_accounts(conn))
     if c["text"]:   # (none when no bank synced)
         emit(syncnow.summary_line(c))   # TASK-22: as the page's toast
     if fail:
@@ -501,6 +501,10 @@ def cmd_match_payments(args) -> int:
     for x in out["unapplied"]:
         emit(f"{'would take back' if args.dry_run else 'took back'} {x['transaction_id']} from #{x['loan_id']} "
              f"{x['loan']}: {x['reason']}")
+    # A row the account policy keeps but stops counting is a state, not an event: it is still stored and counts again
+    # the moment the source is back, so it never uses removal wording and never claims a take-back happened.
+    for x in out.get("not_counted", []):
+        emit(f"not counted: {x['transaction_id']} on #{x['loan_id']} {x['loan']}: {x['reason']}")
     for x in out["skipped"]:
         emit(f"skipped {x['transaction_id']} for #{x['loan_id']}: {x['reason']}")
     emit(f"{name}: {len(out['applied'])} payment(s) {verb}" + (" (dry run, nothing written)" if args.dry_run else ""))
@@ -757,6 +761,81 @@ def cmd_networth_custom(args) -> int:
     return 0
 
 
+def _policy_args(values) -> list[str]:
+    """Flatten repeatable --exclude / --include flags (each takes one or more ids)."""
+    out: list[str] = []
+    for value in values or []:
+        for x in value if isinstance(value, list) else [value]:
+            if x and x not in out:
+                out.append(x)
+    return out
+
+
+def _policy_import(path: str) -> list[str]:
+    """Read an import file: a JSON list of ids, or {"excluded_accounts": [...]}. Raises ValueError on anything else."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except OSError as e:
+        raise ValueError(f"can't read {path}: {e.strerror or e}") from None
+    if isinstance(data, dict):
+        if "excluded_accounts" not in data:
+            raise ValueError('the object needs an "excluded_accounts" list')
+        data = data["excluded_accounts"]
+    if not isinstance(data, list) or not all(isinstance(x, str) and x.strip() for x in data):
+        raise ValueError("the file must hold a JSON list of non-empty account ids")
+    return data
+
+
+def cmd_account_policy(args) -> int:
+    """List, or change, the accounts left out of every read (the `excluded_accounts` setting).
+    Malformed input exits 2 and saves nothing; an id that isn't a current account is still saved (reported unresolved)."""
+    exclude, include = _policy_args(args.exclude), _policy_args(args.include)
+    both = sorted(set(exclude) & set(include))
+    if both:
+        emit(f"error: both --exclude and --include: {', '.join(map(repr, both))}", sys.stderr)
+        return 2
+    imported: list[str] | None = None
+    if args.import_file:
+        try:
+            imported = _policy_import(args.import_file)
+        except ValueError as e:
+            emit(f"error: {e}", sys.stderr)
+            return 2
+    conn = db.connect()
+    try:
+        current = insights.excluded_accounts(conn)
+        changed = bool(args.clear or args.import_file or exclude or include)
+        if changed:
+            new = [] if args.clear else list(imported if imported is not None else current)
+            new = [x for x in new if x not in include]
+            for x in exclude:
+                if x not in new:
+                    new.append(x)
+            insights.save_excluded_accounts(conn, new)
+        saved = insights.excluded_accounts(conn)
+        pol = insights.account_policy_status(conn)
+    finally:
+        conn.close()
+    payload = {"excluded_accounts": saved, "unresolved": pol["unresolved"], "count": len(saved),
+               "resolved_count": pol["resolved_count"], "coverage": pol["coverage"]}
+    if args.json:
+        emit_json(payload)
+        return 0
+    if not saved:
+        if pol["coverage"] == "invalid":
+            emit("Account policy: the saved setting is invalid; no account ids apply.")
+        else:
+            emit("Account policy: nothing excluded; every account counts.")
+        return 0
+    emit(f"Account policy: {len(saved)} excluded, {len(pol['unresolved'])} unresolved ({pol['coverage']})")
+    for a in pol["accounts"]:
+        emit(f"  {report.account_name(a['name'], a['mask']) or '?'} ••{a['mask'] or '----'}  "
+             f"{a['institution'] or '?'}  ({a['kind']})")
+    for x in pol["unresolved"]:
+        emit(f"  unresolved: {x}")
+    return 0
+
+
 def cmd_bills(args) -> int:
     return _read(args, lambda conn, today: reads.bills(
         conn, today, reads.parse_days(args.next, "--next", 0, reads.MAX_NEXT_DAYS, bare=True)), reads.bills_text)
@@ -925,6 +1004,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--list", action="store_true", help="every account with its id and whether Custom counts it (the default)")
     s.add_argument("--json", action="store_true", help="print the JSON described below")
     s.set_defaults(func=cmd_networth_custom)
+
+    s = sub.add_parser("account-policy", help="list or change the accounts left out of every read",
+                       description="List or change the account policy: the accounts left out of spending, holdings, "
+                                   "net worth and every other read. Stored separately from Custom net worth's selection.",
+                       epilog="An id is a Plaid account_id, or manual:<id>. An id that is not a current account is kept "
+                              "(a bank can be temporarily removed) and reported as unresolved.",
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    s.add_argument("--exclude", action="append", nargs="+", metavar="ID", help="leave these accounts out (repeatable)")
+    s.add_argument("--include", action="append", nargs="+", metavar="ID", help="count these accounts again (repeatable)")
+    s.add_argument("--import", dest="import_file", metavar="FILE",
+                   help='load a JSON list of ids, or {"excluded_accounts": [...]} (replaces the saved list)')
+    s.add_argument("--clear", action="store_true", help="count every account (empty the policy)")
+    s.add_argument("--list", action="store_true", help="show the saved policy and whether each id resolves (the default)")
+    s.add_argument("--json", action="store_true", help="print the saved ids, the unresolved ids and the count")
+    s.set_defaults(func=cmd_account_policy)
 
     for name, help_ in (("match-payments", "apply new bank payments to loans and credit cards by their match pattern "
                                            "(source auto; never a connected card's payment)"),

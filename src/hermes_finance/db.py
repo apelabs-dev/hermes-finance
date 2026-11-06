@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import config
 
-SCHEMA_VERSION = 19  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
+SCHEMA_VERSION = 20  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
                      # 4: manual_accounts, manual_balance_history, loan_payments, holding_snapshots;
                      # 5: institutions, security_logos; 6: settings;
                      # 7: manual_accounts vin..value_source, asset_valuations, vin_decodes, api_usage, api_calls;
@@ -41,6 +41,9 @@ SCHEMA_VERSION = 19  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_revie
                      # 19 (category names): Transport / Shopping / Health -> Other Transport / Other Shopping / Other
                      #    Health and the group Other -> Misc, by id (_v19_rename); new icons, catch-alls last, and the
                      #    Plaid defaults re-filed by today's map (_v19_schema)
+                     # 20 (account policy): view-only change. v_transactions filters accounts in the
+                     #    `excluded_accounts` denylist, so spending, budgets, cash flow and the transaction lists inherit
+                     #    it; the view is recreated by init_schema (no table or data change)
 
 # Estimated values of manual vehicles (the Carfax trade-in) and properties (the Redfin Estimate): one row per successful
 # lookup, never updated. Rows 'marketcheck' / 'rentcast' (before TASK-13b) stay as history, never shown or used.
@@ -573,7 +576,55 @@ def _migrate_task18(conn: sqlite3.Connection, before: int) -> None:
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_fitid ON transactions(account_id, fitid) "
                  "WHERE fitid IS NOT NULL")
 
-VIEWS = """
+# The account inclusion policy: one denylist setting, shared by every read that aggregates accounts or transactions.
+# A JSON list of ids in the same space insights.networth_excluded uses (a Plaid account_id, or "manual:<id>"). It is
+# deliberately separate from networth_excluded (Custom net worth's own selection) and chart_excluded_categories.
+ACCOUNT_POLICY_KEY = "excluded_accounts"
+
+
+def account_policy_value(raw: str | None) -> tuple[list[str], str]:
+    """The one shape validator for ACCOUNT_POLICY_KEY, shared by the SQL predicate and insights.excluded_accounts.
+
+    Returns (ids, shape). Only a JSON array's non-empty string ids apply; every other type is ignored. shape is
+    "missing" (no setting), "valid" (a list of non-empty strings, or an empty list), "partial" (an array with a value
+    that isn't a non-empty string, so the string ids still apply) or "invalid" (not JSON, or JSON that isn't an array).
+    An absent, malformed or non-list value therefore excludes nothing, in SQL and Python alike."""
+    if raw is None:
+        return [], "missing"
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return [], "invalid"
+    if not isinstance(value, list):
+        return [], "invalid"
+    ids: list[str] = []
+    bad = False
+    for x in value:
+        if isinstance(x, str) and x:
+            if x not in ids:
+                ids.append(x)
+        else:
+            bad = True
+    return ids, "partial" if bad else "valid"
+
+
+def account_policy_sql(alias: str, column: str = "account_id") -> str:
+    """The one policy predicate: a row counts unless its account id is in ACCOUNT_POLICY_KEY.
+
+    NULL-safe and corrupt-setting-safe: an empty or NULL id is never hidden (NULL NOT IN (...) is NULL), and only a
+    JSON array's string ids apply (account_policy_value's shape). A malformed setting or a scalar/object reads as an
+    empty list, as it does in Python. `alias` is an internal table alias, never user input; `column` lets a manual
+    account id be composed into the same comparison."""
+    ref = f"{alias}.{column}"
+    return (f"({ref} IS NULL OR {ref} = '' OR NOT EXISTS ("
+            "SELECT 1 FROM settings s, "
+            "json_each(CASE WHEN json_valid(s.value) THEN "
+            "CASE WHEN json_type(s.value) = 'array' THEN s.value ELSE '[]' END ELSE '[]' END) j "
+            f"WHERE s.key = '{ACCOUNT_POLICY_KEY}' AND typeof(j.value) = 'text' AND j.value <> '' "
+            f"AND j.value = {ref}))")
+
+
+VIEWS = f"""
 DROP VIEW IF EXISTS v_monthly_category_spend;
 DROP VIEW IF EXISTS v_transactions;
 DROP VIEW IF EXISTS v_items;
@@ -644,7 +695,7 @@ LEFT JOIN plaid_category_map pm ON pm.pfc_code = t.pfc_primary
 LEFT JOIN categories cat        ON cat.id = COALESCE(
     c.category_id, dm.category_id, pm.category_id,
     (SELECT id FROM categories WHERE name = 'Other'))
-WHERE t.removed = 0;
+WHERE t.removed = 0 AND {account_policy_sql("t")};
 
 CREATE VIEW v_monthly_category_spend AS
 SELECT

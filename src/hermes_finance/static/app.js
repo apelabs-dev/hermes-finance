@@ -794,6 +794,8 @@
     return !g.custom.count ? 'off' : g.custom.count < g.count ? 'part' : 'on';
   }
   const notCounted = () => tag('Not counted', 'nct', 'Not counted in the Custom net worth');  // shown in Custom only
+  const notCountedPolicy = () => tag('Not counted', 'nct', 'Not counted: excluded by the account policy');
+  const manualCountedTag = (m) => m.excluded ? notCountedPolicy() : leftOut(manualNwId(m.id)) ? notCounted() : null;
   function ownOwe(w) {  // the Own / Owe bar's two parts (negative assets show no green)
     const own = Math.max(w.assets, 0);
     const owe = Math.max(w.debts, 0);
@@ -2086,15 +2088,15 @@
 
   function manualRow(items) {
     const rows = items.map((m) => (['vehicle', 'property'].includes(m.kind)
-      ? h('a', {class: 'ac', href: `#/asset/${m.id}`}, h('span', {}, acctName(m.name)), leftOut(manualNwId(m.id)) ? notCounted() : null,
+      ? h('a', {class: 'ac', href: `#/asset/${m.id}`}, h('span', {}, acctName(m.name)), manualCountedTag(m),
         h('span', {class: 'v'}, money(m.signed)))
-      : h('div', {class: 'ac'}, h('span', {}, acctName(m.name)), leftOut(manualNwId(m.id)) ? notCounted() : null,
+      : h('div', {class: 'ac'}, h('span', {}, acctName(m.name)), manualCountedTag(m),
         h('span', {class: 'v'}, `${m.approx ? '≈ ' : ''}${money(m.signed)}`))));
     rows.push(h('a', {class: 'go', href: '#/accounts'}, 'Accounts →'));
     return sideGroup('accts-manual', {
       label: 'Added by you',
       link: h('a', {class: 'link', href: '#/accounts'}, ibadge('pencil', RGB.warn, 'xs'), h('span', {class: 'nm'}, 'Added by you'),
-        h('span', {class: 'v'}, money(sum(items, (m) => m.signed)))),
+        h('span', {class: 'v'}, money(sum(items.filter((m) => !m.excluded), (m) => m.signed)))),
     }, rows, false);
   }
 
@@ -4123,7 +4125,10 @@
       }
     }
     plaid.sort((x, y) => y.balance - x.balance);  // as on the Accounts page: largest first, then what you added
-    const mine = d.manual.filter((m) => !m.archived_at).map((m) => ({id: manualNwId(m.id), group: m.group, name: m.name, mask: null,
+    // The account policy is not a Custom switch: an account it leaves out is never counted and never offered as
+    // countable here (it stays manageable on Accounts). The count below names it so the total stays honest.
+    const policyExcluded = d.manual.filter((m) => !m.archived_at && m.excluded).length;
+    const mine = d.manual.filter((m) => !m.archived_at && !m.excluded).map((m) => ({id: manualNwId(m.id), group: m.group, name: m.name, mask: null,
       balance: m.balance, sub: [KIND[m.kind].label, m.institution].filter(Boolean).join(' · '),
       art: () => manualChip(m.institution, 's') || ibadge(KIND[m.kind].i, KIND[m.kind].c, 's')}));
     for (const r of [...plaid, ...mine]) {
@@ -4131,9 +4136,19 @@
       if (x) x.rows.push({...r, asset: x.g.asset, signed: x.g.asset ? r.balance : -r.balance});
     }
     const all = groups.flatMap((x) => x.rows);
-    const off = new Set(pending ? pending.filter((id) => all.some((r) => r.id === id)) : all.filter((r) => leftOut(r.id)).map((r) => r.id));
+    const visible = new Set(all.map((r) => r.id));
+    // The sheet edits the full saved selection, not just the rows it can show: an account the account policy hides is
+    // still a Custom preference and must survive an ordinary edit to a visible row.
+    const saved = d.networth_excluded || [];
+    const off = new Set(pending || saved);
     const cents = (x) => Math.round((Number(x) || 0) * 100);
-    const presets = [['Everything', []], ['Cash & debts', all.filter((r) => r.asset && r.group !== 'cash').map((r) => r.id)]]
+    // A preset is absolute: the server computes it over the full eligible universe (policy-hidden ids included), so
+    // it saves exactly what the same CLI preset saves and clearing the policy cannot flip it afterwards. Ordinary
+    // switch edits and group switches only touch the rows shown, so hidden ids still survive those; a preset replaces
+    // the whole selection.
+    const presetIds = d.networth_presets
+      || {everything: [], cash_and_debts: all.filter((r) => r.asset && r.group !== 'cash').map((r) => r.id)};
+    const presets = [['Everything', presetIds.everything], ['Cash & debts', presetIds.cash_and_debts]]
       .map(([label, ids]) => [h('button', {type: 'button', class: 'fchip', 'aria-pressed': 'false', onclick: () => {
         off.clear();
         ids.forEach((id) => off.add(id));
@@ -4203,13 +4218,20 @@
       bar.setAttribute('aria-label', `Own ${money(w.assets)}, owe ${money(w.debts)}`);
       fill(ownowe, h('span', {}, 'Own ', h('b', {class: 'pos v'}, money2(w.assets))), h('span', {}, 'Owe ', h('b', {class: 'bad v'}, money2(w.debts))));
       fill(transit, paid.map(transitLine));
-      count.textContent = off.size ? `${off.size} of ${plural(all.length, 'account')} not counted` : `all ${plural(all.length, 'account')} counted`;
+      const offVisible = all.filter((r) => off.has(r.id)).map((r) => r.id);
+      count.textContent = offVisible.length ? `${offVisible.length} of ${plural(all.length, 'account')} not counted`
+        : `all ${plural(all.length, 'account')} counted`;
       groups.forEach((x) => x.sync());
-      for (const [btn, ids] of presets) btn.setAttribute('aria-pressed', String(ids.length === off.size && ids.every((i) => off.has(i))));
+      for (const [btn, ids] of presets) {
+        // Compare the part of the preset the sheet can show: a preset list that includes hidden ids still reads as
+        // pressed while its visible rows match (the hidden ids are already excluded by the account policy).
+        const shown = ids.filter((id) => visible.has(id));
+        btn.setAttribute('aria-pressed', String(shown.length === offVisible.length && shown.every((i) => off.has(i))));
+      }
     };
     // No Save / Cancel (2026-09-27 review): closing the sheet (×, Escape, a tap outside) saves what changed and
     // leaves the page in Custom. Nothing changed: nothing is sent. A failed save says so and offers to try again.
-    const before = all.filter((r) => leftOut(r.id)).map((r) => r.id).sort().join('|');  // what's saved now
+    const before = [...saved].sort().join('|');  // the full stored selection, hidden ids included
     const persist = async () => {
       rememberNwMode('custom');
       const ids = [...off];
@@ -4231,6 +4253,7 @@
     const head = h('div', {class: 'nwhead'},
       h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, 'Custom net worth'), closeBtn()),
       h('p', {}, 'Switch off what shouldn’t count. Changes save when you close.'),
+      policyExcluded ? h('p', {class: 'nwnote'}, `${plural(policyExcluded, 'account')} excluded by the account policy, so not counted here`) : null,
       h('div', {class: 'nwprev'}, h('div', {class: 'nwpl'}, h('span', {}, 'Custom'), count), h('div', {'aria-live': 'polite'}, figure), bar, ownowe, transit),
       h('div', {class: 'nwpre'}, h('span', {}, 'Start from'), presets.map(([btn]) => btn)));
     openSheet([head, h('div', {class: 'nwlist'}, sections.length ? sections : msgBox('No accounts yet', 'Connect a bank or add an account first.'))],

@@ -57,8 +57,10 @@ class GoalError(Exception):
 # --- accounts a goal can follow ---------------------------------------------------------------------------------------
 
 def accounts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every current account (net worth's list: connected Plaid accounts, manual accounts, Alpaca) with its group."""
-    return insights.networth_accounts(conn)
+    """Every current account a goal can follow (net worth's counted list: connected Plaid accounts, manual accounts,
+    Alpaca) with its group. An account the account policy leaves out is not offered, suggested or accepted: a goal must
+    not read what every other read hides."""
+    return insights.counted_networth_accounts(conn)
 
 
 def _asset(a: dict[str, Any]) -> bool:

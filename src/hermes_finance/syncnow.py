@@ -43,9 +43,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
-from . import config, db, prefs, report
+from . import config, db, insights, prefs, report
 from .money import money
 from .db import now
 from .plaid import PlaidClient, PlaidError
@@ -215,7 +215,10 @@ def plan(conn: sqlite3.Connection, item_id: str | None = None, refresh: bool = F
 
 def balances(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     """Every connected account's current balance, with the label a change is shown with ("Chase ••1234") and what
-    TASK-22f's panel draws its row with (the bank and its logo, the account's name, ••last 4 and type)."""
+    TASK-22f's panel draws its row with (the bank and its logo, the account's name, ••last 4 and type). `excluded` is
+    the saved account policy: an account it leaves out is stored exactly as before, but a change to it is not
+    observable (changes() drops it), so no caller can surface one by forgetting to pass the policy."""
+    policy = set(insights.excluded_accounts(conn))
     out = {}
     for a in conn.execute("""SELECT a.account_id, a.name, a.mask, a.type, a.subtype, a.current_balance, i.item_id,
                                     i.institution_name, i.institution_id FROM accounts a
@@ -224,7 +227,7 @@ def balances(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
         out[a["account_id"]] = {"label": f"{bank} ••{a['mask']}" if a["mask"] else f"{bank} {a['name'] or ''}".strip(),
                                 "balance": a["current_balance"], "item_id": a["item_id"], "bank": bank,
                                 "institution_id": a["institution_id"], "name": a["name"], "mask": a["mask"],
-                                "type": a["type"], "subtype": a["subtype"]}
+                                "type": a["type"], "subtype": a["subtype"], "excluded": a["account_id"] in policy}
     return out
 
 
@@ -233,14 +236,20 @@ def usd(value: float | None) -> str:
 
 
 def changes(before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]],
-            results: list[ItemSyncResult]) -> dict[str, Any]:
+            results: list[ItemSyncResult], excluded: Iterable[str] = ()) -> dict[str, Any]:
     """{new, updated, removed, balances: [{account_id, label, before, after, item_id, bank, institution_id, name, mask,
-    type, subtype}], text}: the balances largest move first (TASK-22f). The text is None when no bank synced (TASK-22c:
-    never "Nothing new" then)."""
+    type, subtype}], text}: the balances largest move first (TASK-22f). The text is None when no bank synced
+    successfully (TASK-22c: never "Nothing new" then, even when a failed Item did commit balances or holdings).
+    `excluded` is the account policy: its ids never appear in the observable balance rows or
+    text (storage and the sync itself are untouched). An account balances() already marked `excluded` is dropped too,
+    so a direct 3-argument call cannot surface one by leaving the policy out."""
+    skip = set(excluded) | {aid for aid, a in after.items() if a.get("excluded")}
     committed = [r for r in results if r.transactions_ok]   # (a partial Item still brought these in)
     new, updated, removed = (sum(getattr(r, k) for r in committed) for k in ("added", "modified", "removed"))
     moved = []
     for aid, a in after.items():   # (an account the sync just added has no balance that moved)
+        if aid in skip:
+            continue
         was = before[aid]["balance"] if aid in before else a["balance"]
         if a["balance"] != was and not (a["balance"] is not None and was is not None and abs(a["balance"] - was) < 0.005):
             moved.append({"account_id": aid, "label": a["label"], "before": was, "after": a["balance"],
@@ -250,7 +259,7 @@ def changes(before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]],
     parts += [f"{updated} updated"] if updated else []
     parts += [f"{removed} removed"] if removed else []
     parts += [f"{m['label']} {usd(m['before']) if m['before'] is not None else 'new'} → {usd(m['after'])}" for m in moved]
-    landed = any(r.landed for r in results)
+    landed = any(r.ok for r in results)
     return {"new": new, "updated": updated, "removed": removed, "balances": moved,
             "text": " · ".join(parts) if parts else "Nothing new" if landed else None}
 
@@ -412,7 +421,7 @@ def finish(conn: sqlite3.Connection, p: dict[str, Any]) -> dict[str, Any]:
         previous = _last_sync(conn)   # TASK-22f: "Nothing new since 6:31 AM."
         mark, before = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM transactions").fetchone()[0], balances(conn)
         results = sync_items(conn, plaid, p["sync"]) if p["sync"] else []
-        c = changes(before, balances(conn), results) | new_transactions(
+        c = changes(before, balances(conn), results, insights.excluded_accounts(conn)) | new_transactions(
             conn, mark, [r.item_id for r in results if r.transactions_ok])
     finally:
         _release(p)

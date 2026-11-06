@@ -25,3 +25,10 @@ data-review/
 
 # untracked private words for scripts/dehardcode.py (docs/dehardcode.md)
 .private-words
+
+# Cloudflare wrangler local account/token cache: never tracked, never exported
+.wrangler/
+**/.wrangler/
+
+# the local symlink to the live database directory
+/data

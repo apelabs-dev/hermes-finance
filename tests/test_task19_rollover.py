@@ -240,6 +240,30 @@ def strip_new(d: dict) -> dict:
     for blk in (out.get("networth"), (out.get("accounts") or {}).get("net_worth")):
         if isinstance(blk, dict) and blk.get("in_transit") == []:
             del blk["in_transit"]
+    # account policy (#12): the payload gained these keys; the denylist blocks and per-account flags are set aside, and
+    # every pre-existing number — balance, net, totals, per-row amounts — is still compared exactly. A policy that
+    # actually excluded an account on a gate DB would change those numbers and must still fail here.
+    acc = out.get("accounts")
+    if isinstance(acc, dict):
+        for k in ("account_policy", "networth_excluded", "networth_presets"):
+            acc.pop(k, None)
+        if isinstance(acc.get("net_worth"), dict):
+            acc["net_worth"] = {k: v for k, v in acc["net_worth"].items() if k != "policy"}
+        for item in acc.get("items") or []:
+            if isinstance(item, dict):
+                for k in ("excluded_account_count", "excluded_transaction_count"):
+                    item.pop(k, None)
+                item["accounts"] = [{k: v for k, v in a.items() if k != "excluded"}
+                                    for a in item.get("accounts") or [] if isinstance(a, dict)]
+        acc["manual"] = [{k: v for k, v in m.items() if k != "excluded"}
+                         for m in acc.get("manual") or [] if isinstance(m, dict)]
+    if isinstance(out.get("networth"), dict):
+        out["networth"] = {k: v for k, v in out["networth"].items() if k != "policy"}
+        if isinstance(out["networth"].get("groups"), list):
+            out["networth"]["groups"] = [
+                {**g, "accounts": [{k: v for k, v in a.items() if k != "excluded"}
+                                   for a in g.get("accounts") or [] if isinstance(a, dict)]}
+                if isinstance(g, dict) else g for g in out["networth"]["groups"]]
     # polish acctchange (26d0185): each net-worth group carries its `month_start` / `month_change`, set aside as new
     for blk, key in ((out.get("networth"), "groups"), ((out.get("accounts") or {}).get("net_worth"), "breakdown")):
         if isinstance(blk, dict) and isinstance(blk.get(key), list):

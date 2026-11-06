@@ -570,7 +570,7 @@ def test_an_older_database_upgrades_to_v18(tmp_path, monkeypatch, start):
     conn.close()
     conn = db.connect(path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
         assert {"group_budgets", "group_budget_kept"} <= _tables(conn)
         assert caps_now(conn) == caps                                   # no cap touched
         cols = {r[1] for r in conn.execute("PRAGMA table_info(group_budgets)")}
@@ -580,7 +580,7 @@ def test_an_older_database_upgrades_to_v18(tmp_path, monkeypatch, start):
         groupbudget.apply_move(conn, {"groups": [{"group": "Health", "choice": "keep"}]})
         snap = state(conn)
         db.init_schema(conn)                                            # a rerun changes nothing
-        assert state(conn) == snap and conn.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert state(conn) == snap and conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     finally:
         conn.close()
 
@@ -592,7 +592,7 @@ def test_a_partly_applied_v18_resumes(conn):
         conn.execute("DROP TABLE group_budget_kept")
         conn.execute("PRAGMA user_version = 17")
     db.init_schema(conn)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert groupbudget.amounts(conn) == {"Food": 500.0}                 # kept as it was
     assert "group_budget_kept" in _tables(conn) and groupbudget.kept(conn) == set()
 

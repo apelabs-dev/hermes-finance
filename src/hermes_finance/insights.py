@@ -27,7 +27,7 @@ from typing import Any, Iterable, Iterator, Sequence
 
 from . import alpaca, groupbudget, rollover
 from .money import money
-from .db import now
+from .db import ACCOUNT_POLICY_KEY, account_policy_sql, account_policy_value, now
 
 log = logging.getLogger(__name__)
 
@@ -1039,9 +1039,10 @@ def alerts(conn: sqlite3.Connection, month: str, today: date | None = None,
 def first_transaction_dates(conn: sqlite3.Connection) -> dict[str, str]:
     """Earliest transaction date per connected bank (history depth differs a lot between banks)."""
     rows = conn.execute(
-        """SELECT COALESCE(i.institution_name, i.institution_id, i.item_id) AS bank, MIN(t.date)
+        f"""SELECT COALESCE(i.institution_name, i.institution_id, i.item_id) AS bank, MIN(t.date)
            FROM transactions t JOIN items i ON i.item_id = t.item_id
-           WHERE t.removed = 0 AND i.removed_at IS NULL GROUP BY i.item_id ORDER BY bank""")
+           WHERE t.removed = 0 AND i.removed_at IS NULL AND {account_policy_sql("t")}
+           GROUP BY i.item_id ORDER BY bank""")
     out: dict[str, str] = {}
     for bank, first in rows:
         out[bank] = min(first, out.get(bank, first))
@@ -1099,6 +1100,76 @@ CASH_ONLY_GROUPS = tuple(key for key, _, is_asset, types, _ in BREAKDOWN if not 
 # later counts by default.
 NETWORTH_EXCLUDED = "networth_excluded"
 MAX_NETWORTH_EXCLUDED = 1000
+# The account inclusion policy: one denylist, shared with db.account_policy_sql. It is separate from
+# networth_excluded: this one leaves an account out of every read, not just Custom net worth.
+MAX_EXCLUDED_ACCOUNTS = 1000
+
+
+def excluded_accounts(conn: sqlite3.Connection) -> list[str]:
+    """The saved account policy: the ids left out of every read, once each. The shape is validated by
+    db.account_policy_value, the same one the SQL predicate uses: an absent, malformed or non-list value reads as empty
+    (every account counts), and a mixed array applies its string ids only."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (ACCOUNT_POLICY_KEY,)).fetchone()
+    return account_policy_value(row["value"] if row else None)[0]
+
+
+def save_excluded_accounts(conn: sqlite3.Connection, ids: Iterable[str]) -> list[str]:
+    """Save the account policy: the ids left out, once each, in the order given. Unlike networth_excluded, an id that
+    is not a current account is kept: a bank can be temporarily removed without silently clearing its policy."""
+    kept: list[str] = []
+    for x in ids:
+        if isinstance(x, str) and x and x not in kept:
+            kept.append(x)
+    previous = set(excluded_accounts(conn))
+    with conn:
+        conn.execute("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE "
+                     "SET value = excluded.value, updated_at = excluded.updated_at",
+                     (ACCOUNT_POLICY_KEY, json.dumps(kept), now()))
+    if set(kept) != previous:   # a loan's derived balance/history follows the policy without waiting for a match run
+        from . import manual   # manual imports this module; importing it here keeps the module graph acyclic
+        loans = [r[0] for r in conn.execute(
+            "SELECT id FROM manual_accounts WHERE kind IN ('loan', 'credit_card') AND archived_at IS NULL").fetchall()]
+        if loans:
+            with conn:
+                for loan_id in loans:
+                    manual.rebuild_loan(conn, loan_id)
+    return kept
+
+
+def _policy_account_details(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    """Every live account the policy can name, with the labels the status surface shows (no ids in the labels)."""
+    out: dict[str, dict[str, Any]] = {}
+    for r in conn.execute(
+            """SELECT a.account_id AS id, a.name, a.mask, a.type AS kind, i.institution_name
+               FROM accounts a JOIN items i ON i.item_id = a.item_id WHERE i.removed_at IS NULL"""):
+        out[r["id"]] = {"name": r["name"], "mask": r["mask"], "institution": r["institution_name"],
+                        "kind": r["kind"], "group": GROUP_OF_TYPE.get(r["kind"], "other")}
+    for r in conn.execute("SELECT id, name, institution, kind FROM manual_accounts WHERE archived_at IS NULL"):
+        out[manual_nw_id(r["id"])] = {"name": r["name"], "mask": None, "institution": r["institution"],
+                                      "kind": r["kind"], "group": GROUP_OF_KIND[r["kind"]]}
+    for a in alpaca.networth_rows(conn):
+        out[a["account_id"]] = {"name": a["name"], "mask": a["mask"], "institution": a["institution_name"],
+                                "kind": a["type"], "group": GROUP_OF_TYPE.get(a["type"], "other")}
+    return out
+
+
+def account_policy_status(conn: sqlite3.Connection) -> dict[str, Any]:
+    """The account policy as a status surface: configured, how many resolve to a live account, how many don't, and
+    whether coverage is complete. `accounts` names the resolved ones only; `unresolved` keeps their ids for callers
+    that can show them (the CLI, the settings response), never for the dashboard's labels. A value that isn't a list of
+    non-empty strings is reported as invalid (coverage "invalid", valid false, shape "partial"/"invalid") rather than
+    as an all-clear; the string ids it does hold still apply in both SQL and Python."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (ACCOUNT_POLICY_KEY,)).fetchone()
+    excluded, shape = account_policy_value(row["value"] if row else None)
+    details = _policy_account_details(conn)
+    resolved = [x for x in excluded if x in details]
+    unresolved = [x for x in excluded if x not in details]
+    out = {"configured_count": len(excluded), "resolved_count": len(resolved),
+           "unresolved_count": len(unresolved), "coverage": "incomplete" if unresolved else "complete",
+           "accounts": [details[x] for x in resolved], "unresolved": unresolved}
+    if shape in ("partial", "invalid"):
+        out.update(valid=False, shape=shape, coverage="invalid")
+    return out
 
 
 def manual_nw_id(account_id: int) -> str:
@@ -1110,31 +1181,46 @@ def _manual_live(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def networth_accounts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every account net worth counts (and Custom can leave out): the Plaid accounts of connected Items with an asset
-    or debt type, then the non-archived manual accounts. id is the one networth_excluded stores; kind is the Plaid type
-    or the manual kind; group the Accounts page group; balance is positive for debts too, signed negative."""
+    """Every account net worth can count (and Custom can leave out): the Plaid accounts of connected Items with an
+    asset or debt type, then the non-archived manual accounts. This is the eligibility / storage / preset universe: it
+    keeps an account the account policy leaves out, marked `excluded` (policy) and `counted` (not policy-excluded), so
+    Custom can always validate and save its own preference. Totals use counted_networth_accounts(). id is the one
+    networth_excluded stores; kind is the Plaid type or the manual kind; group the Accounts page group; balance is
+    positive for debts too, signed negative."""
     out = []
+    policy = set(excluded_accounts(conn))
     for a in [*conn.execute(
             """SELECT a.account_id, a.name, a.mask, a.type, a.current_balance, i.institution_name, i.institution_id
                FROM accounts a JOIN items i ON i.item_id = a.item_id
                WHERE i.removed_at IS NULL AND a.type IN ('depository', 'investment', 'credit', 'loan')
-               ORDER BY i.created_at, a.type, a.name"""), *alpaca.networth_rows(conn)]:  # TASK-19: Alpaca, when ACTIVE
+               ORDER BY i.created_at, a.type, a.name"""),
+              *alpaca.networth_rows(conn)]:  # TASK-19: Alpaca, when ACTIVE
         bal = a["current_balance"] or 0.0
+        excluded = a["account_id"] in policy
         out.append({"id": a["account_id"], "source": "plaid", "name": a["name"], "mask": a["mask"],
                     "institution": a["institution_name"] or a["institution_id"], "kind": a["type"],
-                    "group": GROUP_OF_TYPE[a["type"]], "balance": bal,
+                    "group": GROUP_OF_TYPE[a["type"]], "balance": bal, "excluded": excluded, "counted": not excluded,
                     "signed": _r(bal if a["type"] in ASSET_TYPES else -bal)})
     for m in conn.execute("SELECT id, name, institution, kind, balance FROM manual_accounts WHERE archived_at IS NULL "
                           "ORDER BY id"):
-        out.append({"id": manual_nw_id(m["id"]), "source": "manual", "name": m["name"], "mask": None,
+        nw_id = manual_nw_id(m["id"])
+        excluded = nw_id in policy
+        out.append({"id": nw_id, "source": "manual", "name": m["name"], "mask": None,
                     "institution": m["institution"], "kind": m["kind"], "group": GROUP_OF_KIND[m["kind"]],
-                    "balance": m["balance"], "signed": _r(m["balance"] if m["kind"] in MANUAL_ASSET_KINDS else -m["balance"])})
+                    "balance": m["balance"], "excluded": excluded, "counted": not excluded,
+                    "signed": _r(m["balance"] if m["kind"] in MANUAL_ASSET_KINDS else -m["balance"])})
     return out
+
+
+def counted_networth_accounts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Only the accounts the account policy counts. Every total, breakdown and history aggregation uses these."""
+    return [a for a in networth_accounts(conn) if a["counted"]]
 
 
 def cash_preset(conn: sqlite3.Connection) -> list[str]:
     """The "Cash & debts" selection as a Custom one: the ids of every investment, vehicle, property and other-asset
-    account (all cash and all debts count)."""
+    account (all cash and all debts count). Uses the full eligible universe, so a globally excluded account keeps its
+    place in the preset and clearing the policy cannot flip the preset under the user."""
     return [a["id"] for a in networth_accounts(conn) if a["group"] not in CASH_ONLY_GROUPS]
 
 
@@ -1182,34 +1268,38 @@ def save_networth_excluded(conn: sqlite3.Connection, ids: Iterable[str]) -> tupl
     return kept, dropped
 
 
-def _month_start(conn: sqlite3.Connection, today: date) -> dict[str, float | None]:
+def _month_start(conn: sqlite3.Connection, today: date, policy_excluded: Iterable[str] = ()) -> dict[str, float | None]:
     """Each Accounts group's total at the start of the current month (positive, like `total` in net_worth()), from each
     account's latest balance on or before the first of the month: balance_snapshots for Plaid accounts, Alpaca's daily
     equity (TASK-19) and manual_balance_history for manual accounts — the same sources as net_worth_history(). None for a
     group with no live accounts, or where any live account in it has no balance that early (a bank connected after it, a
-    manual account added this month)."""
+    manual account added this month). Accounts in the account policy contribute nothing."""
     first = date(today.year, today.month, 1).isoformat()
+    policy = set(policy_excluded)
     groups: dict[str, list[float | None]] = {key: [] for key, *_ in BREAKDOWN}
     for r in conn.execute(
-            """SELECT a.type AS type, (
+            f"""SELECT a.type AS type, (
                        SELECT s.current FROM balance_snapshots s
                        WHERE s.account_id = a.account_id AND s.current IS NOT NULL AND s.date <= ?
                        ORDER BY s.date DESC LIMIT 1) AS baseline
                FROM accounts a JOIN items i ON i.item_id = a.item_id
-               WHERE i.removed_at IS NULL AND a.type IN ('depository', 'investment', 'credit', 'loan')""",
+               WHERE i.removed_at IS NULL AND a.type IN ('depository', 'investment', 'credit', 'loan')
+                 AND {account_policy_sql("a")}""",
             (first,)).fetchall():
         groups[GROUP_OF_TYPE[r["type"]]].append(r["baseline"])
-    alp = alpaca.history_rows(conn) if alpaca.networth_rows(conn) else []   # only while today's total counts it
+    alp = alpaca.history_rows(conn) if alpaca.networth_rows(conn) and alpaca.ACCOUNT_ID not in policy else []
     if alp:  # TASK-19: the Alpaca live account's equity on the last snapshot day on or before the first
         prior = [r for r in alp if r["date"] <= first]
         groups[GROUP_OF_TYPE["investment"]].append(prior[-1]["current"] if prior else None)
     for r in conn.execute(
-            """SELECT m.kind AS kind, (
+            """SELECT m.id, m.kind AS kind, (
                        SELECT h.balance FROM manual_balance_history h
                        WHERE h.manual_account_id = m.id AND h.date <= ?
                        ORDER BY h.date DESC LIMIT 1) AS baseline
                FROM manual_accounts m WHERE m.archived_at IS NULL""",
             (first,)).fetchall():
+        if manual_nw_id(r["id"]) in policy:
+            continue
         groups[GROUP_OF_KIND[r["kind"]]].append(r["baseline"])
     return {key: (None if not vals or any(v is None for v in vals) else _r(sum(vals)))
             for key, vals in groups.items()}
@@ -1227,16 +1317,18 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
     card's balance: debts (and Custom's, while the card counts there) are that much lower, and so is today's history
     point's. The groups and the accounts keep the balances the banks report."""
     skip = set(networth_excluded(conn) if excluded is None else excluded)
+    policy = set(excluded_accounts(conn))
     groups = {t: 0.0 for t in ASSET_TYPES + DEBT_TYPES}
     counts: dict[str, int] = defaultdict(int)
     banks: dict[str, dict[str, Any]] = {}
     for a in [*conn.execute(
-            """SELECT a.account_id, a.name, a.official_name, a.mask, a.type, a.subtype, a.current_balance,
+            f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.type, a.subtype, a.current_balance,
                       a.available_balance, a.credit_limit, a.iso_currency, i.item_id, i.institution_name,
                       i.institution_id, i.status, i.error_code
                FROM accounts a JOIN items i ON i.item_id = a.item_id
-               WHERE i.removed_at IS NULL ORDER BY i.created_at, a.type, a.name"""),
-              *alpaca.networth_rows(conn)]:  # TASK-19: the Alpaca live account (read-only API), counted while ACTIVE
+               WHERE i.removed_at IS NULL AND {account_policy_sql("a")}
+               ORDER BY i.created_at, a.type, a.name"""),
+              *[x for x in alpaca.networth_rows(conn) if x["account_id"] not in policy]]:  # TASK-19: the Alpaca live account (read-only API), counted while ACTIVE
         bal = a["current_balance"] or 0.0
         signed = bal if a["type"] in ASSET_TYPES else -bal if a["type"] in DEBT_TYPES else None
         if a["type"] in groups:
@@ -1255,6 +1347,8 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
     manual_by_kind: dict[str, float] = defaultdict(float)
     manual_counts: dict[str, int] = defaultdict(int)
     for m in _manual_live(conn):
+        if manual_nw_id(m["id"]) in policy:
+            continue
         manual_by_kind[m["kind"]] += m["balance"]
         manual_counts[m["kind"]] += 1
     m_assets = _r(sum(manual_by_kind[k] for k in MANUAL_ASSET_KINDS))
@@ -1270,7 +1364,7 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
     c_total: dict[str, float] = defaultdict(float)   # Custom: the counted accounts, by group
     c_count: dict[str, int] = defaultdict(int)
     left_out = []
-    for a in networth_accounts(conn):
+    for a in counted_networth_accounts(conn):   # policy first: Custom can never resurrect a globally excluded one
         if a["id"] in skip:
             left_out.append({k: a[k] for k in ("id", "source", "name", "mask", "institution", "kind", "group", "signed")}
                             | {"balance": _r(a["balance"])})
@@ -1279,7 +1373,7 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
             c_count[a["group"]] += 1
     c_assets = _r(sum(v for g, v in c_total.items() if g in ASSET_GROUPS))
     c_debts = _r(sum(v for g, v in c_total.items() if g not in ASSET_GROUPS))
-    ms = _month_start(conn, _today(today))  # each group's total at the start of the current month
+    ms = _month_start(conn, _today(today), policy)  # each group's total at the start of the current month
     breakdown = []
     for key, label, is_asset, types, kinds in BREAKDOWN:
         total = _r(sum(groups[t] for t in types) + sum(manual_by_kind[k] for k in kinds))
@@ -1301,17 +1395,21 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
                           "month_start": month_start, "month_change": month_change,
                           "manual_count": sum(manual_counts[k] for k in kinds),
                           "custom": {"count": c_count[key], "total": ctot, "signed": ctot if is_asset else _r(-ctot)}})
-    in_transit = transit_entries(conn, today, skip) if today else []
+    in_transit = transit_entries(conn, today, policy, skip) if today else []
     debts = _r(debts - sum(e["amount"] for e in in_transit))
     c_debts = _r(c_debts - sum(e["amount"] for e in in_transit if e["counted_custom"]))
+    pol = account_policy_status(conn)
     out = {"assets": assets, "debts": debts, "net": _r(assets - debts),
            "custom": {"assets": c_assets, "debts": c_debts, "net": _r(c_assets - c_debts), "excluded": left_out},
+           "policy": {"excluded_count": pol["configured_count"], "resolved_count": pol["resolved_count"],
+                      "unresolved_count": pol["unresolved_count"], "coverage": pol["coverage"],
+                      "accounts": pol["accounts"]},
            "in_transit": in_transit,
            "groups": {k: _r(v) for k, v in groups.items()},
            "manual": {"assets": m_assets, "debts": m_debts, "count": sum(manual_counts.values())},
            "breakdown": breakdown, "institutions": list(banks.values())}
     if history:
-        out.update(net_worth_history(conn, skip))
+        out.update(net_worth_history(conn, skip, policy))
         point = next((p for p in out["history"] if p["date"] == today.isoformat()), None) if in_transit else None
         if point:   # today's point, as the figure above
             moved = sum(e["amount"] for e in in_transit)
@@ -1321,30 +1419,41 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
     return out
 
 
-def transit_entries(conn: sqlite3.Connection, today: date, excluded: Iterable[str] = ()) -> list[dict[str, Any]]:
-    """TASK-22: transit.entries, each with whether Custom counts its card (counted_custom)."""
+def transit_entries(conn: sqlite3.Connection, today: date, policy_excluded: Iterable[str] = (),
+                    custom_excluded: Iterable[str] | None = None) -> list[dict[str, Any]]:
+    """TASK-22: transit.entries, each with whether Custom counts its card (counted_custom). `policy_excluded` is the
+    account policy applied to every transit input (source transactions, cards, transfer and inflow evidence);
+    `custom_excluded` only says which card Custom leaves out (default: the same set)."""
     from . import transit   # (it imports manual, which imports this module)
-    skip = set(excluded)
-    return [e | {"counted_custom": e["card_id"] not in skip} for e in transit.entries(conn, today)]
+    policy = set(policy_excluded)
+    custom = policy if custom_excluded is None else set(custom_excluded)
+    return [e | {"counted_custom": e["card_id"] not in custom}
+            for e in transit.entries(conn, today, policy)]
 
 
-def net_worth_history(conn: sqlite3.Connection, excluded: Iterable[str] = ()) -> dict[str, Any]:
+def net_worth_history(conn: sqlite3.Connection, excluded: Iterable[str] = (),
+                      policy_excluded: Iterable[str] | None = None) -> dict[str, Any]:
     """One point per snapshot date (and per manual balance change from the first snapshot on). Each Plaid
     account contributes its latest real snapshot on or before that date, and nothing before its first one;
     each manual account its latest history row on or before that date, until the day it was archived.
-    custom_assets / custom_debts / custom_net: the same point counting only the accounts Custom counts today (the Custom
-    line: today's selection applied to every day, so changing it never makes the line jump). An archived manual account
-    never counts in Custom (it isn't in the selection at all), so it's in no point of that line."""
+    An account in the account policy contributes nothing to any point. custom_assets / custom_debts / custom_net: the
+    same point counting only the accounts Custom counts today (the Custom line: today's selection applied to every
+    day, so changing it never makes the line jump). An archived manual account never counts in Custom (it isn't in
+    the selection at all), so it's in no point of that line. A direct call with policy_excluded=None reads the saved
+    policy, so no caller can bypass it by accident; passing a set explicitly still wins."""
     skip = set(excluded)
+    policy = set(excluded_accounts(conn) if policy_excluded is None else policy_excluded)
     rows = conn.execute(
         """SELECT s.date, s.account_id, s.current, a.type FROM balance_snapshots s
            JOIN accounts a ON a.account_id = s.account_id JOIN items i ON i.item_id = a.item_id
            WHERE i.removed_at IS NULL AND a.type IN ('depository', 'investment', 'credit', 'loan')
            ORDER BY s.date""").fetchall() + alpaca.history_rows(conn)  # TASK-19: Alpaca's daily equity (0 if not ACTIVE)
+    rows = [r for r in rows if r["account_id"] not in policy]
     manual = conn.execute(
         """SELECT h.manual_account_id AS id, h.date, h.balance, m.kind, m.archived_at AS archived
            FROM manual_balance_history h JOIN manual_accounts m ON m.id = h.manual_account_id
            ORDER BY h.date, h.manual_account_id""").fetchall()
+    manual = [m for m in manual if manual_nw_id(m["id"]) not in policy]
     by_day: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for r in rows:
         by_day[r["date"]].append(r)

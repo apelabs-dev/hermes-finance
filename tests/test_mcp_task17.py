@@ -321,7 +321,7 @@ def test_upgrade_from_v9_adds_pending_actions_and_keeps_everything(data_dir):
     assert sha(path) == before
 
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
     for t, r in old.items():
         now_rows = [tuple(x) for x in conn.execute(f"SELECT {cols[t]} FROM {t} ORDER BY rowid")]
         if t == "settings":  # v11 (TASK-18) saves an upgraded install's Carfax / Redfin switches, on as they were

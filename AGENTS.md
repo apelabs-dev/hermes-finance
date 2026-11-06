@@ -55,7 +55,7 @@ uv run python scripts/check.py full --part 2   # then tests/test_gates.py (the l
 
 ## Rules the code enforces
 
-- **Schema** (`db.py`, `SCHEMA_VERSION = 19`; the next one is 20): changes are idempotent (`CREATE TABLE IF NOT
+- **Schema** (`db.py`, `SCHEMA_VERSION = 20`; the next one is 21): changes are idempotent (`CREATE TABLE IF NOT
   EXISTS`, `ADDED_COLUMNS`), in their own named function, and come with a proof: a `tests/fixtures/schema_vN.sql` of
   the previous version and an upgrade test that keeps every row. Read-only connections never upgrade a database.
 - **One source per number**: the dashboard, `reads.py` and the agent tools call the same functions. Tool definitions

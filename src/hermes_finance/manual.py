@@ -36,7 +36,7 @@ from datetime import date
 from typing import Any
 
 from . import insights
-from .db import now
+from .db import account_policy_sql, now
 
 KINDS = ("bank", "credit_card", "investment", "loan", "vehicle", "property", "other_asset", "other_liability")
 LIABILITY_KINDS = frozenset({"credit_card", "loan", "other_liability"})
@@ -301,11 +301,12 @@ def history(conn: sqlite3.Connection, account_id: int) -> list[dict[str, Any]]:
 
 def payments(conn: sqlite3.Connection, loan_id: int) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(
-        """SELECT p.transaction_id, p.amount, p.interest, p.principal, p.applied_at, p.source, t.date, t.name,
+        f"""SELECT p.transaction_id, p.amount, p.interest, p.principal, p.applied_at, p.source, t.date, t.name,
                   t.merchant_name, a.name AS account_name, a.mask AS account_mask
            FROM loan_payments p JOIN transactions t USING (transaction_id)
            LEFT JOIN accounts a ON a.account_id = t.account_id
-           WHERE p.loan_id = ? AND t.removed = 0 ORDER BY t.date DESC, p.transaction_id DESC""", (loan_id,))]
+           WHERE p.loan_id = ? AND t.removed = 0 AND {account_policy_sql("t")}
+           ORDER BY t.date DESC, p.transaction_id DESC""", (loan_id,))]
 
 
 def _like(text: str) -> str:
@@ -330,7 +331,7 @@ def matching_transactions(conn: sqlite3.Connection, pattern: str, after: str | N
             FROM transactions t LEFT JOIN accounts a ON a.account_id = t.account_id
             LEFT JOIN items i ON i.item_id = t.item_id
             LEFT JOIN loan_payments p ON p.transaction_id = t.transaction_id
-            WHERE t.removed = 0 AND t.pending = 0 AND t.amount > 0
+            WHERE t.removed = 0 AND t.pending = 0 AND t.amount > 0 AND {account_policy_sql("t")}
               AND (t.name LIKE ? ESCAPE '\\' OR t.merchant_name LIKE ? ESCAPE '\\') {extra}
             ORDER BY t.date DESC, t.transaction_id DESC LIMIT ?""", [*args, limit])]
 
@@ -339,9 +340,9 @@ def _card_inflows(conn: sqlite3.Connection, cents: int, day: str) -> list[sqlite
     """Inflows of exactly `cents` on connected credit cards (Plaid, not removed) within ±PAIR_DAYS days of `day`,
     nearest first."""
     return conn.execute(
-        """SELECT u.transaction_id, u.date, a.name, a.mask FROM transactions u
+        f"""SELECT u.transaction_id, u.date, a.name, a.mask FROM transactions u
            JOIN accounts a ON a.account_id = u.account_id JOIN items i ON i.item_id = u.item_id
-           WHERE u.removed = 0 AND i.removed_at IS NULL AND a.type = 'credit'
+           WHERE u.removed = 0 AND i.removed_at IS NULL AND a.type = 'credit' AND {account_policy_sql("u")}
              AND CAST(ROUND(-u.amount * 100) AS INTEGER) = ? AND ABS(julianday(u.date) - julianday(?)) <= ?
            ORDER BY ABS(julianday(u.date) - julianday(?)), u.date, u.transaction_id""",
         (cents, day, PAIR_DAYS, day)).fetchall()
@@ -351,13 +352,16 @@ def card_pair(conn: sqlite3.Connection, txn_id: str) -> dict[str, Any] | None:
     """The connected-card payment a bank outflow is, or None: a same-amount inflow on a connected credit card within
     ±PAIR_DAYS days. One to one: the outflows of that amount around it (on non-card accounts) take those inflows in
     date order, each the nearest one still free, so two $250 payments and one $250 card credit make one pair."""
-    t = conn.execute("SELECT transaction_id, date, amount FROM transactions WHERE transaction_id = ?", (txn_id,)).fetchone()
+    t = conn.execute(
+        f"""SELECT transaction_id, date, amount FROM transactions t WHERE transaction_id = ? AND {account_policy_sql("t")}""",
+        (txn_id,)).fetchone()
     if t is None or t["amount"] <= 0:
         return None
     cents = round(t["amount"] * 100)
     rivals = conn.execute(
-        """SELECT t.transaction_id, t.date FROM transactions t JOIN accounts a ON a.account_id = t.account_id
-           WHERE t.removed = 0 AND a.type <> 'credit' AND CAST(ROUND(t.amount * 100) AS INTEGER) = ?
+        f"""SELECT t.transaction_id, t.date FROM transactions t JOIN accounts a ON a.account_id = t.account_id
+           WHERE t.removed = 0 AND a.type <> 'credit' AND {account_policy_sql("t")}
+             AND CAST(ROUND(t.amount * 100) AS INTEGER) = ?
              AND ABS(julianday(t.date) - julianday(?)) <= ? ORDER BY t.date, t.transaction_id""",
         (cents, t["date"], 2 * PAIR_DAYS)).fetchall()
     taken: set[str] = set()
@@ -383,6 +387,8 @@ def match_preview(conn: sqlite3.Connection, pattern: str, today: date, account_i
     since = date.fromordinal(today.toordinal() - days).isoformat()
     out = {"days": days, "since": since, "count": 0, "total": 0.0, "paired": 0, "paired_total": 0.0, "waiting": 0,
            "elsewhere": 0}
+    if account_id is not None and insights.manual_nw_id(account_id) in set(insights.excluded_accounts(conn)):
+        return out   # the destination is excluded by the account policy: offer nothing to apply
     for t in matching_transactions(conn, pattern, since=since):
         if t["applied_to"] is not None and t["applied_to"] != account_id:
             out["elsewhere"] += 1
@@ -422,7 +428,7 @@ def unpaired_card_payments(conn: sqlite3.Connection, today: date, since: str) ->
                 FROM transactions t JOIN accounts a ON a.account_id = t.account_id
                 LEFT JOIN loan_payments p ON p.transaction_id = t.transaction_id
                 WHERE t.removed = 0 AND t.pending = 0 AND t.amount > 0 AND a.type <> 'credit' AND p.transaction_id IS NULL
-                  AND t.date >= ? AND t.date <= ? AND {CARD_PAYMENT_SQL}
+                  AND {account_policy_sql("t")} AND t.date >= ? AND t.date <= ? AND {CARD_PAYMENT_SQL}
                 ORDER BY t.date DESC, t.transaction_id""", (since, settled)):
         text = f"{t['name'] or ''} {t['merchant_name'] or ''}".casefold()
         if any(pat in text for pat in patterns) or card_pair(conn, t["transaction_id"]):
@@ -639,10 +645,16 @@ def rebuild_loan(conn: sqlite3.Connection, loan_id: int) -> float:
     apr = loan["interest_rate"] if loan["kind"] == "loan" else None
     bal = base
     days: dict[str, float] = {}
-    for p in conn.execute(
-            """SELECT p.transaction_id, p.amount, t.date FROM loan_payments p JOIN transactions t USING (transaction_id)
-               WHERE p.loan_id = ? AND t.date > ? AND t.removed = 0 ORDER BY t.date, p.transaction_id""",
-            (loan_id, as_of)).fetchall():
+    # The account policy is a read filter on the payment's source account and on this loan itself: a stored
+    # loan_payments row from an excluded account moves nothing (the row and the classification stay).
+    policy = set(insights.excluded_accounts(conn))
+    target_excluded = insights.manual_nw_id(loan_id) in policy
+    payments = [] if target_excluded else conn.execute(
+        f"""SELECT p.transaction_id, p.amount, t.date FROM loan_payments p JOIN transactions t USING (transaction_id)
+            WHERE p.loan_id = ? AND t.date > ? AND t.removed = 0 AND {account_policy_sql("t")}
+            ORDER BY t.date, p.transaction_id""",
+        (loan_id, as_of)).fetchall()
+    for p in payments:
         interest = min(_r(bal * apr / 1200), p["amount"]) if apr else 0.0
         principal = _r(min(p["amount"] - interest, bal))
         bal = _r(bal - principal)
@@ -675,8 +687,8 @@ def apply_payment(conn: sqlite3.Connection, txn_id: Any, loan_id: Any, source: s
     if loan["kind"] not in MATCH_KINDS:
         raise ManualError(f"#{loan['id']} {loan['name']} is a {loan['kind'].replace('_', ' ')}, not a loan or credit card",
                           "loan_id")
-    t = conn.execute("SELECT transaction_id, date, name, merchant_name, amount, pending, removed FROM transactions "
-                     "WHERE transaction_id = ?", (txn_id,)).fetchone()
+    t = conn.execute("SELECT transaction_id, account_id, date, name, merchant_name, amount, pending, removed "
+                     "FROM transactions WHERE transaction_id = ?", (txn_id,)).fetchone()
     if t is None:
         raise ManualError(f"unknown transaction {txn_id}", "transaction_id", 404)
     if t["removed"]:
@@ -689,6 +701,9 @@ def apply_payment(conn: sqlite3.Connection, txn_id: Any, loan_id: Any, source: s
     if done:
         where = "this loan" if done["loan_id"] == loan["id"] else f"loan #{done['loan_id']}"
         raise ManualError(f"transaction {txn_id} is already applied to {where}", "transaction_id", 409)
+    if t["account_id"] in set(insights.excluded_accounts(conn)):
+        raise ManualError(f"transaction {txn_id} belongs to an account excluded by the account policy",
+                          "transaction_id", 409)
     if t["date"] <= loan["balance_as_of"]:
         raise ManualError(f"transaction {txn_id} is dated {t['date']}, on or before the "
                           f"{'loan' if loan['kind'] == 'loan' else 'card'}'s balance date {loan['balance_as_of']}; "
@@ -748,13 +763,43 @@ def match_payments(conn: sqlite3.Connection, dry_run: bool = False, today: date 
     match_pattern, apply each unapplied posted outflow after its balance_as_of whose name or merchant_name contains
     the pattern (source 'auto'), oldest first. Never one that pairs with a connected card's payment (card_pair()); a
     card payment waits until it's PAIR_DAYS old; an automatic match that pairs by now is taken back (`unapplied`).
-    A dry run computes everything, then rolls it all back."""
+    A stored payment whose source account the account policy excludes is kept and reported as `not_counted`: it stops
+    counting, is never deleted, and counts again once the policy clears. A dry run computes everything, then rolls it
+    all back."""
     today = today or date.today()
-    applied, skipped, unapplied = [], [], []
+    applied, skipped, unapplied, not_counted = [], [], [], []
+    policy = set(insights.excluded_accounts(conn))
     conn.execute("SAVEPOINT loan_match")
     try:
+        # A payment whose source account (or whose own loan) is excluded no longer applies. Stop counting it, say so
+        # in `unapplied`, and rebuild the balance/history: the raw transaction and its classification stay.
+        touched: set[int] = set()
+        for acct in conn.execute("SELECT * FROM manual_accounts WHERE kind IN ('loan', 'credit_card') "
+                                 "AND archived_at IS NULL ORDER BY id").fetchall():
+            target_excluded = insights.manual_nw_id(acct["id"]) in policy
+            for p in conn.execute(
+                    """SELECT p.transaction_id, p.amount, t.account_id FROM loan_payments p
+                       JOIN transactions t USING (transaction_id) WHERE p.loan_id = ? ORDER BY p.transaction_id""",
+                    (acct["id"],)).fetchall():
+                if p["account_id"] in policy:      # an excluded source: stop counting it, keep the row, change nothing
+                    not_counted.append({"transaction_id": p["transaction_id"], "loan_id": acct["id"], "loan": acct["name"],
+                                        "amount": p["amount"],
+                                        "reason": "its source account is excluded by the account policy"})
+                    touched.add(acct["id"])
+                elif target_excluded:              # an excluded loan: keep the row (retention), count none of it
+                    touched.add(acct["id"])
+        # Every active loan/card with a stored payment is rebuilt, not only the ones this run reported: the policy may
+        # have been cleared without save_excluded_accounts (the write that normally rebuilds them), so a run must
+        # always leave each derived balance/history consistent with the CURRENT policy. rebuild_loan() is idempotent.
+        touched.update(r["loan_id"] for r in conn.execute(
+            """SELECT DISTINCT p.loan_id FROM loan_payments p JOIN manual_accounts m ON m.id = p.loan_id
+               WHERE m.kind IN ('loan', 'credit_card') AND m.archived_at IS NULL""").fetchall())
+        for loan_id in sorted(touched):
+            rebuild_loan(conn, loan_id)
         for acct in conn.execute("SELECT * FROM manual_accounts WHERE kind IN ('loan', 'credit_card') "
                                  "AND archived_at IS NULL AND match_pattern IS NOT NULL ORDER BY id").fetchall():
+            if insights.manual_nw_id(acct["id"]) in policy:
+                continue
             for p in conn.execute("SELECT transaction_id, amount FROM loan_payments WHERE loan_id = ? AND source = 'auto'",
                                   (acct["id"],)).fetchall():
                 pair = card_pair(conn, p["transaction_id"])
@@ -788,7 +833,8 @@ def match_payments(conn: sqlite3.Connection, dry_run: bool = False, today: date 
         conn.execute("ROLLBACK TO loan_match")
     conn.execute("RELEASE loan_match")
     conn.commit()
-    return {"applied": applied, "skipped": skipped, "unapplied": unapplied, "dry_run": dry_run}
+    return {"applied": applied, "skipped": skipped, "unapplied": unapplied, "not_counted": not_counted,
+            "dry_run": dry_run}
 
 
 match_loans = match_payments  # the TASK-8 name
@@ -882,7 +928,12 @@ def summary(conn: sqlite3.Connection, today: date, include_archived: bool = Fals
         from . import config
         free = config.free_sources(conn=conn)  # read once for the whole list (TASK-18: with the Settings switches)
     items = [describe(conn, r, today, free=free) for r in all_rows]
+    policy = set(insights.excluded_accounts(conn))   # the account policy: kept, and left out of every total
+    for x in items:
+        x["excluded"] = insights.manual_nw_id(x["id"]) in policy
     live = [x for x in items if not x["archived_at"]]
-    assets = _r(sum(x["balance"] for x in live if not x["liability"]))
-    debts = _r(sum(x["balance"] for x in live if x["liability"]))
-    return {"accounts": items, "assets": assets, "debts": debts, "net": _r(assets - debts), "count": len(live)}
+    counted = [x for x in live if not x["excluded"]]
+    assets = _r(sum(x["balance"] for x in counted if not x["liability"]))
+    debts = _r(sum(x["balance"] for x in counted if x["liability"]))
+    return {"accounts": items, "assets": assets, "debts": debts, "net": _r(assets - debts), "count": len(live),
+            "excluded_count": sum(1 for x in live if x["excluded"])}
