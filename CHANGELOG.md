@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.2.6...v0.3.0) (2026-11-10)
+
+
+### Features
+
+* **accounts:** one durable account policy for every read ([#12](https://github.com/apelabs-dev/hermes-finance/issues/12)) ([#17](https://github.com/apelabs-dev/hermes-finance/issues/17)) ([f844e88](https://github.com/apelabs-dev/hermes-finance/commit/f844e8846554df5e9c6a4eb8f7b383f9274a9b63))
+* demo live AI answers any question, on by default, with a quota lock ([#13](https://github.com/apelabs-dev/hermes-finance/issues/13)) ([40c1c5d](https://github.com/apelabs-dev/hermes-finance/commit/40c1c5da515b9111e3225cc0c77e03e9b5d06040))
+
+
+### Bug Fixes
+
+* demo dates stay inside their month label and in order ([#15](https://github.com/apelabs-dev/hermes-finance/issues/15)) ([42667b9](https://github.com/apelabs-dev/hermes-finance/commit/42667b9ce81aa648393208f3333b6dd62d44cfed))
+* **sync:** only call /transactions/sync for Items that grant Transactions ([#16](https://github.com/apelabs-dev/hermes-finance/issues/16)) ([8cace31](https://github.com/apelabs-dev/hermes-finance/commit/8cace31f60b1a0355ee961fe8c81406c00cd5d45))
+* unred the nightly gate and the weekly demo ([#22](https://github.com/apelabs-dev/hermes-finance/issues/22)) ([0aec41c](https://github.com/apelabs-dev/hermes-finance/commit/0aec41c70cf703098e67ff604dd10ccb23d236cf))
+* unstick the nightly gate and stop a stale sync error overwriting a newer one ([#18](https://github.com/apelabs-dev/hermes-finance/issues/18)) ([6ac7302](https://github.com/apelabs-dev/hermes-finance/commit/6ac7302c967c5b3d90474fecafa9c797c22d78f0))
+
 ## [0.2.6](https://github.com/apelabs-dev/hermes-finance/compare/v0.2.5...v0.2.6) (2026-11-02)
 
 
