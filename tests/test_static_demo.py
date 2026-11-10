@@ -258,6 +258,35 @@ def test_no_bill_is_late_on_the_build_day_and_history_covers_a_year(built):
     assert all(b['next_expected'] >= today for b in month['overview']['upcoming'])
 
 
+def test_pay_late_bills_pays_an_overdue_bill_but_not_one_due_today(monkeypatch, tmp_path):
+    """A bill exactly one cadence after its last charge is due_soon, not late, yet its expected date has already
+    passed (monthly: day 40) and the build must pay it. A bill due today or later is left untouched."""
+    import sqlite3
+    from datetime import date
+    import build_demo
+    from hermes_finance import tooldefs
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    conn.execute('CREATE TABLE transactions (transaction_id TEXT PRIMARY KEY, merchant_name TEXT, name TEXT, '
+                 'pending INTEGER, amount REAL, date TEXT, authorized_date TEXT, raw_json TEXT, fitid TEXT)')
+    conn.execute("INSERT INTO transactions VALUES ('t1', 'Pillbox & Co', 'PILLBOX', 0, 42.0, '2026-10-01', "
+                 "'2026-10-01', '{}', NULL)")
+    today = date(2026, 11, 10)
+    overdue = {'merchant': 'Pillbox & Co', 'key': 'pillbox', 'next_expected': '2026-11-01', 'status': 'due_soon'}
+    due_today = {'merchant': 'Rent', 'key': 'rent', 'next_expected': '2026-11-10', 'status': 'due_soon'}
+    calls = []
+
+    def fake_read(name, args, db_path, day):
+        calls.append(day)
+        return {'items': [overdue, due_today] if len(calls) == 1 else [due_today]}
+
+    monkeypatch.setattr(tooldefs, 'run_read', fake_read)
+    assert build_demo.pay_late_bills(conn, tmp_path / 'finance.db', today) == 1
+    rows = conn.execute('SELECT transaction_id, date FROM transactions ORDER BY transaction_id').fetchall()
+    assert [(r['transaction_id'], r['date']) for r in rows] == [
+        ('t1', '2026-10-01'), ('t1-paid-2026-11-01', '2026-11-01')]
+
+
 def test_every_real_ticker_held_shows_its_logo(built):
     """The Investments page showed letters ("AA", "VT") for AAPL and VTI: the build kept the made-up fund's logo but
     nothing for a real ticker, where the app shows the logo it caches from FMP. Each real ticker the demo holds now ships

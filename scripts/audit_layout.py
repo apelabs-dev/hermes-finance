@@ -766,8 +766,18 @@ for (const cv of [...document.querySelectorAll('canvas')].filter((c) => roots.so
     const ds = ch.data.datasets[0];
     const nz = ds.data.filter((v) => v > 0).length;
     if (nz === 1) {
-      const arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
-      const r = (arc.innerRadius + arc.outerRadius) / 2, dpr = ch.currentDevicePixelRatio;
+      // These checks read pixels, so the ring's current frame must be painted first. The app's charts grow in (400ms,
+      // and this harness pins prefers-reduced-motion: no-preference) and a responsive chart is cleared by a resize
+      // that a ResizeObserver delivers; neither is something __settled can see inside Chart.js. A sample taken then
+      // sees transparent pixels, which is a race in this harness, not a notch. Finish a running grow-in at its end
+      // state (update('none') draws now), deliver a pending resize, and if the canvas is still blank draw once more
+      // before judging. A chart that is already painted is left alone: the plants below paint their notches after
+      // Chart.js's own draw, and a needless redraw would erase the very bug the check must catch.
+      if (Math.abs(ch.width - cv.clientWidth) > 1 || Math.abs(ch.height - cv.clientHeight) > 1) ch.resize();
+      if (ch.$animations && Object.keys(ch.$animations).length) ch.update('none');
+      let arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
+      let r = (arc.innerRadius + arc.outerRadius) / 2;
+      const dpr = ch.currentDevicePixelRatio;
       const conf = ch.options || {}, dso = ds.options || {};
       const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
       const opt = (k, d) => num(conf[k], num(dso[k], num(ds[k], d)));
@@ -780,15 +790,44 @@ for (const cv of [...document.querySelectorAll('canvas')].filter((c) => roots.so
       // is centred on the seam and covers cx-1..cx+1 (caught by borderWidth, not by these samples); the
       // plant paints 3 device px from cx-2 (columns -2..0 at dpr 1) so it does reach the -2 sample.
       // Every sample must be the slice colour: no majority vote.
-      const pad = Math.max(0, Math.min(6, (arc.outerRadius - arc.innerRadius) / 2 - 2));
-      const g = cv.getContext('2d'), cw = cv.width, chh = cv.height, samples = [];
-      const cx = Math.round(arc.x * dpr);
-      for (const rad of [r - pad, r, r + pad]) for (const d of [-4, -3, -2, 2, 3, 4]) {
-        const x = cx + d, y = Math.round((arc.y - rad) * dpr);
-        if (x >= 0 && y >= 0 && x < cw && y < chh) samples.push([x, y, ...g.getImageData(x, y, 1, 1).data]);
+      const g = cv.getContext('2d'), cw = cv.width, chh = cv.height;
+      const grab = () => {
+        // half the ring's thickness, capped at 6 device px: the original window, unchanged (a thin ring keeps its own
+        // two radii, so a notch confined to part of the thickness is still reachable)
+        const pad = Math.max(0, Math.min(6, (arc.outerRadius - arc.innerRadius) / 2 - 2));
+        const cx = Math.round(arc.x * dpr), out = [];
+        for (const rad of [r - pad, r, r + pad]) for (const d of [-4, -3, -2, 2, 3, 4]) {
+          const x = cx + d, y = Math.round((arc.y - rad) * dpr);
+          if (x >= 0 && y >= 0 && x < cw && y < chh) out.push([x, y, ...g.getImageData(x, y, 1, 1).data]);
+        }
+        return out;
+      };
+      let samples = grab();
+      if (samples.length && samples.every((p) => p[5] === 0)) {   // still blank (a cleared canvas): draw once more
+        ch.update('none');
+        arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
+        r = (arc.innerRadius + arc.outerRadius) / 2;
+        samples = grab();
       }
       const want = ds.backgroundColor[ds.data.findIndex((v) => v > 0)];
-      const hex = String(want).match(/^#([0-9a-f]{6})$/i);
+      // The app writes its theme colours as rgb(); a canvas context normalises any CSS colour (#rgb, #rrggbb, rgb(),
+      // rgba(), a name) to #rrggbb or rgba(), so read the slice colour back from one instead of accepting only hex. Two
+      // sentinels tell a real colour from an unparseable value (a gradient/pattern object, an empty string): an
+      // ignored assignment leaves each sentinel behind, so the two reads differ.
+      const rgbOf = (v) => {
+        if (typeof v !== 'string' || !v.trim()) return null;
+        const sx = document.createElement('canvas').getContext('2d');
+        sx.fillStyle = '#010203'; sx.fillStyle = v; const a = sx.fillStyle;
+        sx.fillStyle = '#040506'; sx.fillStyle = v; const b = sx.fillStyle;
+        if (a !== b) return null;
+        let m = a.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+        if (m) return m.slice(1).map((x) => parseInt(x, 16));
+        m = a.match(/^rgba?\(([^)]+)\)$/i);
+        if (!m) return null;
+        const p = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number);
+        return p.length >= 3 && p.slice(0, 3).every(Number.isFinite) ? p.slice(0, 3) : null;
+      };
+      const rgb = rgbOf(want);
       const detail = {arc: {x: +arc.x.toFixed(2), y: +arc.y.toFixed(2), r: +r.toFixed(2),
         startAngle: +arc.startAngle.toFixed(4), circumference: +arc.circumference.toFixed(4),
         rotation, optionCircumference: sweepDeg}, dpr,
@@ -796,11 +835,10 @@ for (const cv of [...document.querySelectorAll('canvas')].filter((c) => roots.so
         borderWidth: ds.borderWidth, samples};
       if (sweep < 2 * Math.PI - 1e-3 || sweepDeg < 360 - 0.06)
         fail('charts', `a one-slice doughnut drawn as a partial ring (sweep ${Math.min(sweep * 180 / Math.PI, sweepDeg).toFixed(1)} deg)`, [cv], detail);
-      if (!hex) {
+      if (!rgb) {
         detail.sliceColour = want;
         fail('charts', 'a one-slice doughnut whose slice colour could not be read', [cv], detail);
       } else {
-        const rgb = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
         const notch = ds.borderWidth !== 0 || samples.length < 3 ||
           samples.some((p) => p[5] < 250 || p.slice(2, 5).some((v, i) => Math.abs(v - rgb[i]) > 24));
         if (notch) fail('charts', 'a one-slice doughnut with a notch at 12 o\'clock', [cv], detail);
@@ -1712,13 +1750,15 @@ CUTNUM_PLANT_JS = r"""(() => {
 CUTNUM_UNPLANT_JS = ("(() => { document.querySelectorAll('[id^=plant-cutnum-]').forEach((e) => e.remove()); return 1; })()")
 
 
-# charts: a synthetic card with six doughnuts. Four must be caught: a one-slice ring carrying the app's 2+ slice
+# charts: a synthetic card with nine doughnuts. Five must be caught: a one-slice ring carrying the app's 2+ slice
 # separator (borderWidth 3), a one-slice ring whose 350-degree sweep leaves a wedge at 12 o'clock, the same open ring
-# rotated so the wedge is at 6 o'clock (the pixels at 12 are solid there: only the drawn geometry can catch it), and a
-# closed ring with 3 CSS px of the card colour painted over it at 12 o'clock (the pixel path alone). Two controls: a
-# one-slice ring with no separator and a full sweep on a fractional CSS width, where the start/end seam is not on a
-# device pixel boundary, and the same closed ring with 1 device pixel of the card colour painted over it (the
-# anti-aliased seam: a blend there must not read as a notch).
+# rotated so the wedge is at 6 o'clock (the pixels at 12 are solid there: only the drawn geometry can catch it), a
+# closed ring with 3 CSS px of the card colour painted over it at 12 o'clock (the pixel path alone), and the same 3 px
+# notch on a ring whose slice colour is written as rgb() (the app's own colour form). Four controls: a one-slice ring
+# with no separator and a full sweep on a fractional CSS width, where the start/end seam is not on a device pixel
+# boundary, the same closed ring with 1 device pixel of the card colour painted over it (the anti-aliased seam: a blend
+# there must not read as a notch), the rgb() ring with no notch, and a ring whose canvas is cleared right after its arc
+# metadata exists (transparent pixels are a paint race, not a notch).
 CHART_PLANT_JS = r"""(() => {
   const holder = Object.assign(document.createElement('div'), {id: 'plantchart-card', className: 'card'});
   holder.style.cssText = 'display:flex;gap:12px;align-items:flex-start;width:fit-content';
@@ -1732,15 +1772,17 @@ CHART_PLANT_JS = r"""(() => {
     holder.append(box);
     (window.__plantcharts = window.__plantcharts || []).push(new window.Chart(cv, {type: 'doughnut',
       data: {labels: ['plantchart', 'plantchart-hidden'], datasets: [{data: [100, 0],
-        backgroundColor: ['#7bd88f', '#0b0d12'], borderWidth: opts.borderWidth}]},
+        backgroundColor: [opts.colour || '#7bd88f', '#0b0d12'], borderWidth: opts.borderWidth}]},
       options: {responsive: true, maintainAspectRatio: false, animation: false, cutout: '76%', layout: {padding: 6},
         rotation: opts.rotation == null ? 0 : opts.rotation,
         circumference: opts.circumference == null ? 360 : opts.circumference,
         plugins: {legend: {display: false}, tooltip: {enabled: false}}}}));
   };
   // A fixed-size, non-responsive chart: nothing can redraw it after the paint. `paint` is null for the 1-device-pixel
-  // seam control, else the width in CSS px painted over the ring at 12 o'clock (the app's separator is 3 CSS px).
-  const painted = (id, cls, paint) => {
+  // seam control, 'clear' for a chart whose canvas is cleared right after its arc metadata exists (what a sample before
+  // the paint sees: transparent pixels, not a notch), else the width in CSS px painted over the ring at 12 o'clock (the
+  // app's separator is 3 CSS px).
+  const painted = (id, cls, paint, colour) => {
     const w = 200, h = 200, dpr = window.devicePixelRatio || 1;
     const box = Object.assign(document.createElement('div'), {id});
     box.style.cssText = `position:relative;width:${w}px;height:${h}px;flex:0 0 auto`;
@@ -1750,11 +1792,15 @@ CHART_PLANT_JS = r"""(() => {
     holder.append(box);
     const ch = new window.Chart(cv, {type: 'doughnut',
       data: {labels: ['plantchart', 'plantchart-hidden'], datasets: [{data: [100, 0],
-        backgroundColor: ['#7bd88f', '#0b0d12'], borderWidth: 0}]},
+        backgroundColor: [colour || '#7bd88f', '#0b0d12'], borderWidth: 0}]},
       options: {responsive: false, maintainAspectRatio: false, animation: false, cutout: '76%', layout: {padding: 6},
         devicePixelRatio: dpr, rotation: 0, circumference: 360,
         plugins: {legend: {display: false}, tooltip: {enabled: false}}}});
     (window.__plantcharts = window.__plantcharts || []).push(ch);
+    if (paint === 'clear') {
+      ch.clear();   // the arc metadata is there; the canvas is empty (the "sampled before painted" race)
+      return;
+    }
     const arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
     const cdpr = ch.currentDevicePixelRatio, cx = Math.round(arc.x * cdpr), g = ch.ctx;
     g.save();
@@ -1768,8 +1814,11 @@ CHART_PLANT_JS = r"""(() => {
   make('plantchart-b', 'plantchart-open', 200, 200, {borderWidth: 0, circumference: 350});
   make('plantchart-d', 'plantchart-open-away', 200, 200, {borderWidth: 0, circumference: 350, rotation: 180});
   make('plantchart-c', 'plantchart-control', 167.7, 167.7, {borderWidth: 0});
+  make('plantchart-g', 'plantchart-rgb-control', 200, 200, {borderWidth: 0, colour: 'rgb(123, 216, 143)'});
   painted('plantchart-e', 'plantchart-seam-control', null);
   painted('plantchart-f', 'plantchart-seam-plant', 3);
+  painted('plantchart-h', 'plantchart-rgb-plant', 3, 'rgb(123, 216, 143)');
+  painted('plantchart-i', 'plantchart-cleared', 'clear');
   return 1;
 })()"""
 CHART_UNPLANT_JS = ("(() => { (window.__plantcharts || []).forEach((c) => c.destroy()); window.__plantcharts = [];"
@@ -1834,13 +1883,15 @@ def selftest(b: Chrome, base: str, emit) -> None:
     b.js(CUTNUM_UNPLANT_JS)
     settled("cutnum plants removed")
     left += [v for v in b.js(f"{CHECK_JS}('page')")["violations"] if any(x in json.dumps(v) for x in ("plantcut", "plantnum"))]
-    # charts: the separator, the open ring and the 3 px painted notch are caught; the fractional-width full ring and
-    # the 1 px painted AA seam are not
+    # charts: the separator, the open ring, the 3 px painted notch and the rgb() ring's 3 px notch are caught; the
+    # fractional-width full ring, the 1 px painted AA seam, the un-notched rgb() ring and a canvas cleared right after
+    # the arc metadata exists (paint race) are not
     b.js(CHART_PLANT_JS)
     settled("chart plants")
     judge("charts", [json.dumps(v) for v in b.js(f"{CHECK_JS}('page')")["violations"] if v["check"] == "charts"],
-          ("plantchart-border", "plantchart-open", "plantchart-open-away", "plantchart-seam-plant"),
-          ("plantchart-control", "plantchart-seam-control"))
+          ("plantchart-border", "plantchart-open", "plantchart-open-away", "plantchart-seam-plant",
+           "plantchart-rgb-plant"),
+          ("plantchart-control", "plantchart-seam-control", "plantchart-rgb-control", "plantchart-cleared"))
     b.js(CHART_UNPLANT_JS)
     settled("chart plants removed")
     left += [v for v in b.js(f"{CHECK_JS}('page')")["violations"] if "plantchart" in json.dumps(v)]

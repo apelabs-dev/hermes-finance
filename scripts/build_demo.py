@@ -899,25 +899,27 @@ def history_start(today: date) -> date:
 
 
 def pay_late_bills(conn: sqlite3.Connection, db_path: Path, today: date) -> int:
-    """The fixture leaves some bills weeks late on purpose (a gate state). The demo's household pays its bills: each
-    late one gets its payment on the day it was expected, a copy of its last charge (same account, amount and
-    category), so "bills in the next 7 days" lists what is actually coming. Returns how many payments were added."""
+    """The fixture leaves some bills unpaid on purpose (a gate state). The demo's household pays its bills: each one
+    whose expected date has passed (late, or only due_soon when the cadence's longest interval ends exactly today, e.g.
+    day 40 of a monthly bill) gets its payment on the day it was expected, a copy of its last charge (same account,
+    amount and category), so "bills in the next 7 days" lists what is actually coming. A bill due today or later is
+    left alone. Returns how many payments were added."""
     from hermes_finance import tooldefs
     n = 0
-    for _ in range(12):   # a bill more than one cycle late gets one payment per pass
+    for _ in range(12):   # a bill more than one cycle overdue gets one payment per pass
         conn.commit()
-        late = [b for b in tooldefs.run_read("finance_bills", {"next": "7d"}, db_path, today)["items"]
-                if b["status"] == "late"]
-        if not late:
+        due = [b for b in tooldefs.run_read("finance_bills", {"next": "7d"}, db_path, today)["items"]
+               if b["next_expected"] < today.isoformat()]
+        if not due:
             return n
         with conn:
-            for b in late:
+            for b in due:
                 # (a bill without a merchant, e.g. a person paid by Zelle, is known by its statement line)
                 row = conn.execute("SELECT * FROM transactions WHERE (merchant_name = ? OR (merchant_name IS NULL AND "
                                    "lower(name) = lower(?))) AND pending = 0 AND amount > 0 "
                                    "ORDER BY date DESC, transaction_id DESC LIMIT 1", (b["merchant"], b["merchant"])).fetchone()
-                if row is None or b["next_expected"] > today.isoformat():
-                    raise RuntimeError(f"pay_late_bills: no charge to copy for a late bill ({b['key']})")
+                if row is None or b["next_expected"] >= today.isoformat():
+                    raise RuntimeError(f"pay_late_bills: no charge to copy for an unpaid bill ({b['key']})")
                 tid = f"{row['transaction_id']}-paid-{b['next_expected']}"
                 raw = json.loads(row["raw_json"] or "{}")
                 raw.update(transaction_id=tid, date=b["next_expected"], authorized_date=b["next_expected"])
@@ -927,22 +929,29 @@ def pay_late_bills(conn: sqlite3.Connection, db_path: Path, today: date) -> int:
                 conn.execute(f"INSERT INTO transactions ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                              [vals[c] for c in cols])
                 n += 1
-    raise RuntimeError("pay_late_bills: bills still late after 12 passes")
+    raise RuntimeError("pay_late_bills: bills still unpaid after 12 passes")
 
 
 def extend_history(conn: sqlite3.Connection, today: date) -> int:
     """Weekly balances back to history_start(): a bank account's balance is walked back through its own transactions
     (cash: a charge was money out, so the balance before it was higher), never below zero; a card, a loan and an
-    investment account keep their first balance (the fixture's card charges and payments don't net out). A manual
-    account's first value also stands at history_start(). Returns how many rows were added."""
+    investment account keep its first balance (the fixture's card charges and payments don't net out). A manual
+    account's first value also stands at history_start(). Every account lands on one weekly grid (the earliest first
+    snapshot), so an account whose data starts later (U.S. Bank at a month boundary) doesn't add a second weekly series
+    and turn the net-worth line into a 3-4 day one. Returns how many rows were added."""
     start, n = history_start(today), 0
     with conn:
+        accounts = []
         for acc, kind in conn.execute("SELECT account_id, type FROM accounts WHERE type IN "
                                       "('depository', 'investment', 'credit', 'loan') ORDER BY account_id").fetchall():
             first = conn.execute("SELECT date, current, available, iso_currency FROM balance_snapshots WHERE account_id = ? "
                                  "AND current IS NOT NULL ORDER BY date LIMIT 1", (acc,)).fetchone()
-            if first is None:
-                continue
+            if first is not None:
+                accounts.append((acc, kind, first))
+        if not accounts:
+            return n
+        anchor = min(date.fromisoformat(first[0]) for _, _, first in accounts)
+        for acc, kind, first in accounts:
             d0 = date.fromisoformat(first[0])
             flows = dict(conn.execute("SELECT date, SUM(amount) FROM transactions WHERE account_id = ? AND pending = 0 "
                                       "AND removed = 0 AND date <= ? GROUP BY date", (acc, first[0])).fetchall())
@@ -953,7 +962,7 @@ def extend_history(conn: sqlite3.Connection, today: date) -> int:
                 day -= timedelta(days=1)
                 if day < start:
                     break
-                if (d0 - day).days % 7 == 0:
+                if (anchor - day).days % 7 == 0:
                     avail = None if first[2] is None else round(first[2] + (bal - first[1]), 2)
                     n += conn.execute("INSERT OR IGNORE INTO balance_snapshots (account_id, date, current, available, "
                                       "iso_currency) VALUES (?, ?, ?, ?, ?)",
