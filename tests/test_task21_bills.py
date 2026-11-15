@@ -55,10 +55,10 @@ def ago(days: int, today: date = TODAY) -> str:
     return (today - timedelta(days=days)).isoformat()
 
 
-def series(conn, merchant, interval, n, amount=50.0, cat="Entertainment", last=5, **kw):
-    """n charges `interval` days apart, the last one `last` days ago; amount: a number or one per charge."""
+def series(conn, merchant, interval, n, amount=50.0, cat="Entertainment", last=5, today=TODAY, **kw):
+    """n charges `interval` days apart, the last one `last` days before `today`; amount: a number or one per charge."""
     amounts = amount if isinstance(amount, (list, tuple)) else [amount] * n
-    return [tx(conn, ago(last + interval * (n - 1 - k)), amounts[k], merchant, cat=cat, **kw) for k in range(n)]
+    return [tx(conn, ago(last + interval * (n - 1 - k), today), amounts[k], merchant, cat=cat, **kw) for k in range(n)]
 
 
 def socalgas(conn, cat="Gas & electric", merchant="SoCalGas"):
@@ -669,7 +669,9 @@ def _ladwp_db(path: Path, today: date) -> str:
     conn = db.connect(path)
     basic(conn)
     tid = ladwp(conn, (today - timedelta(days=29)).isoformat(), tid="ladwp-aug")   # the same id in both copies
-    series(conn, "Netflix", 31, 4, amount=15.49, last=16)
+    # Dated from the same `today` as the LADWP charge: the child runs on the real clock, and a monthly series whose
+    # last charge is more than two cycles old has stopped being a bill, so fixed dates fail from one day onward.
+    series(conn, "Netflix", 31, 4, amount=15.49, last=16, today=today)
     mcp_state.set_allow_writes(conn, True)
     conn.close()
     return tid
