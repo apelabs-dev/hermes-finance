@@ -291,7 +291,7 @@ def test_v19_upgrade_keeps_every_row_and_the_recreated_view_filters(data_dir):
     raw.close()
 
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     view = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'v_transactions'").fetchone()[0]
     assert "excluded_accounts" in view
     assert [tuple(r) for r in conn.execute(

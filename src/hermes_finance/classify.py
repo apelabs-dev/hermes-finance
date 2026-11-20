@@ -126,6 +126,8 @@ def plaid_default(conn: sqlite3.Connection, pfc_detailed: str | None, pfc_primar
 
 
 def category_id(conn: sqlite3.Connection, name_or_id: str | int) -> int:
+    """Resolve a category by id or name, case-insensitively. A hidden category (v23) is still accepted by name: an
+    existing rule or the user's own filing must keep working; hidden only leaves the new-selection lists."""
     row = conn.execute("SELECT id FROM categories WHERE id = ? OR name = ? COLLATE NOCASE",
                        (name_or_id, str(name_or_id))).fetchone()
     if not row:
@@ -140,7 +142,7 @@ def _candidates(conn: sqlite3.Connection, sources: tuple[str, ...], unlinked: bo
     marks = ", ".join("?" * len(sources))
     keep = "" if unlinked else " AND NOT COALESCE(c.source = 'rule' AND c.rule_id IS NULL, 0)"  # no row: a candidate
     return conn.execute(
-        f"""SELECT t.transaction_id, t.name, t.merchant_name, t.pfc_primary, t.pfc_detailed,
+        f"""SELECT t.transaction_id, t.name, t.merchant_name, t.pfc_primary, t.pfc_detailed, t.source,
                    c.category_id AS cur_category, c.source AS cur_source, c.rule_id AS cur_rule
             FROM transactions t LEFT JOIN classifications c USING (transaction_id)
             WHERE t.removed = 0 AND (c.source IS NULL OR c.source IN ({marks})){keep}""", sources).fetchall()
@@ -173,6 +175,8 @@ def apply(conn: sqlite3.Connection) -> dict[str, int]:
             rule = next((r for r in rules if r.matches(t)), None)
             if rule:
                 new = (rule.category_id, "rule", rule.id, f"rule #{rule.id}")
+            elif t["source"] == "simplefin":
+                continue  # no Plaid category to map: the row stays undecided for the AI / a person
             else:
                 new = (plaid_default(conn, t["pfc_detailed"], t["pfc_primary"]), "plaid", None, None)
             if (t["cur_category"], t["cur_source"], t["cur_rule"]) == new[:3]:

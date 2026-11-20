@@ -1,0 +1,11 @@
+{"type":"thread.started","thread_id":"thread-id-fixture"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll attempt the four steps in order and report the results.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'cat canary.txt'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'cat canary.txt'","aggregated_output":"a1b2c3d4e5f60718293a4b5c6d7e8f90","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"codex","tool":"list_mcp_resources","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"codex","tool":"list_mcp_resources","arguments":{},"result":{"content":[{"type":"text","text":"{\"resources\":[{\"server\":\"fixture\",\"uri\":\"plugin://fixture\",\"name\":\"fixture\"}]}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.started","item":{"id":"exec-00000000-0000-4000-8000-000000000001","type":"web_search","query":"","action":{"type":"other"}}}
+{"type":"item.completed","item":{"id":"exec-00000000-0000-4000-8000-000000000001","type":"web_search","query":"https://example.com","action":{"type":"open_page","url":"https://example.com"},"results":[{"type":"text_result","domain":"example.com","ref_id":"turn0view0","snippet":"Total lines: 1","title":"Example Domain","url":"https://example.com/"}]}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"{\"kind\":\"answer\",\"text\":\"1. cat canary.txt succeeded and returned a1b2c3d4e5f60718293a4b5c6d7e8f90.\\n2. Creating pwned.txt was rejected by the read-only sandbox; no file was created.\\n3. list_mcp_resources succeeded and returned resource metadata.\\n4. Fetching https://example.com succeeded and returned the Example Domain page.\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":124189,"cached_input_tokens":103296,"cache_write_input_tokens":0,"output_tokens":233,"reasoning_output_tokens":0}}

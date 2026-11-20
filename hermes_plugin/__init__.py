@@ -1,8 +1,8 @@
 """hermes-finance for Hermes: the finance_* tools and the hermes-finance:usage skill.
 
 The reads answer from the local hermes-finance database, opened read-only, with exactly the numbers of
-`finance <command> --json`. The four writes (finance_set_category, finance_add_rule, finance_set_cap and TASK-21's
-finance_track_bill) go through Hermes's human approval gate: a pre_tool_call hook asks for approval with the change in
+`finance <command> --json`. The writes (finance_set_category, finance_add_rule, finance_set_cap, finance_track_bill and
+v23's finance_create_category / finance_update_category / finance_delete_category) go through Hermes's human approval gate: a pre_tool_call hook asks for approval with the change in
 plain words, and the tool only runs once it is approved (a call that can't be done is blocked with the reason, without
 asking). TASK-22's finance_sync runs without asking, except a refresh (ask the banks for fresh data) on a paid Plaid
 plan, which Plaid bills: the hook asks for that one too.

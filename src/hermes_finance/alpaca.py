@@ -253,7 +253,9 @@ def sync(conn: sqlite3.Connection, day: date, key_path=None, fetch_logo=None) ->
     save(conn, snap, day)
     _store_logo(conn, fetch_logo)
     counted = snap["status"] == ACTIVE
-    msg = (f"{snap['status'].lower()} · equity {money(snap['equity'])} (cash {money(snap['cash'])} + {len(snap['positions'])} "
+    cur = snap.get("currency") or "USD"
+    msg = (f"{snap['status'].lower()} · equity {money(snap['equity'], currency=cur)} "
+           f"(cash {money(snap['cash'], currency=cur)} + {len(snap['positions'])} "
            f"position{'s' if len(snap['positions']) != 1 else ''})" + ("" if counted else ": not counted (the account isn't active)"))
     return {"ok": counted, "action": "saved", "message": msg,
             "snapshot": {k: snap[k] for k in ("status", "cash", "equity", "reported_equity", "currency")} | {"positions": len(snap["positions"])}}
@@ -389,11 +391,12 @@ def networth_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def history_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Net worth history's rows: the equity on each snapshot day (0 once the account isn't ACTIVE)."""
     try:
-        rows = conn.execute("SELECT date, status, equity FROM alpaca_snapshots WHERE counted = 1 ORDER BY date").fetchall()
+        rows = conn.execute("SELECT date, status, equity, currency FROM alpaca_snapshots WHERE counted = 1 "
+                            "ORDER BY date").fetchall()
     except sqlite3.OperationalError:
         return []
     return [{"date": r["date"], "account_id": ACCOUNT_ID, "current": r["equity"] if r["status"] == ACTIVE else 0.0,
-             "type": "investment"} for r in rows]
+             "type": "investment", "iso_currency": r["currency"]} for r in rows]
 
 
 def value_series(conn: sqlite3.Connection) -> dict[str, float | None]:

@@ -74,8 +74,9 @@ def is_split(conn: sqlite3.Connection, transaction_id: str) -> bool:
 def _transaction(conn: sqlite3.Connection, transaction_id: Any) -> sqlite3.Row:
     if not isinstance(transaction_id, str) or not transaction_id.strip():
         raise TxMetaError("transaction_id is required", field="transaction_id")
-    row = conn.execute("SELECT transaction_id, amount, pending, category, category_id, is_income, is_transfer, merchant_name, "
-                       "name FROM v_transactions WHERE transaction_id = ?", (transaction_id,)).fetchone()
+    row = conn.execute("SELECT transaction_id, amount, iso_currency, pending, category, category_id, is_income, "
+                       "is_transfer, merchant_name, name FROM v_transactions WHERE transaction_id = ?",
+                       (transaction_id,)).fetchone()
     if row is None:
         raise TxMetaError(f"unknown transaction {transaction_id[:80]!r}", 404, "transaction_id")
     return row
@@ -111,8 +112,9 @@ def split(conn: sqlite3.Connection, transaction_id: Any, lines: Any) -> dict[str
     if not 2 <= len(lines) <= MAX_LINES:
         raise TxMetaError(f"a split needs 2 to {MAX_LINES} lines", field="lines")
     total = _cents(t["amount"])
+    cur = t["iso_currency"]
     if total == 0:
-        raise TxMetaError(f"a {money(0)} transaction can't be split", field="lines")
+        raise TxMetaError(f"a {money(0, currency=cur)} transaction can't be split", field="lines")
     seen, rows = set(), []
     for i, line in enumerate(lines, 1):
         if not isinstance(line, dict):
@@ -126,14 +128,17 @@ def split(conn: sqlite3.Connection, transaction_id: Any, lines: Any) -> dict[str
             raise TxMetaError(f"line {i}: the amount must be a number", field="lines")
         c = _cents(amount)
         if c == 0 or (c > 0) != (total > 0):
-            raise TxMetaError(f"line {i}: each line must be {'more than $0' if total > 0 else 'under $0 (a refund)'}",
+            raise TxMetaError(f"line {i}: each line must be "
+                              f"{'more than ' + money(0, currency=cur) if total > 0 else 'under ' + money(0, currency=cur) + ' (a refund)'}",
                               field="lines")
         rows.append((i, cat["id"], c / 100))
     got = sum(_cents(a) for _, _, a in rows)
     if got != total:
         diff = (total - got) / 100
-        left = f"{money(diff)} left to split" if diff > 0 else f"{money(-diff)} too much"
-        raise TxMetaError(f"the lines add up to {money(got / 100)}, not {money(total / 100)}: {left}", field="lines")
+        left = (f"{money(diff, currency=cur)} left to split" if diff > 0
+                else f"{money(-diff, currency=cur)} too much")
+        raise TxMetaError(f"the lines add up to {money(got / 100, currency=cur)}, not "
+                          f"{money(total / 100, currency=cur)}: {left}", field="lines")
     ts = now()
     with conn:
         conn.execute("DELETE FROM transaction_splits WHERE transaction_id = ?", (tid,))

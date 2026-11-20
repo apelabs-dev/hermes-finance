@@ -17,6 +17,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 from cdp import Server  # noqa: E402
+from offline_env import OFFLINE_SWITCHES  # noqa: E402
 import gate_dbs  # noqa: E402
 from factory import cap  # noqa: E402
 from hermes_finance import db  # noqa: E402
@@ -163,7 +164,7 @@ def capture(out: Path = OUT):
     scratch.mkdir(parents=True, exist_ok=True)
     # Keep all browser downloads local; the script itself never downloads anything.
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(OUT / "webkit"))
-    os.environ.update(HERMES_PLAID="off", HERMES_ALPACA="off", HERMES_CHROME_DEVTOOLS="off",
+    os.environ.update(**OFFLINE_SWITCHES,
                       HERMES_ENV_FILE=str(scratch / "absent.env"), FINANCE_SECRETS_FILE=str(scratch / "absent-secrets.env"),
                       HERMES_ALPACA_KEY_FILE=str(scratch / "absent-alpaca.env"))
     with tempfile.TemporaryDirectory(prefix="webkit-", dir=scratch) as temp:

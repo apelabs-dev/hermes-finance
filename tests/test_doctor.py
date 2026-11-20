@@ -36,7 +36,8 @@ def base_env(tmp: Path) -> dict:
     return {"HOME": str(tmp / "home"), "PATH": "/usr/bin:/bin", "PYTHONPATH": str(ROOT / "src"),
             "HERMES_ENV_FILE": str(tmp / "no-env-file"), "FINANCE_SECRETS_FILE": str(tmp / "no-secrets-file"),
             "HERMES_ALPACA_KEY_FILE": str(tmp / "no-alpaca-file"), "FINANCE_DATA_DIR": str(tmp / "data"),
-            "HERMES_HOME": str(tmp / "no-hermes")}
+            "HERMES_HOME": str(tmp / "no-hermes"),
+            "HERMES_SIMPLEFIN": "off"}   # HERMES_PLAID stays unset on purpose: see the guard test's ALLOWLIST
 
 
 def doctor_run(env: dict, *args: str) -> subprocess.CompletedProcess:

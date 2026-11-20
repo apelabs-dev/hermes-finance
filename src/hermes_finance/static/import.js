@@ -10,7 +10,8 @@
  */
 (window.HF_EXT = window.HF_EXT || []).push((HF) => {
   'use strict';
-  const {h, fill, icon, post, openSheet, closeModal, closeBtn, backBtn, ring, glyph, plural, fmtDate, RGB, OK} = HF;
+  const {h, fill, icon, post, openSheet, closeModal, closeBtn, backBtn, ring, glyph, plural, fmtDate, RGB, OK,
+    CURRENCIES, currencyPrefix, moneyIn} = HF;
   const MAX = 10 * 1024 * 1024;
   const FIELDS = [['', 'Skip'], ['date', 'Date'], ['description', 'Description'], ['amount', 'Amount'], ['debit', 'Money out'],
     ['credit', 'Money in'], ['account', 'Account']];
@@ -49,7 +50,10 @@
       try {
         const st = {filename: file.name, data: toBase64(await file.arrayBuffer()), targets: {}, limits: {}};
         const p = await post('/api/import/preview', {filename: st.filename, data: st.data});
-        Object.assign(st, {mapping: p.mapping, date_format: p.date_format, sign: p.sign});
+        const targetId = p.groups && p.groups[0] && p.groups[0].target && p.groups[0].target.account_id;
+        const same = targetId && (p.accounts || []).find((a) => a.id === targetId);
+        Object.assign(st, {mapping: p.mapping, date_format: p.date_format, sign: p.sign,
+          currency: (same && same.currency) || p.currency});
         mapSheet(st, p);
       } catch (e) {
         err.textContent = e.message;
@@ -78,6 +82,10 @@
     s.addEventListener('change', () => {
       const [kind, v] = s.value.split(':');
       st.targets[g.label] = kind === 'id' ? {account_id: Number(v)} : {new: {name: g.label, kind: v}};
+      if (kind === 'id') {
+        const acct = (accounts || []).find((a) => a.id === Number(v));
+        if (acct && acct.currency) st.currency = acct.currency;
+      }
       redraw();
     });
     return s;
@@ -95,7 +103,8 @@
         if (t.new && t.new.kind === 'credit_card') targets[g.label] = {new: {...t.new, credit_limit: Number(st.limits[g.label]) || null}};
         else targets[g.label] = t;
       }
-      return {filename: st.filename, data: st.data, mapping: st.mapping, date_format: st.date_format, sign: st.sign, targets};
+      return {filename: st.filename, data: st.data, mapping: st.mapping, date_format: st.date_format, sign: st.sign,
+        currency: st.currency, targets};
     };
     const refresh = async () => {
       const mine = ++seq;
@@ -131,7 +140,13 @@
         h('thead', {}, h('tr', {}, p.headers.map((c) => h('th', {}, c)))),
         h('tbody', {}, h('tr', {class: 'maprow'}, p.headers.map((_, i) => h('td', {}, colSel(i)))),
           p.sample.map((r) => h('tr', {}, r.map((v, i) => h('td', {class: cols[i] === 'amount' || cols[i] === 'debit' || cols[i] === 'credit' ? 'num v' : ''}, v))))))) : null;
+      const ccyPick = csv ? h('span', {}, 'Currency ',
+        h('select', {class: 'selv', 'aria-label': 'Currency of this file', onchange: (e) => { st.currency = e.target.value; refresh(); }},
+          CURRENCIES.map((c) => h('option', {value: c, selected: c === (st.currency || p.currency)}, c)))) : null;
       const detect = csv ? h('div', {class: 'detect'},
+        ccyPick,
+        p.currencies && p.currencies.filter((c) => /^[A-Z]{3}$/.test(c)).length
+          ? h('span', {}, icon('info'), `Codes in the file: ${p.currencies.join(', ')} (an explicit code wins)`) : null,
         p.date_formats.length > 1
           ? h('span', {}, 'Dates read as', h('select', {class: 'selv', 'aria-label': 'Date format', onchange: (e) => { st.date_format = e.target.value; refresh(); }},
             p.date_formats.map((f) => h('option', {value: f, selected: f === st.date_format}, fmtName(f)))))
@@ -143,11 +158,14 @@
       const groups = p.groups.map((g) => {
         const t = st.targets[g.label] || g.target;
         const card = t.new && t.new.kind === 'credit_card';
-        const limit = card ? h('span', {class: 'inp tin'}, h('span', {class: 'pre', 'aria-hidden': 'true'}, HF.CUR.sym),
+        const into = t.account_id ? (p.accounts || []).find((a) => a.id === t.account_id) : null;
+        const groupCcy = (t.new && t.new.currency) || (into && into.currency) || st.currency || HF.CUR.code;
+        const limit = card ? h('span', {class: 'inp tin'}, h('span', {class: 'pre', 'aria-hidden': 'true'}, currencyPrefix(groupCcy)),
           h('input', {'aria-label': `Credit limit of ${HF.acctName(g.label)}`, inputmode: 'decimal', value: st.limits[g.label] || '', placeholder: 'Limit',
             oninput: (e) => { st.limits[g.label] = HF.parseAmount(e.target.value); go.disabled = !(st.limits[g.label] > 0); }})) : null;
         return h('div', {class: 'li mapacct'}, h('span', {class: 'grow'}, h('b', {}, HF.acctName(g.label)),
-          h('span', {}, `${plural(g.rows, 'row')} · ${g.new} new${g.skipped ? ` · ${g.skipped} already here` : ''}`)),
+          h('span', {}, `${plural(g.rows, 'row')} · ${g.new} new${g.skipped ? ` · ${g.skipped} already here` : ''}`
+            + (g.currency ? ` · ${g.currency}` : ''))),
         targetSelect(st, g, p.accounts, refresh), limit);
       });
       go.textContent = p.new ? `Import ${plural(p.new, 'row')}` : 'Nothing new to import';

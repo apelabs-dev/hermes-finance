@@ -27,13 +27,16 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
-from . import insights, portfolio
+from . import caticons, insights, portfolio
 from .money import money
-from .db import now
+from .db import display_currency, now
 
 _r = insights._r
-ICONS = ("piggy-bank", "target", "plane", "car", "house", "shield-check", "graduation-cap", "gift",
-         "heart", "briefcase", "rocket", "sprout")
+ICONS = tuple(caticons.ALL)   # v23: the same 100-icon set categories use (the shared picker)
+# v17's defaults and the old 12-icon sheet, mapped to the nearest of the 100 so an existing goal opens with a valid
+# selection and saves cleanly (the DB row itself is only changed when its sheet is saved).
+LEGACY_ICONS = {"pencil": "receipt-text", "split": "target", "card": "credit-card", "handcoins": "hand-coins",
+                "briefcase": "briefcase-business"}
 COLOURS = ("#4fd1a5", "#8ea8ff", "#5fc6e8", "#c792ea", "#f5b454", "#ff8fb1", "#ff7b7b", "#9ba2b6")
 KINDS = ("save", "payoff", "monthly")
 TRACKS = ("account", "earmark", "manual")
@@ -80,11 +83,13 @@ def _label(a: dict[str, Any]) -> str:
     return f"{a['name'] or 'Account'} ••{a['mask']}" if a.get("mask") else (a["name"] or "Account")
 
 
-def _account_json(a: dict[str, Any] | None) -> dict[str, Any] | None:
+def _account_json(a: dict[str, Any] | None, display: str) -> dict[str, Any] | None:
+    """`display`: the display currency, the code of an account that carries none of its own."""
     if a is None:
         return None
     return {"id": a["id"], "name": a["name"], "mask": a["mask"], "institution": a["institution"], "kind": a["kind"],
-            "group": a["group"], "balance": _r(a["balance"]), "label": _label(a)}
+            "group": a["group"], "balance": _r(a["balance"]), "label": _label(a),
+            "currency": a.get("currency") or display}
 
 
 def _growth(conn: sqlite3.Connection, account_id: str, today: date) -> float:
@@ -187,10 +192,12 @@ def _goal_json(conn: sqlite3.Connection, g: sqlite3.Row, today: date, by_id: dic
                cover: dict[int, float], flow: dict[str, Any], debts: dict[str, dict[str, Any]] | None,
                excluded: set[str] | None = None) -> dict[str, Any]:
     acct = by_id.get(g["account_id"]) if g["account_id"] else None
+    display = display_currency(conn)
+    currency = (display if g["kind"] == "monthly" else (acct or {}).get("currency") or display)
     out: dict[str, Any] = {"id": g["id"], "kind": g["kind"], "name": g["name"], "target": g["target"],
-                           "icon": g["icon"], "colour": g["colour"],
+                           "icon": LEGACY_ICONS.get(g["icon"], g["icon"]), "colour": g["colour"], "currency": currency,
                            "target_month": g["target_month"], "track": g["track"], "account_id": g["account_id"],
-                           "account": _account_json(acct), "earmark": g["earmark"], "start_balance": g["start_balance"],
+                           "account": _account_json(acct, display), "earmark": g["earmark"], "start_balance": g["start_balance"],
                            "created_at": g["created_at"], "archived_at": g["archived_at"], "missing_account": False,
                            "excluded_account": False, "short": None, "entries": [], "pace": None, "payoff": None}
     if g["account_id"] and acct is None and g["account_id"] in (excluded or set()):
@@ -266,20 +273,21 @@ def suggestions(conn: sqlite3.Connection, rows: list[sqlite3.Row], by_id: dict[s
     """Savings-looking accounts no goal follows yet (and not answered "Not a goal")."""
     used = {g["account_id"] for g in rows if g["archived_at"] is None and g["account_id"]}
     skip = used | set(_dismissed(conn))
+    display = display_currency(conn)
     out = []
     for r in conn.execute("""SELECT a.account_id, a.subtype, a.name FROM accounts a JOIN items i ON i.item_id = a.item_id
                              WHERE i.removed_at IS NULL AND a.type = 'depository' ORDER BY i.created_at, a.name"""):
         if r["account_id"] in skip or r["account_id"] not in by_id:
             continue
         if (r["subtype"] or "").lower() in SAVINGS_SUBTYPES or SAVINGS_NAME_RE.search(r["name"] or ""):
-            out.append({**_account_json(by_id[r["account_id"]]), "subtype": r["subtype"],
+            out.append({**_account_json(by_id[r["account_id"]], display), "subtype": r["subtype"],
                         "vault": (r["subtype"] or "").lower() == "cash management"})
     for m in conn.execute("SELECT id, subtype, name FROM manual_accounts WHERE archived_at IS NULL AND kind = 'bank' ORDER BY id"):
         mid = insights.manual_nw_id(m["id"])
         if mid in skip or mid not in by_id:
             continue
         if (m["subtype"] or "").lower() in SAVINGS_SUBTYPES or SAVINGS_NAME_RE.search(m["name"] or ""):
-            out.append({**_account_json(by_id[mid]), "subtype": m["subtype"], "vault": False})
+            out.append({**_account_json(by_id[mid], display), "subtype": m["subtype"], "vault": False})
     return out
 
 
@@ -302,13 +310,25 @@ def payload(conn: sqlite3.Connection, today: date, archived: bool = False) -> di
             earmarked[g["account_id"]] = earmarked.get(g["account_id"], 0.0) + (g["earmark"] or 0.0)
         elif g["kind"] == "save" and g["track"] == "account":
             whole[g["account_id"]] = g["name"]
-    assets = [{**_account_json(a), "earmarked": _r(earmarked.get(a["id"], 0.0)),
+    display = display_currency(conn)
+    assets = [{**_account_json(a, display), "earmarked": _r(earmarked.get(a["id"], 0.0)),
                "unassigned": _r(max(a["balance"] - earmarked.get(a["id"], 0.0), 0.0)), "whole_goal": whole.get(a["id"])}
               for a in accts if _asset(a)]
     saves = [g for g in goals if g["kind"] == "save" and g["target"] and not g["excluded_account"]]
+    shown = [g for g in saves if g["currency"] == display]
+    by_currency: dict[str, dict[str, Any]] = {}
+    for g in saves:
+        e = by_currency.setdefault(g["currency"], {"currency": g["currency"], "count": 0, "saving_target": 0.0, "saved": 0.0})
+        e["count"] += 1
+        e["saving_target"] += g["target"]
+        e["saved"] += min(g["progress"], g["target"])
+    for e in by_currency.values():
+        e["saving_target"] = _r(e["saving_target"])
+        e["saved"] = _r(e["saved"])
+        e["pct"] = _r(e["saved"] / e["saving_target"] * 100) if e["saving_target"] else None
     monthly = next((g for g in goals if g["kind"] == "monthly"), None)
     return {
-        "appearance": {"icons": list(ICONS), "colours": list(COLOURS)},
+        "appearance": {"icons": list(ICONS), "colours": list(COLOURS), "quick": list(caticons.QUICK_GOAL)},
         "today": today.isoformat(),
         "month": insights.month_of(today),
         "goals": goals,
@@ -318,11 +338,14 @@ def payload(conn: sqlite3.Connection, today: date, archived: bool = False) -> di
         "cashflow": flow["months"],
         "suggestions": suggestions(conn, rows, by_id),
         "accounts": assets,
-        "debts": [{**_account_json(a)} for a in accts if _debt(a) and a["balance"] > 0],
-        "totals": {"count": len(goals), "save_count": len(saves), "saving_target": _r(sum(g["target"] for g in saves)),
-                   "saved": _r(sum(min(g["progress"], g["target"]) for g in saves)),
-                   "pct": _r(sum(min(g["progress"], g["target"]) for g in saves) / sum(g["target"] for g in saves) * 100)
-                   if saves else None},
+        "debts": [{**_account_json(a, display)} for a in accts if _debt(a) and a["balance"] > 0],
+        "totals": {"count": len(goals), "save_count": len(shown),
+                   "saving_target": _r(sum(g["target"] for g in shown)),
+                   "saved": _r(sum(min(g["progress"], g["target"]) for g in shown)),
+                   "pct": _r(sum(min(g["progress"], g["target"]) for g in shown)
+                             / sum(g["target"] for g in shown) * 100) if shown else None},
+        "totals_by_currency": list(by_currency.values()),
+        "currency": display,
     }
 
 
@@ -368,7 +391,7 @@ def _amount(value: Any, field: str, what: str, lo: float = 0.0, allow_zero: bool
         raise GoalError(f"{what} must be a number", field=field)
     v = round(float(value), 2)
     if v < lo or (v == 0 and not allow_zero) or v > MAX_TARGET:
-        raise GoalError(f"{what} must be {'at least $0' if allow_zero else 'more than $0'} and at most {money(MAX_TARGET)}",
+        raise GoalError(f"{what} must be {'at least zero' if allow_zero else 'more than zero'} and at most {money(MAX_TARGET)}",
                         field=field)
     return v
 
@@ -585,10 +608,11 @@ def dismiss(conn: sqlite3.Connection, account_id: Any, today: date) -> dict[str,
 # --- text (finance goals) --------------------------------------------------------------------------------------------
 
 def text(p: dict[str, Any]) -> str:
-    def m(x: float | None) -> str:
-        return money(x)
+    def m(x: float | None, c: str | None = None) -> str:
+        return money(x, currency=c or p.get("currency"))
     lines = []
     for g in p["goals"]:
+        c = g.get("currency")
         head = {"save": "Save up", "payoff": "Pay off", "monthly": "Monthly savings"}[g["kind"]]
         src = (f" · {g['account']['label']}" if g["account"] else "") + (
             {"account": " (whole account)", "earmark": " (part of it)", "manual": " (logged by hand)"}.get(g["track"] or "", ""))
@@ -596,24 +620,24 @@ def text(p: dict[str, Any]) -> str:
             lines.append(f"#{g['id']} {g['name']} [{head}{src}]: its account is excluded by the account policy")
             continue
         pct = "-" if g["pct"] is None else f"{g['pct']:.0f}%"
-        line = f"#{g['id']} {g['name']} [{head}{src}]: {m(g['progress'])} of {m(g['target'])} ({pct})"
+        line = f"#{g['id']} {g['name']} [{head}{src}]: {m(g['progress'], c)} of {m(g['target'], c)} ({pct})"
         if g["kind"] == "monthly":
             line += f" saved in {g['month']} (income {m(g['income'])} - spending {m(g['spending'])})"
         elif g["done"]:
             line += " · reached"
         else:
-            line += f" · {m(g['left'])} left"
+            line += f" · {m(g['left'], c)} left"
             pace = g.get("pace") or {}
             if pace.get("past_due"):
                 line += " · Past due"
             elif pace.get("need_per_month") is not None:
-                line += f" · save {m(pace['need_per_month'])}/mo to hit {g['target_month']}"
+                line += f" · save {m(pace['need_per_month'], c)}/mo to hit {g['target_month']}"
             elif pace.get("on_pace_month"):
                 line += f" · on pace for {pace['on_pace_month']}"
             if g.get("payoff") and g["payoff"].get("payoff_month"):
                 line += f" · paid off {g['payoff']['payoff_month']}"
         if g.get("short"):
-            line += f" · SHORT by {m(g['short']['amount'])} (the account holds less than its earmarks)"
+            line += f" · SHORT by {m(g['short']['amount'], c)} (the account holds less than its earmarks)"
         if g.get("missing_account"):
             line += " · its account isn't there any more"
         lines.append(line)
@@ -621,9 +645,10 @@ def text(p: dict[str, Any]) -> str:
         lines.append("No goals yet.")
     if p["suggestions"]:
         lines.append("Suggested (savings accounts without a goal): " + ", ".join(
-            f"{s['label']} {m(s['balance'])}" for s in p["suggestions"]))
-    t = p["totals"]
-    if t["save_count"]:
-        lines.append(f"Saving toward {m(t['saving_target'])}: {m(t['saved'])} saved ({t['pct']:.0f}%)")
+            f"{s['label']} {m(s['balance'], s.get('currency'))}" for s in p["suggestions"]))
+    for t in p.get("totals_by_currency") or []:
+        if t.get("count"):
+            lines.append(f"Saving toward {m(t['saving_target'], t['currency'])}: {m(t['saved'], t['currency'])} saved "
+                         f"({(t['pct'] or 0):.0f}%)")
     lines.append("(goals never change net worth, budgets or any other total)")
     return "\n".join(lines)

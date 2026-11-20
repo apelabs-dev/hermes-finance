@@ -422,3 +422,6 @@
   .bx-foot button:not(.rm) { flex: 1; justify-content: center; }
   .bx-foot button.rm { flex: 1 1 100%; justify-content: center; height: 40px; }   /* its 44px hit area is tap.css's ::after */
 }
+
+/* Multi-currency: spending in another currency is shown beside a category's Spent, never counted in its cap. */
+.bt .also { display: block; margin-top: 2px; font-size: 13px; color: var(--dim); font-weight: 500; white-space: nowrap; }

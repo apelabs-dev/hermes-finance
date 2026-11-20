@@ -106,7 +106,7 @@ def test_the_daily_run_takes_each_step_once_in_the_deployed_order(ledger, artifa
     rec = Recorder()
     text, report = run("daily", artifacts, rec)
     assert sections(text) == DAILY_SECTIONS, text
-    assert rec.calls == [["sync"], ["alpaca-sync"], ["match-payments"], ["match-payments", "--suggest"], ["revalue"],
+    assert rec.calls == [["sync", "--scheduled"], ["alpaca-sync"], ["match-payments"], ["match-payments", "--suggest"], ["revalue"],
                          ["ai-queue", "--max-groups", "120"]]
     assert once_per_bank(fake)                                            # one sync per bank: no second pass
     assert not any("refresh" in path for path in fake.paths())             # never Plaid's billed refresh
@@ -127,7 +127,7 @@ def test_the_weekly_run_syncs_once_and_saves_three_private_snapshots(ledger, art
     rec = Recorder()
     text, report = run("weekly", artifacts, rec)
     assert sections(text) == WEEKLY_SECTIONS, text
-    assert rec.calls == [["sync"]]
+    assert rec.calls == [["sync", "--scheduled"]]
     assert once_per_bank(fake)
     for name in ("overview", "budgets", "recurring"):
         path = artifacts / f"week-{name}-{TODAY.isoformat()}.json"

@@ -94,6 +94,9 @@ OPEN_LINK_SHEET = """(async () => {
   await new Promise((r) => setTimeout(r, 150));
   [...document.querySelectorAll('#sheet button')].find((b) => /Link a bank or card/.test(b.textContent)).click();
   await new Promise((r) => setTimeout(r, 150));
+  // Approved D1: the chooser comes first; Continue with Plaid is today's unchanged Plaid sheet.
+  [...document.querySelectorAll('#sheet button')].find((b) => b.textContent === 'Continue with Plaid').click();
+  await new Promise((r) => setTimeout(r, 150));
 })()"""
 
 

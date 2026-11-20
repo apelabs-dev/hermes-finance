@@ -17,8 +17,9 @@ import gate_dbs
 from hermes_finance import web
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_ORDER = ["app.css", "goals.css", "txmeta.css", "billcal.css", "rollover.css", "alpaca.css", "bills.css", "chat.css",
-             "catpick.css", "txfilter.css", "wherewent.css", "budgets.css", "settings.css", "light.css", "tap.css"]
+APP_ORDER = ["app.css", "iconpick.css", "goals.css", "txmeta.css", "billcal.css", "rollover.css", "alpaca.css", "bills.css", "chat.css",
+             "catpick.css", "txfilter.css", "wherewent.css", "simplefin.css", "budgets.css", "settings.css", "light.css",
+             "tap.css"]
 LOGIN_ORDER = ["app.css", "settings.css", "light.css", "tap.css"]
 LINK = re.compile(r"""<link\b[^>]*\brel=["']?stylesheet["']?[^>]*>""", re.I)
 HREF = re.compile(r"""\bhref=["']?/static/([^"' >]+)""")

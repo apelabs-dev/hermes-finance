@@ -8,6 +8,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "argon2-cffi>=23.1,<26",   # TASK-18: the built-in login's password and recovery-code hashes (argon2id)
+    "iso4217>=1.16.20260101",
     "ofxtools>=0.9.5,<0.10",   # TASK-18: reading OFX / QFX files (Add account -> Import a file)
 ]
 

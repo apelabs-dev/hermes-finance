@@ -100,7 +100,7 @@ stale:
 uv run python scripts/gen_docs_reference.py            # rewrite docs/reference/{cli,tools,settings-keys}.md
 uv run python scripts/gen_docs_reference.py --check    # exit 1 when one is stale
 
-uvx --with "mkdocs-material>=9.5,<10" --from "mkdocs>=1.6,<2" mkdocs build --strict   # writes site/ (git-ignored)
+uvx --python 3.12 --with "mkdocs-material>=9.5,<10" --from "mkdocs>=1.6,<2" mkdocs build --strict   # writes site/ (git-ignored)
 ```
 
 The generator needs Python 3.12, because argparse lays out help differently in other versions.

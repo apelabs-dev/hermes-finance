@@ -38,12 +38,26 @@ Choose who can open the app: **This computer only**, **Behind your proxy login**
 |---|---|
 | **Hermes** (the default) | Ask uses Hermes's model through the plugin. Nothing to paste. The card says whether Hermes is found on this computer. |
 | **API key** | Provider preset (OpenRouter, OpenAI, Local, Custom), endpoint, model and API key. The key is written to the secrets file and never shown again. |
+| **CLI** | Runs a Claude Code or Codex CLI already signed in on this computer. No key to paste. One short check proves it can answer without tools. |
 | **Off** | Dashboard only. No Ask, nothing queued for AI classification. |
 
 - **Monthly spend cap** (Hermes and API key, default $5): a soft cap on Ask. See
-  [AI modes](ai-modes.md#api-key-the-app-runs-the-loop).
+  [AI modes](ai-modes.md#api-key-the-app-runs-the-loop). It doesn't apply to CLI mode: that use counts against the
+  CLI's own plan limits.
+- **Isolation check** (CLI): one short request with the chosen CLI, started under its lockdown (Claude Code with no
+  tools and no MCP servers; Codex behind its feature flags and a read-only sandbox). *Check
+  again* runs it after you install or update the CLI. A version that fails is refused: Ask stays off for that
+  version, and nothing falls back to Hermes or an API key. A changed version is unchecked until it passes again.
+  For Codex the check reads the runtime's own tool-router rejection lines on stderr and requires no tool item, no
+  canary and no written file; how the model words its report is not what passes it. That evidence is one locked and
+  one unlocked run on Codex 0.162.1, stored per version: a version whose stderr or item names differ fails closed as
+  unsupported, never passes by absence. MCP and web have no side effect to check.
+- **Terms** (CLI): it runs on your Claude or ChatGPT subscription, outside its own app. Check that your plan allows
+  it. Usage counts against that plan's limits, not the monthly cap here.
 - **Auto-apply confidence** (0.5 to 0.95, default 0.7): an AI classification at or above it is filed for you; one
   below waits in *Needs review*.
+- Every change the model suggests still arrives as an approval card, in CLI mode too: nothing is applied without your
+  OK.
 - *Test connection* is shown but disabled ("Coming in the next update"): it isn't built yet.
 
 ## Connect other agents (MCP)
@@ -108,6 +122,40 @@ Dark (the default), light, or system (follows the device).
   removed](security.md#what-stays-on-your-computer)).
 - **Import** (the same as **Add account** → **Import a file**): a bank's CSV (you match the columns in a preview), OFX or QFX, into a
   manual account. Rows that are already there are skipped.
+
+## Categories
+
+The categories every transaction is filed under, grouped as the Budgets page and the charts group them. The card's
+summary reads, for example, “37 categories · 1 yours · 1 hidden”. Open, it has **Search categories** (it filters the
+rows by name as you type, across every group) and **New category** on one line, then each group with its count. A row
+shows the category's icon (the one stored, in its group's colour), its name, a **Yours** tag on the ones you made, how
+many transactions are filed under it and its actions: icons on a wide screen, one ⋯ menu on a phone. The first ten
+rows show; **Show all** lists the rest.
+
+- **Yours** (a category you made in Settings or with `finance categories add`): Edit (name, group and icon), Hide or
+  Show, Delete. It is always spending-only and lives in one of the eight groups; names are unique ignoring case
+  (accents and all: “École” and “école” are the same name).
+- **Built-in** (the 36 seeded categories): Edit changes the icon only, plus Hide or Show. A built-in is never renamed,
+  deleted or moved: the bill and budget reads name some of them.
+- **Income and Transfers**: icon only; they are structural and stay visible.
+
+A hidden category stays in its group, greyed, with a **Hidden** tag and a **Show** button that brings it back.
+
+**Delete** is move-and-delete and asks in the row: “Delete Meal Prep? Its 14 transactions move to …”, a choice of
+visible spending categories, then **Move and delete** or **Cancel**. Nothing is removed until you confirm. Every store
+that references it (transactions, rules, Plaid's category map, AI reviews, split lines, budget rollover, deleted-rule
+receipts and approvals still waiting) moves in one transaction, saved filters naming it name the new category, and it
+leaves the “Where it went” chart's hidden list; then the category row goes. A failure rolls it all back. You cannot
+delete into a hidden category: the money must land somewhere you can see.
+
+**Hidden** is a selection flag, not a deletion. A hidden category is not offered by the pickers or the transaction
+filters, is left out of the “Where it went” donut and of the assistant's category list, but every past total, budget,
+bill and cash-flow figure still counts it; undo with Show. A category you had already left out of the donut before
+hiding it stays left out after Show.
+
+**New category** is also a row at the bottom of any category picker, and typing a name that matches nothing offers to
+create it. The new category's icon comes from the shared 100-icon picker (two rows of common icons, then Show all 100
+with search); Goals use the same picker, with their eight colour swatches unchanged.
 
 ## Categorization rules
 

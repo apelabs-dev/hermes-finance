@@ -36,9 +36,10 @@
 ---
 
 A self-hosted personal-finance dashboard for people who already run [Hermes](#the-three-ai-modes). It pulls your
-accounts, balances and transactions from Plaid into a SQLite file on your own computer. It files spending into
-categories and tracks budgets, recurring bills, goals, loans, investments and net worth. For what Plaid can't see (a
-car, a home, a loan from a lender that isn't connected) you add an account by hand or import a CSV, OFX or QFX file.
+accounts, balances and transactions from Plaid or SimpleFIN Bridge into a SQLite file on your own computer. It
+files spending into categories and tracks budgets, recurring bills, goals, loans, investments and net worth. For what
+neither can see (a car, a home, a loan from a lender that isn't connected) you add an account by hand or import a CSV,
+OFX or QFX file.
 Your agent gets the same numbers as native tools, over MCP, or through the dashboard's own Ask panel.
 
 Full documentation: [`docs/`](docs/index.md), a MkDocs site (`uvx --python 3.12 --with "mkdocs-material>=9.5,<10" --from "mkdocs>=1.6,<2" mkdocs build --strict`).
@@ -241,6 +242,17 @@ paste them into first-run setup or Settings → Connections → Replace keys, or
 the 10-connection rule above first. Without them the app still runs on manual accounts and imported files. Check:
 `finance doctor` shows `ok plaid`.
 
+### Integration: SimpleFIN Bridge (banks, no Plaid slot)
+
+A second, read-only bank connection for people who have used their Plaid connections or cannot get Plaid keys. Create
+a setup token at SimpleFIN Bridge, then **Add account → Link a bank or card → Continue with SimpleFIN** and paste it.
+The app keeps the private access link in the secrets file (never the database), guesses each account's type and asks
+you to confirm it, and imports balances and transactions (pending included; no holdings or liability detail). SimpleFIN
+allows 24 requests a day and 6 manual syncs; the app counts them across the app, the CLI and the Hermes jobs. This
+release writes schema v21, which a 0.3.0 binary cannot read, so back up and do not downgrade ([Database
+version](docs/simplefin.md#database-version)). Details: [SimpleFIN setup](docs/simplefin.md). Check:
+`finance simplefin status`.
+
 ### Integration: AI provider (Ask and classification)
 
 The Ask panel and the daily AI classification. Settings → AI provider picks the mode (`ai.mode`): **Hermes** (the
@@ -317,6 +329,8 @@ Everything that leaves the computer, and when: [Security model](docs/security.md
   (`config.SLOT_LIMIT`). Every connection ever made counts. Use **Reconnect** for a broken one, never a second
   connection.
 - **US banks only** in Plaid Link. The currency setting only changes how amounts are written.
+- **SimpleFIN is read-only and balance-only for investments.** It imports balances and transactions, not holdings or
+  liability detail, and the account type is a guess you confirm once. It allows 24 requests a day and 6 manual syncs.
 - **Nothing runs on a schedule by itself.** Run `finance sync` from the Hermes jobs, cron or launchd, or tap
   **Sync now**.
 - **Car and home values scrape free public pages** (Carfax through your own Chrome with remote debugging, and Redfin).

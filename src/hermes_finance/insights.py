@@ -26,13 +26,42 @@ from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Iterator, Sequence
 
 from . import alpaca, groupbudget, rollover
-from .money import money
-from .db import ACCOUNT_POLICY_KEY, account_policy_sql, account_policy_value, now
+from .money import SYMBOLS, code as currency_code, money
+from .db import ACCOUNT_POLICY_KEY, account_policy_sql, account_policy_value, display_currency, now
 
 log = logging.getLogger(__name__)
 
 SPENDING = "v.is_income = 0 AND v.is_transfer = 0"
 LINES = "v_spend_lines"   # TASK-19: spending by category reads a split's lines (a split never changes a total)
+
+
+def _display(conn: sqlite3.Connection) -> str:
+    """The display currency every single-number total is kept in (validated by prefs; never user SQL)."""
+    return display_currency(conn)
+
+
+def sql_code(code: str) -> str:
+    """The one guard for a currency code inlined into SQL text: only `[A-Z0-9]{1,12}` reaches the query, anything else
+    reads as USD. Every display-currency filter goes through currency_expr / currency_is_sql, never an f-string."""
+    return code if isinstance(code, str) and re.fullmatch(r"[A-Z0-9]{1,12}", code) else "USD"
+
+
+def currency_expr(code: str, *columns: str) -> str:
+    """SQL: a row's currency code, upper-cased: the first of `columns` that isn't blank, else `code` (guarded)."""
+    fallbacks = "".join(f"NULLIF(TRIM({c}), ''), " for c in columns)
+    return f"UPPER(COALESCE({fallbacks}'{sql_code(code)}'))"
+
+
+def currency_is_sql(code: str, *columns: str, other: bool = False) -> str:
+    """SQL: the row is in `code` (`other`: in any other currency), its code read as currency_expr does."""
+    return f"{currency_expr(code, *columns)} {'<>' if other else '='} '{sql_code(code)}'"
+
+
+def currency_sql(conn: sqlite3.Connection, alias: str = "v") -> str:
+    """SQL: this row is in the display currency. A missing code reads as the display currency; comparison is
+    case-insensitive so a provider's lower-case id still matches. The display code comes from settings, never a
+    request, and is inlined through sql_code (it keeps the callers' parameter lists unchanged)."""
+    return currency_is_sql(_display(conn), f"{alias}.iso_currency")
 # Fixed bills: their spend is not extrapolated at the daily pace in pace_projection(). (v16: Internet & Phone came out
 # of Rent & Utilities, and stays fixed.)
 FIXED_CATEGORIES = ("Rent & Utilities", "Subscriptions", "Internet & Phone")
@@ -166,7 +195,7 @@ def spend_by(conn: sqlite3.Connection, where: str = "1 = 1", args: Sequence[Any]
     totals, pending spend, cash flow and `finance spend` all sum with this. count is transactions (a split one is one
     in each of its categories, and one in a total)."""
     sql = (f"SELECT {group or 'NULL'}, COALESCE(SUM(v.spend), 0), COUNT(DISTINCT v.transaction_id) FROM {LINES} v "
-           f"WHERE {SPENDING} AND ({where})")
+           f"WHERE {SPENDING} AND {currency_sql(conn)} AND ({where})")
     if group:
         sql += f" GROUP BY {group}"
     return {r[0]: (_r(r[1]), r[2]) for r in conn.execute(sql, args)}
@@ -177,15 +206,15 @@ def _spend(conn: sqlite3.Connection, month: str) -> float:
 
 
 def _income(conn: sqlite3.Connection, month: str) -> float:
-    row = conn.execute(f"SELECT COALESCE(-SUM(v.spend), 0) FROM {LINES} v WHERE v.month = ? AND v.is_income = 1",
-                       (month,)).fetchone()
+    row = conn.execute(f"SELECT COALESCE(-SUM(v.spend), 0) FROM {LINES} v WHERE v.month = ? AND v.is_income = 1 "
+                       f"AND {currency_sql(conn)}", (month,)).fetchone()
     return _r(row[0])
 
 
 def _daily_spend(conn: sqlite3.Connection, month: str) -> dict[int, float]:
     rows = conn.execute(
         f"SELECT CAST(substr(v.date, 9, 2) AS INTEGER) AS day, SUM(v.spend) FROM {LINES} v "
-        f"WHERE v.month = ? AND {SPENDING} GROUP BY day", (month,))
+        f"WHERE v.month = ? AND {SPENDING} AND {currency_sql(conn)} GROUP BY day", (month,))
     return {r[0]: r[1] for r in rows}
 
 
@@ -202,6 +231,23 @@ def _cumulative(daily: dict[int, float], n: int) -> list[float]:
 
 def _category_month_spend(conn: sqlite3.Connection, month: str) -> dict[int, tuple[float, int]]:
     return spend_by(conn, "v.month = ?", (month,), "v.category_id")
+
+
+def _foreign_month_spend(conn: sqlite3.Connection, month: str) -> dict[int, list[dict[str, Any]]]:
+    """{category_id: [{currency, spend, count}]}: spending this month in a currency other than the display one. It is
+    shown beside a category ("also EUR 23.80") but never added to a cap, a total or a projection."""
+    code = _display(conn)
+    rows = conn.execute(
+        f"""SELECT v.category_id, UPPER(TRIM(v.iso_currency)) AS currency,
+                   COALESCE(SUM(v.spend), 0) AS spend, COUNT(DISTINCT v.transaction_id) AS n
+            FROM {LINES} v WHERE v.month = ? AND {SPENDING}
+              AND {currency_is_sql(code, "v.iso_currency", other=True)}
+            GROUP BY v.category_id, currency ORDER BY currency""", (month,))
+    out: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        if round(r["spend"] * 100):
+            out[r["category_id"]].append({"currency": r["currency"], "spend": _r(r["spend"]), "count": r["n"]})
+    return out
 
 
 def _spending_categories(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -344,7 +390,7 @@ def _fixed_rows(conn: sqlite3.Connection, month: str, keys: set[str]) -> Iterato
     plus charges from the PERIODIC recurring merchants in `keys`."""
     for row in conn.execute(
             f"SELECT v.category, v.merchant_name, v.name, v.spend FROM {LINES} v "
-            f"WHERE v.month = ? AND {SPENDING}", (month,)):
+            f"WHERE v.month = ? AND {SPENDING} AND {currency_sql(conn)}", (month,)):
         if row["category"] in FIXED_CATEGORIES or merchant_key(row["merchant_name"], row["name"]) in keys:
             yield row["category"], row["spend"]
 
@@ -357,12 +403,12 @@ def _one_offs(conn: sqlite3.Connection, month: str, periodic_keys: set[str]) -> 
     seen: dict[str, int] = defaultdict(int)
     for row in conn.execute(
             f"SELECT v.merchant_name, v.name FROM {LINES} v WHERE v.month >= ? AND v.month < ? AND {SPENDING} "
-            f"AND v.spend > 0", (start, month)):
+            f"AND v.spend > 0 AND {currency_sql(conn)}", (start, month)):
         seen[merchant_key(row["merchant_name"], row["name"])] += 1
     out = []
     for row in conn.execute(
             f"SELECT v.date, v.category, v.merchant_name, v.name, v.spend FROM {LINES} v "
-            f"WHERE v.month = ? AND {SPENDING} AND v.spend >= ?", (month, ONE_OFF_MIN)):
+            f"WHERE v.month = ? AND {SPENDING} AND {currency_sql(conn)} AND v.spend >= ?", (month, ONE_OFF_MIN)):
         key = merchant_key(row["merchant_name"], row["name"])
         if row["category"] in FIXED_CATEGORIES or key in periodic_keys or seen[key] >= ONE_OFF_REGULAR_CHARGES:
             continue
@@ -407,6 +453,7 @@ def category_spend(conn: sqlite3.Connection, month: str, today: date | None = No
     cur = _category_month_spend(conn, month)
     prev = [_category_month_spend(conn, add_months(month, -i)) for i in (1, 2, 3)]
     due_by = bills_due_by_category(conn, month, today, rec)
+    foreign = _foreign_month_spend(conn, month)
     rolls = rollover.enabled(conn)
     out = []
     for c in _spending_categories(conn):
@@ -430,6 +477,7 @@ def category_spend(conn: sqlite3.Connection, month: str, today: date | None = No
             "bills_due": bills,
             "left": _r(cap - spend - due) if cap is not None else None,
             "status": cap_status(spend + due, cap),
+            "foreign": foreign.get(c["id"], []),
             **({"base_cap": c["monthly_cap"], "rollover": {"amount": roll, "from": add_months(month, -1)}}
                if roll is not None else {}),
         })
@@ -723,20 +771,26 @@ def _kind(category: str, pfc_detailed: str | None, merchant: str) -> str:
     return "subscription"
 
 
-def money_whole(x: float) -> str:
+def money_whole(x: float, currency=None) -> str:
     """$296 for 295.50 (half up), for estimates and "usually" ranges: an estimate is never shown to the cent (TASK-21)."""
     v = math.floor(abs(x) + 0.5)
-    return f"{'-' if x < 0 and v else ''}${v:,}"
+    return money(-v if x < 0 and v else v, currency=currency)
 
 
-def usual_text(low: float, high: float) -> str:
-    """$100–150, or $120 for one amount."""
+def usual_text(low: float, high: float, currency=None) -> str:
+    """$100–150, EUR 100–150, or one amount. The symbol appears once; a code prefixes the range."""
     lo, hi = math.floor(low + 0.5), math.floor(high + 0.5)
-    return f"${lo:,}" if lo == hi else f"${lo:,}–{hi:,}"
+    if lo == hi:
+        return money_whole(lo, currency)
+    first, last = money_whole(lo, currency), money_whole(hi, currency)
+    code = currency_code(currency) or "USD"
+    if code in SYMBOLS:
+        return f"{first}–{last.removeprefix(SYMBOLS[code])}"
+    return f"{first}–{last.split(' ', 1)[1]}"
 
 
-def amount_label(amount: float, variable: bool) -> str:
-    return f"~{money_whole(amount)} est." if variable else money(amount)
+def amount_label(amount: float, variable: bool, currency=None) -> str:
+    return f"~{money_whole(amount, currency)} est." if variable else money(amount, currency=currency)
 
 
 def outlier(amount: float, usual: dict[str, Any] | None) -> str | None:
@@ -800,7 +854,8 @@ def _next_charge(last_date: date, cadence: str, step: int, charges: list[tuple[d
 
 def _item(*, merchant: str, key: str, keys: list[str], kind: str, category: str, cadence: str, amount: float,
           variable: bool, step: int, charges: list[tuple[date, float]], today: date, txns: Sequence[Any],
-          usual: dict[str, Any] | None, source: str, logo: str | None, icon: str | None) -> dict[str, Any]:
+          usual: dict[str, Any] | None, source: str, logo: str | None, icon: str | None,
+          currency: str | None = None) -> dict[str, Any]:
     last_date, last_amount = charges[-1]
     nxt = _next_charge(last_date, cadence, step, charges)
     until, status = _status(last_date, nxt, cadence, today)
@@ -825,7 +880,7 @@ def _item(*, merchant: str, key: str, keys: list[str], kind: str, category: str,
         "monthly_amount": _r(amount * PER_MONTH[cadence]),
         "variable": variable,                      # TASK-21: the amount changes each time; amount is an estimate
         "estimate": amount if variable else None,
-        "amount_label": amount_label(amount, variable),
+        "amount_label": amount_label(amount, variable, currency),
         "usual": usual,                            # {low, high, source: charges | you} or None
         "source": source,                          # detected | tracked
         "last_account": _account(txns, last_date), # "last paid from"
@@ -867,7 +922,8 @@ def _tracked_item(conn: sqlite3.Connection, t: dict[str, Any], txns: list[Any], 
     the owner typed what it usually is, the middle of that (a single charge is never the estimate then)."""
     cadence = t["cadence"]
     if not txns:  # nothing from it in the last 25 months: its anchor's row, if Plaid still has it
-        txns = [r for r in conn.execute(_REC_SELECT.format(where="v.transaction_id = ?"), (t["anchor_transaction_id"],))]
+        txns = [r for r in conn.execute(
+            _REC_SELECT.format(where=f"v.transaction_id = ? AND {currency_sql(conn)}"), (t["anchor_transaction_id"],))]
     since = _shift_months(today, -LOOKBACK_MONTHS[cadence]).isoformat()
     per_day = dict((d.isoformat(), a) for d, a in _per_day(r for r in txns if r["date"] >= since))
     if t["anchor_date"] not in per_day and (t["anchor_date"] >= since or not per_day):
@@ -896,7 +952,7 @@ def _tracked_item(conn: sqlite3.Connection, t: dict[str, Any], txns: list[Any], 
     return _item(merchant=merchant, key=t["merchant_key"],
                  keys=keys, kind=kind, category=last["category"] if last else "Other", cadence=cadence, amount=amount,
                  variable=variable, step=step, charges=charges, today=today, txns=txns, usual=usual, source="tracked",
-                 logo=logo, icon=icon)
+                 logo=logo, icon=icon, currency=_display(conn) if conn is not None else None)
 
 
 _REC_SELECT = """SELECT v.transaction_id, v.date, v.name, v.merchant_name, v.spend, v.category, v.is_income, v.is_transfer,
@@ -929,7 +985,8 @@ def recurring(conn: sqlite3.Connection, today: date | None = None,
     """
     today = _today(today)
     since_yearly = _shift_months(today, -YEARLY_LOOKBACK_MONTHS).isoformat()
-    rows = conn.execute(_REC_SELECT.format(where="v.date >= ? AND v.spend > 0"), (since_yearly,)).fetchall()
+    rows = conn.execute(_REC_SELECT.format(where=f"v.date >= ? AND v.spend > 0 AND {currency_sql(conn)}"),
+                        (since_yearly,)).fetchall()
     groups: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for r in rows:
         key = merchant_key(r["merchant_name"], r["name"])
@@ -970,7 +1027,8 @@ def recurring(conn: sqlite3.Connection, today: date | None = None,
             merchant=merchant, key=key, keys=keys, kind=kind, category=last["category"], cadence=cadence,
             amount=statistics.median(amounts[-ESTIMATE_CHARGES:]) if variable else amounts[-1], variable=variable,
             step=step, charges=core, today=today, txns=txns, source="detected", logo=logo, icon=icon,
-            usual=(_season(_per_day(txns), today) or _season(core, today)) if variable else None))
+            usual=(_season(_per_day(txns), today) or _season(core, today)) if variable else None,
+            currency=_display(conn)))
     for key, t in active.items():  # tracked, with no charge in the last 25 months (its anchor may still be there)
         if key not in done:
             items.append(_tracked_item(conn, t, [], [key], today))
@@ -990,13 +1048,15 @@ def alerts(conn: sqlite3.Connection, month: str, today: date | None = None,
     `key` is stable, for deduping notifications. polish P2e: a group budget alerts at the same thresholds (kind "cap",
     so the same Settings switches apply, with `group` instead of `category`); the caps inside it still alert on their own."""
     cats = cats if cats is not None else category_spend(conn, month, today)
+    cur = _display(conn)
     out = []
     for c in cats:
         if c["status"] not in ("warn", "over"):
             continue
         due = c.get("due", 0.0)
-        of = f"of {money(c['cap'])}"
-        amounts = f"{money(c['spend'])} spent + {money(due)} still due {of}" if due else f"{money(c['spend'])} {of}"
+        of = f"of {money(c['cap'], currency=cur)}"
+        amounts = (f"{money(c['spend'], currency=cur)} spent + {money(due, currency=cur)} still due {of}" if due
+                   else f"{money(c['spend'], currency=cur)} {of}")
         when = " once bills clear" if due else ""
         if c["status"] == "over":
             msg = f"{c['category']} is over its cap{when}: {amounts}"
@@ -1009,8 +1069,9 @@ def alerts(conn: sqlite3.Connection, month: str, today: date | None = None,
     for g in groupbudget.units(conn, cats):
         if g["status"] not in ("warn", "over"):
             continue
-        of = f"of {money(g['budget'])}"
-        amounts = f"{money(g['spend'])} spent + {money(g['due'])} still due {of}" if g["due"] else f"{money(g['spend'])} {of}"
+        of = f"of {money(g['budget'], currency=cur)}"
+        amounts = (f"{money(g['spend'], currency=cur)} spent + {money(g['due'], currency=cur)} still due {of}"
+                   if g["due"] else f"{money(g['spend'], currency=cur)} {of}")
         when = " once bills clear" if g["due"] else ""
         if g["status"] == "over":
             msg = f"{g['group']} is over its group budget{when}: {amounts}"
@@ -1177,7 +1238,8 @@ def manual_nw_id(account_id: int) -> str:
 
 
 def _manual_live(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute("SELECT id, kind, balance FROM manual_accounts WHERE archived_at IS NULL").fetchall()
+    return conn.execute("SELECT id, kind, balance, currency, name, institution, subtype, balance_as_of "
+                        "FROM manual_accounts WHERE archived_at IS NULL").fetchall()
 
 
 def networth_accounts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -1189,25 +1251,31 @@ def networth_accounts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     positive for debts too, signed negative."""
     out = []
     policy = set(excluded_accounts(conn))
+    display = _display(conn)
     for a in [*conn.execute(
-            """SELECT a.account_id, a.name, a.mask, a.type, a.current_balance, i.institution_name, i.institution_id
+            """SELECT a.account_id, a.name, a.mask, a.type, a.current_balance, a.iso_currency,
+                      i.institution_name, i.institution_id
                FROM accounts a JOIN items i ON i.item_id = a.item_id
                WHERE i.removed_at IS NULL AND a.type IN ('depository', 'investment', 'credit', 'loan')
                ORDER BY i.created_at, a.type, a.name"""),
               *alpaca.networth_rows(conn)]:  # TASK-19: Alpaca, when ACTIVE
         bal = a["current_balance"] or 0.0
         excluded = a["account_id"] in policy
+        currency = (a["iso_currency"] or "").strip().upper() or display
         out.append({"id": a["account_id"], "source": "plaid", "name": a["name"], "mask": a["mask"],
                     "institution": a["institution_name"] or a["institution_id"], "kind": a["type"],
                     "group": GROUP_OF_TYPE[a["type"]], "balance": bal, "excluded": excluded, "counted": not excluded,
+                    "currency": currency, "foreign": currency != display,
                     "signed": _r(bal if a["type"] in ASSET_TYPES else -bal)})
-    for m in conn.execute("SELECT id, name, institution, kind, balance FROM manual_accounts WHERE archived_at IS NULL "
-                          "ORDER BY id"):
+    for m in conn.execute("SELECT id, name, institution, kind, balance, currency FROM manual_accounts "
+                          "WHERE archived_at IS NULL ORDER BY id"):
         nw_id = manual_nw_id(m["id"])
         excluded = nw_id in policy
+        currency = (m["currency"] or "").strip().upper() or display
         out.append({"id": nw_id, "source": "manual", "name": m["name"], "mask": None,
                     "institution": m["institution"], "kind": m["kind"], "group": GROUP_OF_KIND[m["kind"]],
                     "balance": m["balance"], "excluded": excluded, "counted": not excluded,
+                    "currency": currency, "foreign": currency != display,
                     "signed": _r(m["balance"] if m["kind"] in MANUAL_ASSET_KINDS else -m["balance"])})
     return out
 
@@ -1276,6 +1344,7 @@ def _month_start(conn: sqlite3.Connection, today: date, policy_excluded: Iterabl
     manual account added this month). Accounts in the account policy contribute nothing."""
     first = date(today.year, today.month, 1).isoformat()
     policy = set(policy_excluded)
+    display = _display(conn)
     groups: dict[str, list[float | None]] = {key: [] for key, *_ in BREAKDOWN}
     for r in conn.execute(
             f"""SELECT a.type AS type, (
@@ -1284,21 +1353,26 @@ def _month_start(conn: sqlite3.Connection, today: date, policy_excluded: Iterabl
                        ORDER BY s.date DESC LIMIT 1) AS baseline
                FROM accounts a JOIN items i ON i.item_id = a.item_id
                WHERE i.removed_at IS NULL AND a.type IN ('depository', 'investment', 'credit', 'loan')
-                 AND {account_policy_sql("a")}""",
+                 AND {account_policy_sql("a")}
+                 AND {currency_is_sql(display, "a.iso_currency")}""",
             (first,)).fetchall():
         groups[GROUP_OF_TYPE[r["type"]]].append(r["baseline"])
-    alp = alpaca.history_rows(conn) if alpaca.networth_rows(conn) and alpaca.ACCOUNT_ID not in policy else []
+    alp = (alpaca.history_rows(conn)
+           if alpaca.networth_rows(conn) and alpaca.ACCOUNT_ID not in policy
+           and (alpaca.networth_rows(conn)[0]["iso_currency"] or display).strip().upper() == display else [])
     if alp:  # TASK-19: the Alpaca live account's equity on the last snapshot day on or before the first
         prior = [r for r in alp if r["date"] <= first]
         groups[GROUP_OF_TYPE["investment"]].append(prior[-1]["current"] if prior else None)
     for r in conn.execute(
-            """SELECT m.id, m.kind AS kind, (
+            """SELECT m.id, m.kind AS kind, m.currency AS currency, (
                        SELECT h.balance FROM manual_balance_history h
                        WHERE h.manual_account_id = m.id AND h.date <= ?
                        ORDER BY h.date DESC LIMIT 1) AS baseline
                FROM manual_accounts m WHERE m.archived_at IS NULL""",
             (first,)).fetchall():
         if manual_nw_id(r["id"]) in policy:
+            continue
+        if (r["currency"] or "").strip().upper() not in ("", display):
             continue
         groups[GROUP_OF_KIND[r["kind"]]].append(r["baseline"])
     return {key: (None if not vals or any(v is None for v in vals) else _r(sum(vals)))
@@ -1318,9 +1392,11 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
     point's. The groups and the accounts keep the balances the banks report."""
     skip = set(networth_excluded(conn) if excluded is None else excluded)
     policy = set(excluded_accounts(conn))
+    display = _display(conn)
     groups = {t: 0.0 for t in ASSET_TYPES + DEBT_TYPES}
     counts: dict[str, int] = defaultdict(int)
     banks: dict[str, dict[str, Any]] = {}
+    foreign: list[dict[str, Any]] = []
     for a in [*conn.execute(
             f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.type, a.subtype, a.current_balance,
                       a.available_balance, a.credit_limit, a.iso_currency, i.item_id, i.institution_name,
@@ -1331,6 +1407,14 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
               *[x for x in alpaca.networth_rows(conn) if x["account_id"] not in policy]]:  # TASK-19: the Alpaca live account (read-only API), counted while ACTIVE
         bal = a["current_balance"] or 0.0
         signed = bal if a["type"] in ASSET_TYPES else -bal if a["type"] in DEBT_TYPES else None
+        code = (a["iso_currency"] or "").strip().upper() or display
+        if code != display:   # D2: never converted, never added to the one-number totals
+            foreign.append({"id": a["account_id"], "source": "plaid", "name": a["name"], "mask": a["mask"],
+                            "institution": a["institution_name"] or a["institution_id"], "type": a["type"],
+                            "subtype": a["subtype"], "group": GROUP_OF_TYPE.get(a["type"]),
+                            "balance": bal, "current": bal, "signed": None if signed is None else _r(signed),
+                            "currency": code, "as_of": None, "stale": False})
+            continue
         if a["type"] in groups:
             groups[a["type"]] += bal
             counts[a["type"]] += 1
@@ -1343,11 +1427,19 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
             "account_id": a["account_id"], "name": a["name"], "official_name": a["official_name"],
             "mask": a["mask"], "type": a["type"], "subtype": a["subtype"],
             "current": a["current_balance"], "available": a["available_balance"], "limit": a["credit_limit"],
-            "iso_currency": a["iso_currency"], "signed": None if signed is None else _r(signed)})
+            "iso_currency": a["iso_currency"], "currency": code, "signed": None if signed is None else _r(signed)})
     manual_by_kind: dict[str, float] = defaultdict(float)
     manual_counts: dict[str, int] = defaultdict(int)
     for m in _manual_live(conn):
         if manual_nw_id(m["id"]) in policy:
+            continue
+        code = (m["currency"] or "").strip().upper() or display
+        if code != display:
+            foreign.append({"id": manual_nw_id(m["id"]), "source": "manual", "name": m["name"], "mask": None,
+                            "institution": m["institution"], "type": m["kind"], "subtype": m["subtype"],
+                            "group": GROUP_OF_KIND.get(m["kind"]), "balance": m["balance"], "current": m["balance"],
+                            "signed": _r(m["balance"] if m["kind"] in MANUAL_ASSET_KINDS else -m["balance"]),
+                            "currency": code, "as_of": m["balance_as_of"], "stale": False})
             continue
         manual_by_kind[m["kind"]] += m["balance"]
         manual_counts[m["kind"]] += 1
@@ -1361,10 +1453,13 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
             b.update(alpaca.account_extra(conn))
             for acct in b["accounts"]:
                 acct.update(api=True, positions=b.get("positions"))
+    foreign_ids = {a["id"] for a in foreign}
     c_total: dict[str, float] = defaultdict(float)   # Custom: the counted accounts, by group
     c_count: dict[str, int] = defaultdict(int)
     left_out = []
     for a in counted_networth_accounts(conn):   # policy first: Custom can never resurrect a globally excluded one
+        if a["id"] in foreign_ids:   # a foreign account is outside every one-number total, Custom too
+            continue
         if a["id"] in skip:
             left_out.append({k: a[k] for k in ("id", "source", "name", "mask", "institution", "kind", "group", "signed")}
                             | {"balance": _r(a["balance"])})
@@ -1395,7 +1490,7 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
                           "month_start": month_start, "month_change": month_change,
                           "manual_count": sum(manual_counts[k] for k in kinds),
                           "custom": {"count": c_count[key], "total": ctot, "signed": ctot if is_asset else _r(-ctot)}})
-    in_transit = transit_entries(conn, today, policy, skip) if today else []
+    in_transit = transit_entries(conn, today, policy | foreign_ids, skip) if today else []
     debts = _r(debts - sum(e["amount"] for e in in_transit))
     c_debts = _r(c_debts - sum(e["amount"] for e in in_transit if e["counted_custom"]))
     pol = account_policy_status(conn)
@@ -1407,9 +1502,9 @@ def net_worth(conn: sqlite3.Connection, history: bool = True, excluded: Iterable
            "in_transit": in_transit,
            "groups": {k: _r(v) for k, v in groups.items()},
            "manual": {"assets": m_assets, "debts": m_debts, "count": sum(manual_counts.values())},
-           "breakdown": breakdown, "institutions": list(banks.values())}
+           "breakdown": breakdown, "institutions": list(banks.values()), "foreign": foreign}
     if history:
-        out.update(net_worth_history(conn, skip, policy))
+        out.update(net_worth_history(conn, skip, policy | foreign_ids))
         point = next((p for p in out["history"] if p["date"] == today.isoformat()), None) if in_transit else None
         if point:   # today's point, as the figure above
             moved = sum(e["amount"] for e in in_transit)
@@ -1443,15 +1538,21 @@ def net_worth_history(conn: sqlite3.Connection, excluded: Iterable[str] = (),
     policy, so no caller can bypass it by accident; passing a set explicitly still wins."""
     skip = set(excluded)
     policy = set(excluded_accounts(conn) if policy_excluded is None else policy_excluded)
+    display = _display(conn)
     rows = conn.execute(
-        """SELECT s.date, s.account_id, s.current, a.type FROM balance_snapshots s
+        f"""SELECT s.date, s.account_id, s.current, a.type FROM balance_snapshots s
            JOIN accounts a ON a.account_id = s.account_id JOIN items i ON i.item_id = a.item_id
            WHERE i.removed_at IS NULL AND a.type IN ('depository', 'investment', 'credit', 'loan')
-           ORDER BY s.date""").fetchall() + alpaca.history_rows(conn)  # TASK-19: Alpaca's daily equity (0 if not ACTIVE)
+             AND {currency_is_sql(display, "s.iso_currency", "a.iso_currency")}
+           ORDER BY s.date""").fetchall()
+    alp = [r for r in alpaca.history_rows(conn)
+           if (r.get("iso_currency") or display).strip().upper() == display]
+    rows += alp  # TASK-19: Alpaca's daily equity (0 if not ACTIVE), in the display currency only
     rows = [r for r in rows if r["account_id"] not in policy]
     manual = conn.execute(
-        """SELECT h.manual_account_id AS id, h.date, h.balance, m.kind, m.archived_at AS archived
+        f"""SELECT h.manual_account_id AS id, h.date, h.balance, m.kind, m.archived_at AS archived
            FROM manual_balance_history h JOIN manual_accounts m ON m.id = h.manual_account_id
+           WHERE {currency_is_sql(display, "m.currency")}
            ORDER BY h.date, h.manual_account_id""").fetchall()
     manual = [m for m in manual if manual_nw_id(m["id"]) not in policy]
     by_day: dict[str, list[sqlite3.Row]] = defaultdict(list)

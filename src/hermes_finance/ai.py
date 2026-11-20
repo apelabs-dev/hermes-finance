@@ -186,7 +186,8 @@ def queue(conn: sqlite3.Connection, max_groups: int = MAX_GROUPS) -> dict[str, A
             [(run_id, g["group_id"], g["merchant"], g["rule_field"], g["rule_pattern"],
               json.dumps([r["transaction_id"] for r in rows])) for g, (_, rows) in zip(out, picked)])
     categories = [{"name": r["name"], "is_income": bool(r["is_income"]), "is_transfer": bool(r["is_transfer"])}
-                  for r in conn.execute("SELECT name, is_income, is_transfer FROM categories ORDER BY name")]
+                  for r in conn.execute("SELECT name, is_income, is_transfer FROM categories WHERE is_hidden = 0 "
+                                 "ORDER BY name")]
     return {"run_id": run_id, "created_at": created_at, "categories": categories, "groups": out,
             "queued_txns": queued_txns, "truncated": len(ordered) > max_groups}
 
@@ -308,7 +309,8 @@ class _Apply:
         self.groups = {g["group_id"]: {"merchant": g["merchant"], "rule_field": g["rule_field"],
                                        "rule_pattern": g["rule_pattern"], "tids": json.loads(g["transaction_ids_json"])}
                        for g in conn.execute("SELECT * FROM ai_run_groups WHERE run_id = ? ORDER BY rowid", (run_id,))}
-        self.categories = {r["name"].casefold(): r["name"] for r in conn.execute("SELECT name FROM categories")}
+        self.categories = {r["name"].casefold(): r["name"] for r in conn.execute(
+            "SELECT name FROM categories WHERE is_hidden = 0")}   # v23: hidden is never a new filing target
         self.out: dict[str, Any] = {
             "run_id": run_id, "dry_run": dry_run, "groups_decided": 0, "txns_changed": 0,
             "by_action": dict.fromkeys(ACTIONS, 0), "changes": [], "flagged": [], "kept_user": 0,

@@ -1,6 +1,6 @@
 name: hermes-finance
 version: 0.3.0 # x-release-please-version
-description: "Answers money questions from your local hermes-finance database (spending, budgets, transactions, net worth, bills, loans, investments, cash flow, goals, categorization rules; read-only), syncs your banks on request, and files transactions, adds rules, sets budget caps and tracks bills only after you approve each change."
+description: "Answers money questions from your local hermes-finance database (spending, budgets, transactions, net worth, bills, loans, investments, cash flow, goals, categorization rules; read-only), syncs your banks on request, and manages categories (add, rename, re-icon, hide, move, move-and-delete), files transactions, adds rules, sets budget caps and tracks bills only after you approve each change."
 kind: standalone
 manifest_version: 2
 api_version: 1
@@ -16,10 +16,14 @@ provides_tools:
   - finance_status
   - finance_goals
   - finance_rules
+  - finance_categories
   - finance_sync
   - finance_set_category
   - finance_add_rule
   - finance_set_cap
+  - finance_create_category
+  - finance_update_category
+  - finance_delete_category
   - finance_track_bill
 provides_hooks:
   - pre_tool_call

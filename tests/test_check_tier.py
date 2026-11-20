@@ -124,8 +124,8 @@ def test_tier_uses_exact_two_dot_diff(monkeypatch):
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, "src/hermes_finance/money.py\n")
     monkeypatch.setattr(check.subprocess, "run", git)
-    assert check.tier_changed_files("flybudget-polish") == ["src/hermes_finance/money.py"]
-    assert calls == [["git", "-C", str(ROOT), "diff", "--name-only", "flybudget-polish..HEAD"]]
+    assert check.tier_changed_files("polish-branch") == ["src/hermes_finance/money.py"]
+    assert calls == [["git", "-C", str(ROOT), "diff", "--name-only", "polish-branch..HEAD"]]
 
 
 def test_real_static_selection_includes_every_browser_and_guard_file():

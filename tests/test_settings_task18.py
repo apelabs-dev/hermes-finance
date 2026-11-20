@@ -308,7 +308,8 @@ def test_download_streams_the_file_and_removes_it(conn, tmp_path):
 def test_page_shell_carries_theme_currency_and_locale(app, conn):
     prefs.save(conn, {"appearance.theme": "light", "region.currency": "EUR", "region.locale": "de-DE"})
     html = call(app, "GET", "/")[2]
-    assert '<html lang="en" data-theme-pref="light" data-currency="EUR" data-locale="de-DE">' in html
+    assert '<html lang="en" data-theme-pref="light" data-currency="EUR" data-locale="de-DE"' in html
+    assert 'data-currencies="USD,EUR,GBP' in html   # v22: the manual-account/import currency picker's choices
     assert html.index('<script src="/static/theme.js"></script>') < html.index('<link rel="stylesheet" href="/static/app.css">')
     for name in ("login.js", "settings.js", "setup.js", "import.js"):
         assert html.index(f"/static/{name}") < html.index("/static/app.js")

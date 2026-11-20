@@ -4,9 +4,11 @@ Every key has a type, a default and a check; `get()` never returns an invalid va
 default) and `save()` validates everything before writing anything. Who reads what:
 
   sync.*, alerts.*           the crons (`finance settings --json`); nothing in the app schedules or sends yet
-  ai.mode                    `finance ai-queue` queues nothing when it's "off"; ai.min_confidence: `finance ai-apply`'s
+  ai.mode                    Ask's brain: hermes, api, cli (a local Claude Code or Codex) or off; `finance ai-queue`
+                             queues nothing when it's "off"; ai.min_confidence: `finance ai-apply`'s
                              auto-apply threshold (ai.MIN_CONFIDENCE is its default); ai.preset / base_url / model /
-                             monthly_cap are stored for the chat loop (a later task); the key is in the secrets file
+                             monthly_cap are stored for the chat loop (a later task); ai.cli is which local CLI a cli
+                             turn runs; the key is in the secrets file
   mcp.enabled                /mcp answers 404 and `finance mcp` refuses to start while it's off
   mcp.allow_writes           TASK-17's switch (mcp_state.py), shown and set here too
   valuations.*               config.free_sources(): Carfax, Redfin and the photos (an env-file flag still wins)
@@ -146,7 +148,8 @@ SPEC: dict[str, Pref] = {
     "alerts.over_cap": Pref(True, _bool),
     "alerts.broken_connection": Pref(True, _bool),
     "alerts.destination": Pref("Hermes chat", _text(60)),
-    "ai.mode": Pref("hermes", _choice(("hermes", "api", "off"))),
+    "ai.mode": Pref("hermes", _choice(("hermes", "api", "cli", "off"))),
+    "ai.cli": Pref("claude", _choice(("claude", "codex"))),
     "ai.preset": Pref("openrouter", _choice(tuple(AI_PRESETS))),
     "ai.base_url": Pref(AI_PRESETS["openrouter"], _url),
     "ai.model": Pref("", _text(120, empty=True)),

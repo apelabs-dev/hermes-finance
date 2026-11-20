@@ -652,6 +652,8 @@ table.tx { width: 100%; border-collapse: separate; border-spacing: 0; background
 @media (min-width: 1024px) and (max-width: 1199.98px) { .tx .c-acct { display: none; } }
 .tx tr:last-child td { border-bottom: 0; }
 .tx tbody tr:hover td { background: #171c27; }
+/* a focused row draws its ring just inside: the table clips its overflow, so an offset ring loses its left and right sides */
+.tx tbody tr:focus-visible { outline-offset: -2px; }
 .tx tr.xfer td, .tx tr.xfer .mt b { color: var(--dim); }
 .tx .m { display: flex; align-items: center; gap: 12px; max-width: 420px; }
 .tx .mt { min-width: 0; }

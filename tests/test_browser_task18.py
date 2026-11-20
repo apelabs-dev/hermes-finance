@@ -44,7 +44,7 @@ def test_settings_shows_every_card_and_saves_as_it_changes(browser, full):
     goto(browser, full, "settings")
     titles = browser.js("[...document.querySelectorAll('#page .card h3 .ttl')].map((t) => t.textContent)")
     assert titles == ["Connections", "Access & security", "AI provider", "Connect other agents (MCP)", "Sync & alerts",
-                      "Valuations", "Region", "Appearance", "Data", "Categorization rules"]   # (TASK-24: the rules card last)
+                      "Valuations", "Region", "Appearance", "Data", "Categories", "Categorization rules"]   # (v23: Categories above the rules card, which stays last)
     text = browser.js("document.getElementById('page').textContent")
     assert "Behind your proxy login" in text and "ow•••@example.com" in text and "owner@example.com" not in text
     assert "Needs Chrome with remote debugging on port 9222" in text and "free public pages, not official APIs" not in text
@@ -76,6 +76,13 @@ def test_the_theme_follows_the_setting_charts_included(browser, full):
 
 def test_currency_and_locale_format_every_amount(browser, full):
     conn = db.connect(full.app.db_path)
+    # Amounts are never converted (no FX): under display=EUR an account in USD is a foreign account, listed apart and
+    # in no total. So the gate DB's accounts are euro accounts here, and the one-number totals are written in euros.
+    with conn:
+        conn.execute("UPDATE accounts SET iso_currency = 'EUR'")
+        conn.execute("UPDATE manual_accounts SET currency = 'EUR'")
+        conn.execute("UPDATE transactions SET iso_currency = 'EUR'")
+        conn.execute("UPDATE balance_snapshots SET iso_currency = 'EUR'")
     prefs.save(conn, {"region.currency": "EUR", "region.locale": "de-DE"})
     goto(browser, full, "overview")
     side = browser.js("document.getElementById('snw').textContent")

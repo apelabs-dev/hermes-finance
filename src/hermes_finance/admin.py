@@ -11,6 +11,7 @@
   POST /api/auth/login | code | logout | logout-all | password | recovery
   POST /api/auth/enroll/start | qr | verify | finish      the built-in login's set-up (password, QR + code, codes)
   GET  /api/mcp/tokens               POST /api/mcp/tokens {name}   POST /api/mcp/tokens/revoke {id}
+  GET  /api/ai/cli                   POST /api/ai/cli/check {cli}: the CLI brains' isolation self-test
   GET  /api/export.csv               every transaction as CSV (a download)
   GET  /api/backup                   a consistent copy of the database with every credential taken out (a download)
   GET  /api/setup                    first-run: is it due, what's found
@@ -31,6 +32,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -38,11 +40,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
-from . import access, api, auth, backup, config, db, insights, mcp_state, prefs, redact, secretstore, syncnow, usage
+from . import (access, api, auth, backup, clibrain, config, db, insights, logos, mcp_state, prefs, redact, secretstore,
+               simplefin_sync, syncnow, usage)
 
 JSON = "application/json"
 PREFIXES = ("/api/settings/page", "/api/prefs", "/api/secrets/", "/api/access", "/api/auth/", "/api/mcp/tokens",
-            "/api/mcp/pending", "/api/export.csv", "/api/backup", "/api/setup", "/api/import/")
+            "/api/mcp/pending", "/api/ai/", "/api/export.csv", "/api/backup", "/api/setup", "/api/import/")
 # the built-in login's endpoints that work without a session (the set-up ones only while no login exists, from here)
 OPEN = {"/api/auth/state", "/api/auth/login", "/api/auth/code", "/api/auth/logout"}
 EXPORT_COLUMNS = ["date", "name", "merchant_name", "amount", "spend", "iso_currency", "category", "category_source",
@@ -253,6 +256,10 @@ def chrome_status() -> dict[str, Any]:
 def settings_page(app, conn, req):
     from . import chat
     mcp_state.reconcile(conn)   # review N11: what a stopped app left is settled here too, not only by Ask or a decide
+    try:   # the chooser's vendor logos, before any connection exists; the request never waits on a vendor site
+        logos.ensure_vendor_logos(conn, background=True, db_path=app.db_path)
+    except Exception:
+        pass
     owner = chat._request_owner(req)
     pending_actions = mcp_state.pending_for_owner(conn, owner)
     today = app.today()
@@ -268,6 +275,7 @@ def settings_page(app, conn, req):
     return _json(200, {
         "prefs": prefs.public(conn),
         "secrets": s,
+        "simplefin": simplefin_sync.status(conn, today),
         "plaid": {"slots_used": db.slots_used(conn), "slot_limit": config.SLOT_LIMIT, "demo": prefs.get(conn, "plaid.demo"),
                   "banks": conn.execute("SELECT COUNT(*) FROM items WHERE removed_at IS NULL").fetchone()[0],
                   # TASK-22: the plan (no API for it) and whether "Ask banks for fresh data" may call Plaid
@@ -289,7 +297,8 @@ def settings_page(app, conn, req):
                         **({"chrome": chrome_status()} if k == "carfax" else {})} for k, name, what in VALUATIONS],
         "ai": {"hermes_detected": hermes_detected(), "key_set": s["ai_key"]["set"], "presets": prefs.AI_PRESETS,
                "min_confidence_default": 0.7,
-               "spent": round(usage.ai_spent(conn, today), 2)},   # TASK-23: what Ask cost this month (usage.py)
+               "spent": round(usage.ai_spent(conn, today), 2),   # TASK-23: what Ask cost this month (usage.py)
+               "cli": _cli_block(conn)},                         # the CLI brains: chosen, off, what's installed
         "options": {"currencies": list(prefs.CURRENCIES), "locales": list(prefs.LOCALES)},
         "counts": {"transactions": conn.execute("SELECT COUNT(*) FROM v_transactions").fetchone()[0]},
     })
@@ -297,6 +306,64 @@ def settings_page(app, conn, req):
 
 def save_prefs(app, conn, req):
     return _json(200, {"saved": prefs.save(conn, req.data(), allowed=prefs.PAGE_KEYS), "prefs": prefs.public(conn)})
+
+
+# --- the CLI brains (ai.mode "cli") ----------------------------------------------------------------------------------
+
+def _display(path: str | None) -> str | None:
+    """A CLI's path with ~ for the home directory (what Settings shows); None when it wasn't found."""
+    if not path:
+        return None
+    home = str(Path.home())
+    return "~" + path[len(home):] if path == home or path.startswith(home + os.sep) else path
+
+
+def _cli_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Both CLIs as Settings shows them: installed (a --version probe, no model call) plus the stored isolation check."""
+    stored = clibrain.check_state(conn)
+    out = []
+    for cli_id in clibrain.CLIS:
+        got = clibrain.installed(cli_id)
+        check = stored.get(cli_id) or {}
+        out.append({**got, "display": _display(got["path"]), "checked_version": check.get("version"),
+                    "passed": check.get("passed") is True, "checked_at": check.get("at"),
+                    "reason": check.get("reason") or ""})
+    return out
+
+
+def _cli_block(conn: sqlite3.Connection) -> dict[str, Any]:
+    return {"chosen": prefs.get(conn, "ai.cli"), "off": clibrain.off(), "items": _cli_items(conn)}
+
+
+def ai_cli(app, conn, req):
+    """GET /api/ai/cli: both CLIs recomputed (no model call: a --version probe at most)."""
+    return _json(200, {"items": _cli_items(conn)})
+
+
+def ai_cli_check(app, conn, req):
+    """POST /api/ai/cli/check {cli}: the adversarial isolation self-test (clibrain.selftest), saved for that version.
+    Never a prefs change; 409 while another check runs, and 409 when the CLI brains are switched off."""
+    cli_id = req.data().get("cli")
+    if cli_id not in clibrain.CLIS:
+        raise api.ApiError("cli must be claude or codex", field="cli")
+    if clibrain.off():
+        return _json(409, {"error": clibrain.line("off")})
+    if not clibrain.LOCKS.acquire(blocking=False):
+        return _json(409, {"busy": True})
+    try:
+        exe = clibrain.executable(cli_id)
+        if exe is None:
+            raise api.ApiError(clibrain.line("missing", name=clibrain.CLIS[cli_id]["name"]),
+                               clibrain.ERRORS["missing"][1], field="cli")
+        try:
+            result = clibrain.selftest(cli_id, exe, time.monotonic() + clibrain.CHECK_TIMEOUT)
+        except clibrain.CliError as e:
+            raise api.ApiError(str(e), e.status, field="cli") from None
+        clibrain.save_check(conn, cli_id, clibrain.version(exe), result["passed"], result["reason"],
+                            result["evidence"])
+    finally:
+        clibrain.LOCKS.release()
+    return _json(200, {"item": next(i for i in _cli_items(conn) if i["id"] == cli_id)})
 
 
 def secrets_plaid(app, conn, req):
@@ -547,6 +614,8 @@ ROUTES = {
     ("POST", "/api/mcp/tokens/revoke"): tokens_revoke,
     ("POST", "/api/mcp/pending/approve"): lambda app, conn, req: pending_decide(app, conn, req, True),    # TASK-21
     ("POST", "/api/mcp/pending/decline"): lambda app, conn, req: pending_decide(app, conn, req, False),
+    ("GET", "/api/ai/cli"): ai_cli,
+    ("POST", "/api/ai/cli/check"): ai_cli_check,
     ("GET", "/api/export.csv"): export_csv,
     ("GET", "/api/backup"): backup_db,
     ("GET", "/api/setup"): setup_state,

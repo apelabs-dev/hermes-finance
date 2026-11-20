@@ -1,0 +1,68 @@
+{
+  "errlist": [],
+  "connections": [
+    {
+      "conn_id": "CON-SYNTH-1",
+      "name": "Synthetic Bank",
+      "org_id": "synthetic.org",
+      "org_name": "Synthetic Bridge",
+      "org_url": "https://synthetic.example/",
+      "sfin_url": "https://synthetic.example/login"
+    },
+    {
+      "conn_id": "CON-SYNTH-2",
+      "name": "Synthetic Credit Union",
+      "org_id": "synthetic.cu",
+      "org_name": "Synthetic Credit Union",
+      "org_url": "https://cu.example/",
+      "sfin_url": "https://cu.example/login"
+    }
+  ],
+  "accounts": [
+    {
+      "id": "ACT-SYNTH-CHK",
+      "name": "Everyday Checking",
+      "conn_id": "CON-SYNTH-1",
+      "currency": "USD",
+      "balance": "1200.25",
+      "available-balance": "1150.25",
+      "balance-date": 1794787200,
+      "transactions": [
+        {"id": "TX-SYNTH-1", "posted": 1787126400, "amount": "2500.00", "description": "Paycheck",
+         "transacted_at": 1787126400, "payee": "Synthetic Employer", "memo": "DIRECT DEP"},
+        {"id": "TX-SYNTH-2", "posted": 1787155200, "amount": "-40.00", "description": "Grocery store",
+         "transacted_at": 1787155200, "payee": "Synthetic Grocer", "memo": "LOCAL GROCER"},
+        {"id": "TX-SYNTH-PENDING", "posted": 0, "amount": "-12.34", "description": "Coffee shop",
+         "transacted_at": 1787241600, "pending": 1, "payee": "Synthetic Coffee"}
+      ]
+    },
+    {
+      "id": "ACT-SYNTH-SAV",
+      "name": "Synthetic Savings",
+      "conn_id": "CON-SYNTH-1",
+      "currency": "USD",
+      "balance": "5000.00",
+      "available-balance": "5000.00",
+      "balance-date": 1794787200,
+      "holdings": [
+        {"id": "HOLD-1", "created": 1780000000, "cost_basis": "55.00", "currency": "USD",
+         "description": "Shares of a synthetic fund", "market_value": "105.50", "purchase_price": "5.00",
+         "shares": "10.0", "symbol": "SYNTH"}
+      ],
+      "transactions": []
+    },
+    {
+      "id": "ACT-SYNTH-CARD",
+      "name": "Synthetic Visa",
+      "conn_id": "CON-SYNTH-2",
+      "currency": "USD",
+      "balance": "-450.75",
+      "available-balance": "4549.25",
+      "balance-date": 1794787200,
+      "transactions": [
+        {"id": "TX-SYNTH-3", "posted": 1787212800, "amount": "-75.50", "description": "Hardware store",
+         "transacted_at": 1787212800, "payee": "Synthetic Hardware"}
+      ]
+    }
+  ]
+}

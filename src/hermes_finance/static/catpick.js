@@ -17,16 +17,20 @@
   };
 
   // The sections to show: the groups in order, then the categories outside them (Income, Transfers, any not in a
-  // group yet), each kept to the names this control offers.
-  function sections(data, names) {
+  // group yet), each kept to the names this control offers. v23: a hidden category is never offered (it is not a new
+  // selection surface), except the transaction's own current category, which always shows so nothing looks lost.
+  function sections(data, names, keep) {
     const left = new Set(names);
+    const hidden = new Set([...data.groups, {categories: data.ungrouped}]
+      .flatMap((g) => g.categories).filter((c) => c.hidden).map((c) => c.name));
+    const offered = (c) => !c.hidden || c.name === keep;
     const out = [];
     for (const g of data.groups) {
-      const cats = g.categories.map((c) => c.name).filter((n) => left.delete(n));
+      const cats = g.categories.filter(offered).map((c) => c.name).filter((n) => left.delete(n));
       if (cats.length) out.push({name: g.name, cats});
     }
-    const rest = data.ungrouped.map((c) => c.name).filter((n) => left.delete(n));
-    rest.push(...left);
+    const rest = data.ungrouped.filter(offered).map((c) => c.name).filter((n) => left.delete(n));
+    rest.push(...[...left].filter((n) => n === keep || !hidden.has(n)));   // a leftover is offered only if visible
     if (rest.length) out.push({name: 'Income & transfers', cats: rest});
     return out;
   }
@@ -71,9 +75,11 @@
     const q = h('input', {type: 'search', class: 'cpkq', placeholder: 'Search categories', autocomplete: 'off', spellcheck: 'false',
       role: 'combobox', 'aria-label': 'Search categories', 'aria-controls': `${id}-l`, 'aria-expanded': 'true', 'aria-autocomplete': 'list'});
     const list = h('div', {class: 'cpkl', id: `${id}-l`, role: 'listbox', 'aria-label': 'Categories'});
-    const none = h('p', {class: 'cpkn', hidden: true}, 'No category matches.');
+    let createNew = null;
+    const noneCreate = h('button', {class: 'lnk cpkc', type: 'button', hidden: true, onclick: () => createNew(q.value.trim())});
+    const none = h('p', {class: 'cpkn', hidden: true}, h('span', {}, 'No category matches. '), noneCreate);
     const opts = [];
-    const groups = sections(data, names).map((s, gi) => {
+    const groups = sections(data, names, btn.value).map((s, gi) => {
       const hd = h('div', {class: 'cpkh', id: `${id}-g${gi}`}, s.name);
       const items = s.cats.map((n) => {
         const o = h('div', {class: 'cpko', role: 'option', id: `${id}-o${opts.length}`, 'aria-selected': String(n === btn.value),
@@ -85,7 +91,21 @@
       });
       return {el: h('div', {class: 'cpkg', role: 'group', 'aria-labelledby': hd.id}, hd, h('div', {class: 'cpki'}, items)), items};
     });
-    fill(list, groups.map((g) => g.el), none);
+    // v23: one extra row at the bottom of the list, aligned with the rows above, opening the new-category sheet and then
+    // picking the new category for the transaction that opened this picker.
+    createNew = (name) => {
+      if (typeof X.categoryNew !== 'function') return;
+      X.categoryNew({name, onDone: (c) => {
+        GROUPS = null;
+        close(true);
+        if (c && c.name !== btn.value) { btn.value = c.name; onPick(c.name); }
+      }});
+    };
+    const newRow = h('div', {class: 'cpkg cpkadd', role: 'group', 'aria-label': 'New'},
+      h('div', {class: 'cpki'}, h('div', {class: 'cpko', role: 'option'}, h('span', {class: 'cb s', 'aria-hidden': 'true',
+        style: {'--rgb': '142,168,255'}}, icon('plus')), h('span', {class: 'cpkt'}, 'New category'))));
+    newRow.querySelector('.cpko').addEventListener('click', () => createNew(q.value.trim()));
+    fill(list, groups.map((g) => g.el), newRow, none);
     const root = h('div', {class: 'cpk', role: 'dialog', 'aria-label': 'Choose a category'},
       h('div', {class: 'cpks'}, icon('search'), q), list);
     const scrim = phone ? h('div', {class: 'cpkscrim', onclick: () => close(true)}) : null;
@@ -105,6 +125,8 @@
       for (const o of opts) o.el.hidden = !words.every((w) => o.key.includes(w));
       for (const g of groups) g.el.hidden = g.items.every((el) => el.hidden);
       none.hidden = shown().length > 0;
+      noneCreate.hidden = !words.length;
+      noneCreate.textContent = words.length ? `Create “${q.value.trim()}”` : '';
       setActive(words.length ? shown()[0] || null : null);
     }
     function pick(n) {
@@ -148,6 +170,7 @@
   }, true);
   window.addEventListener('resize', () => { if (OPEN) place(OPEN.root, OPEN.btn); });
   window.addEventListener('hashchange', () => close());
+  document.addEventListener('hf-categories-changed', () => { GROUPS = null; });
 
   // ({value, names, cls, label, title}, onPick): `value` reads and sets the category the button names, like a select's
   HOOKS.catPick = ({value, names, cls = '', label, title, short = false}, onPick) => {

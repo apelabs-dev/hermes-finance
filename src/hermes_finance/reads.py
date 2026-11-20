@@ -19,8 +19,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from . import api, insights, manual, portfolio, report, txmeta, usage, valuation
-from .db import account_policy_sql
-from .money import money2
+from .db import account_policy_sql, display_currency
+from .money import money, money2
 
 _r = insights._r
 
@@ -283,7 +283,8 @@ def _group_labels(conn: sqlite3.Connection, by: str, where: list[str], args: lis
     if by == "merchant":  # the latest spelling, as the Recurring page names a merchant
         labels = {}
         for r in conn.execute(f"SELECT v.merchant_name, v.name FROM v_transactions v WHERE {insights.SPENDING} "
-                              f"AND ({' AND '.join(where) or '1 = 1'}) ORDER BY v.date, v.transaction_id", args):
+                              f"AND {insights.currency_sql(conn)} AND ({' AND '.join(where) or '1 = 1'}) "
+                              f"ORDER BY v.date, v.transaction_id", args):
             labels[insights.merchant_key(r["merchant_name"], r["name"])] = \
                 (r["merchant_name"] or r["name"] or "").strip() or "(no name)"
         return labels
@@ -322,6 +323,7 @@ def spend(conn: sqlite3.Connection, f: Filters, today: date, by: str | None = No
         "change": {"amount": _r(total - before[0]),
                    "pct": _r((total - before[0]) / before[0] * 100) if before[0] > 0 else None} if prev else None,
         "by": by,
+        "currency": display_currency(conn),
         "groups": groups[:f.limit],
         "group_count": len(groups),
     }
@@ -352,6 +354,7 @@ def budget_status(conn: sqlite3.Connection, month: str, today: date) -> dict[str
     return {
         "today": today.isoformat(),
         "month": month,
+        "currency": display_currency(conn),
         "is_current": month == insights.month_of(today),
         "days_in_month": insights.days_in_month(month),
         "days_left": b["days_left"],
@@ -360,7 +363,7 @@ def budget_status(conn: sqlite3.Connection, month: str, today: date) -> dict[str
                   "pct": c["pct"], "status": c["status"], "count": c["count"], "days_left": b["days_left"],
                   "projection": projected[c["category"]],
                   "projection_status": insights.cap_status(projected[c["category"]], c["cap"]),
-                  "last_month": c["last_month"], "avg3": c["avg3"],
+                  "last_month": c["last_month"], "avg3": c["avg3"], "foreign": c.get("foreign", []),
                   **({k: c[k] for k in ("base_cap", "rollover")} if "rollover" in c else {}),
                   **({k: c[k] for k in ("counted", "in_group_budget")} if "in_group_budget" in c else {})}
                  for c in b["categories"]],
@@ -394,7 +397,8 @@ def _txn_row(t: dict[str, Any]) -> dict[str, Any]:
             "account_name": t["account_name"], "account_mask": t["account_mask"],
             "institution_name": t["institution_name"], "pending": t["pending"], "ai_flagged": t["ai_flagged"],
             "review": t["review"], "ai_note": t["ai_note"], "is_income": t["is_income"], "is_transfer": t["is_transfer"],
-            "split": t.get("split"), "note": t.get("note"), "tags": t.get("tags", [])}
+            "split": t.get("split"), "note": t.get("note"), "tags": t.get("tags", []),
+            "iso_currency": (t.get("iso_currency") or "").strip().upper() or None}
 
 
 def _group(conn: sqlite3.Connection, name: str) -> str:
@@ -439,7 +443,13 @@ def txns(conn: sqlite3.Connection, f: Filters, today: date, search: str | None =
         where.append(api.UNCATEGORIZED_SQL)
     page = api.transaction_page(conn, where, args, "all", f.limit, 0, sort)
     rows = [_txn_row(t) for t in page["rows"]]
-    return {"today": today.isoformat(), "period": f.period.json(),
+    display = display_currency(conn)
+    ccy = insights.currency_expr(display, "v.iso_currency")
+    sums = {code: _r(total) for code, total in conn.execute(
+        f"SELECT {ccy} AS currency, COALESCE(SUM(v.amount), 0) FROM v_transactions v "
+        f"WHERE {' AND '.join(where) or '1 = 1'} GROUP BY currency", args)}
+    return {"today": today.isoformat(), "period": f.period.json(), "currency": display,
+            "sums": {k: v for k, v in sums.items() if round(v * 100)},
             "filters": {**f.json(), "search": search, "flagged": flagged, "uncategorized": uncategorized,
                         **({"tag": tags[0] if len(tags) == 1 else tags} if tags else {}),
                         **({"group": group} if group is not None else {}), "sort": sort},
@@ -470,7 +480,10 @@ def networth(conn: sqlite3.Connection, today: date, history: bool = False, custo
                      "stale": False, "approx": False})
     for accts in by_group.values():
         accts.sort(key=lambda a: -(a["balance"] or 0))
+    display = display_currency(conn)
     for m in manual.summary(conn, today)["accounts"]:
+        if (m.get("currency") or display).strip().upper() != display:
+            continue   # shown in Other currencies, never added to a display-currency group (nw.foreign carries it)
         nw_id = insights.manual_nw_id(m["id"])
         by_group[m["group"]].append(
             {"source": "manual", "id": m["id"], "nw_id": nw_id, "counted": nw_id not in left and not m.get("excluded"),
@@ -510,6 +523,8 @@ def networth(conn: sqlite3.Connection, today: date, history: bool = False, custo
         # TASK-22: card payments in transit, counted in the net above (in Custom, only those to a card it counts)
         "in_transit": [e for e in nw["in_transit"] if e["counted_custom"] or not narrowed],
         "manual": nw["manual"],
+        "other_currencies": nw.get("foreign", []),
+        "currency": display,
         "tracking_since": nw["tracking_since"],
         "history": points if history else None,
     }
@@ -523,9 +538,10 @@ def networth_custom(conn: sqlite3.Connection, today: date, changed: bool | None 
     order = {key: i for i, (key, *_) in enumerate(insights.BREAKDOWN)}
     labels = {key: label for key, label, *_ in insights.BREAKDOWN}
     accounts = sorted(insights.networth_accounts(conn), key=lambda a: order[a["group"]])
-    return {"today": today.isoformat(), "changed": changed, "excluded": [a["id"] for a in nw["custom"]["excluded"]],
+    return {"today": today.isoformat(), "changed": changed, "currency": display_currency(conn),
+            "excluded": [a["id"] for a in nw["custom"]["excluded"]],
             "custom": {k: nw["custom"][k] for k in ("assets", "debts", "net")}, "all": {k: nw[k] for k in ("assets", "debts", "net")},
-            "accounts": [{**{k: a[k] for k in ("id", "source", "name", "mask", "institution", "kind", "group")},
+            "accounts": [{**{k: a[k] for k in ("id", "source", "name", "mask", "institution", "kind", "group", "currency")},
                           "group_label": labels[a["group"]], "balance": _r(a["balance"]), "signed": a["signed"],
                           "excluded": a["excluded"], "counted": a["counted"] and a["id"] not in left} for a in accounts]}
 
@@ -562,7 +578,7 @@ def bills(conn: sqlite3.Connection, today: date, next_days: int = 14) -> dict[st
     `next_days`, including any whose expected date has already passed (status due_soon / late)."""
     rec = insights.recurring(conn, today)
     items = [{k: r[k] for k in BILL_FIELDS} for r in rec["items"] if r["days_until"] <= next_days]
-    return {"today": today.isoformat(), "next_days": next_days,
+    return {"today": today.isoformat(), "next_days": next_days, "currency": display_currency(conn),
             "until": (today + timedelta(days=next_days)).isoformat(), "count": len(items), "items": items,
             "recurring_count": rec["count"], "monthly_totals": rec["monthly_totals"]}
 
@@ -577,7 +593,7 @@ def loans(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
             "next_payment": l["next_payment"], "last_payment": l["last_payment"], "match_pattern": l["match_pattern"],
             "auto_updates": l.get("auto_updates", False), "applied_count": l.get("applied_count"),
             "balance_as_of": l["balance_as_of"], "stale": l["stale"]} for l in d["loans"]]
-    return {"today": today.isoformat(), "count": len(out), "loans": out,
+    return {"today": today.isoformat(), "currency": display_currency(conn), "count": len(out), "loans": out,
             "total": _r(sum(g["total"] for g in d["groups"] if g["key"].startswith("loan:"))),
             "monthly": d["monthly"]["loans"]}
 
@@ -592,7 +608,8 @@ def holdings(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
                  "as_of": a.get("as_of"), "stale": a["stale"]} for a in inv["accounts"]]
     rows = [{k: h[k] for k in ("account_id", "account_name", "mask", "ticker", "name", "type", "quantity", "price",
                                "value", "cost_basis", "is_cash", "pct")} for h in inv["holdings"]]
-    return {"today": today.isoformat(), "total": total, "holdings_total": inv["holdings_total"],
+    return {"today": today.isoformat(), "total": total, "currency": display_currency(conn),
+            "holdings_total": inv["holdings_total"],
             "priced_total": inv["priced_total"],
             "prices_as_of": inv["prices_as_of"], "accounts": accounts, "holdings": rows,
             "breakdown": inv["breakdown"], "changes": inv["changes"], "tracking_since": inv["tracking_since"]}
@@ -603,13 +620,14 @@ def cashflow(conn: sqlite3.Connection, today: date, months: int = 6) -> dict[str
     if not 1 <= months <= MAX_MONTHS:
         raise ReadError(f"--months must be between 1 and {MAX_MONTHS}, got {months}")
     flow = insights.cashflow(conn, months, today)
-    return {"today": today.isoformat(), "months": flow["months"], "first_dates": flow["first_dates"]}
+    return {"today": today.isoformat(), "currency": display_currency(conn), "months": flow["months"],
+            "first_dates": flow["first_dates"]}
 
 
 # --- text -----------------------------------------------------------------------------------------------
 
-def _m(value: float | None) -> str:
-    return report.money(value)
+def _m(value: float | None, currency: str | None = None) -> str:
+    return report.money(value, currency=currency)
 
 
 def _pct(value: float | None) -> str:
@@ -638,24 +656,25 @@ def _period_text(p: dict[str, Any]) -> str:
 
 
 def spend_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
     lines = []
     if p["groups"]:
         lines.append(_table([p["by"], "spend", "count", "share", "previous"],
-                            [[g["label"], _m(g["total"]), g["count"], _pct(g["share"]), _m(g["previous"])]
+                            [[g["label"], q(g["total"]), g["count"], _pct(g["share"]), q(g["previous"])]
                              for g in p["groups"]]))
         if p["group_count"] > len(p["groups"]):
             lines.append(f"(top {len(p['groups'])} of {p['group_count']}; raise --limit for more)")
     elif p["by"]:
         lines.append("(no spending)")
     pend = p["pending"]
-    lines.append(f"Spending {_period_text(p['period'])}{_filters_text(p['filters'])}: {_m(p['total'])} in "
-                 f"{p['count']} transaction(s)" + (f", {_m(pend['total'])} of it pending" if pend["count"] else ""))
+    lines.append(f"Spending {_period_text(p['period'])}{_filters_text(p['filters'])}: {q(p['total'])} in "
+                 f"{p['count']} transaction(s)" + (f", {q(pend['total'])} of it pending" if pend["count"] else ""))
     if p["previous"]:
         c = p["change"]
         pct = f", {c['pct']:+.1f}%" if c["pct"] is not None else ""
-        change = money2(c["amount"])
+        change = money2(c["amount"], currency=p.get("currency"))
         change = change if change.startswith("-") else "+" + change
-        lines.append(f"Previous {_period_text(p['previous'])}: {_m(p['previous']['total'])} "
+        lines.append(f"Previous {_period_text(p['previous'])}: {q(p['previous']['total'])} "
                      f"({change}{pct})")
     lines.append("(income and transfers are not spending; refunds net against their category)")
     return "\n".join(lines)
@@ -665,56 +684,62 @@ STATUS_TEXT = {"ok": "ok", "warn": "80%+", "over": "OVER", "nocap": "-"}
 
 
 def budget_status_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
     lines = []
     groups = p.get("groups") or []
     if groups:   # polish P2e: a group budget is one budget; the caps inside it are listed below but not counted
         lines.append(_table(["group budget", "budget", "spent", "still due", "left", "used", "status", "projected"],
-                            [[g["group"], _m(g["budget"]), _m(g["spent"]), _m(g["due"]) if g["due"] else "-",
-                              _m(g["left"]), _pct(g["pct"]), STATUS_TEXT[g["status"]],
-                              _m(g["projection"]) + (" (over)" if g["projection_status"] == "over" else "")]
+                            [[g["group"], q(g["budget"]), q(g["spent"]), q(g["due"]) if g["due"] else "-",
+                              q(g["left"]), _pct(g["pct"]), STATUS_TEXT[g["status"]],
+                              q(g["projection"]) + (" (over)" if g["projection_status"] == "over" else "")]
                              for g in groups]))
         for g in groups:
             if g["over_note"] is not None:
-                lines.append(f"{g['group']}: its category caps add up to {_m(g['over_note'])}, "
-                             f"more than the group budget {_m(g['budget'])}")
+                lines.append(f"{g['group']}: its category caps add up to {q(g['over_note'])}, "
+                             f"more than the group budget {q(g['budget'])}")
     if p["caps"]:
         lines.append(_table(["category", "cap", "spent", "still due", "left", "used", "status", "projected"],
                             [[c["category"] + (f" (in {c['in_group_budget']})" if c.get("in_group_budget") else ""),
-                              _m(c["cap"]), _m(c["spent"]), _m(c["due"]) if c["due"] else "-",
-                              _m(c["left"]), _pct(c["pct"]), STATUS_TEXT[c["status"]],
-                              _m(c["projection"]) + (" (over)" if c["projection_status"] == "over" else "")]
+                              q(c["cap"]), q(c["spent"]), q(c["due"]) if c["due"] else "-",
+                              q(c["left"]), _pct(c["pct"]), STATUS_TEXT[c["status"]],
+                              q(c["projection"]) + (" (over)" if c["projection_status"] == "over" else "")]
                              for c in p["caps"]]))
         if any(c.get("counted") is False for c in p["caps"]):
             lines.append("A cap marked (in <group>) is inside a group budget: it isn't counted again in the totals.")
+        for c in p["caps"]:
+            if c.get("foreign"):
+                lines.append(f"{c['category']}: also " + ", ".join(
+                    f"{money(f['spend'], cents=True, currency=f['currency'])}" for f in c["foreign"]) +
+                    " (not counted in the cap)")
     elif not groups:
         lines.append("No caps set.")
     for r in p.get("group_rest") or []:
-        what = " and ".join([*([f"{_m(r['spent'])} spent"] if r["spent"] or not r["due"] else []),
-                             *([f"{_m(r['due'])} in bills still due"] if r["due"] else [])])
+        what = " and ".join([*([f"{q(r['spent'])} spent"] if r["spent"] or not r["due"] else []),
+                             *([f"{q(r['due'])} in bills still due"] if r["due"] else [])])
         lines.append(f"{r['group']}: also counts {what} in categories without a cap ({', '.join(r['categories'])})")
     t, u, s = p["totals"], p["uncapped"], p["spending"]
-    due = (f" and {_m(t['due'])} in bills still due ({', '.join(b['merchant'] for b in t['bills_due'])})"
+    due = (f" and {q(t['due'])} in bills still due ({', '.join(b['merchant'] for b in t['bills_due'])})"
            if t["due"] else "")
     if t["left"] < 0:
-        left = f"over budget by {_m(-t['left'])}" + (" once bills clear" if t["due"] else "")
+        left = f"over budget by {q(-t['left'])}" + (" once bills clear" if t["due"] else "")
     else:
-        left = f"{_m(t['left'])} left"
-    per_day = f", about {_m(t['per_day'])} a day" if t["per_day"] is not None and p["days_left"] and t["left"] > 0 else ""
+        left = f"{q(t['left'])} left"
+    per_day = f", about {q(t['per_day'])} a day" if t["per_day"] is not None and p["days_left"] and t["left"] > 0 else ""
     where = "budgets" if groups or p.get("group_rest") else "capped categories"
-    lines.append(f"{p['month']}: budgeted {_m(t['budgeted'])}, spent {_m(t['spent'])} in {where}{due}: "
+    lines.append(f"{p['month']}: budgeted {q(t['budgeted'])}, spent {q(t['spent'])} in {where}{due}: "
                  f"{left} · {p['days_left']} day(s) left{per_day}")
     if t["count"]:
-        lines.append(f"({_m(t['under'])} left in {t['under_count']} budget(s) · {_m(t['over_amount'])} over in "
+        lines.append(f"({q(t['under'])} left in {t['under_count']} budget(s) · {q(t['over_amount'])} over in "
                      f"{t['over']})")
-    top = ", ".join(f"{c['category']} {_m(c['spent'])}" for c in u["categories"] if c["spent"])
-    lines.append(f"Uncapped: {_m(u['spent'])}" + (f" ({top})" if top else ""))
-    lines.append(f"All spending {_m(s['total'])}, on pace for {_m(s['projection'])} "
-                 f"(last month {_m(s['prev_month_total'])})")
+    top = ", ".join(f"{c['category']} {q(c['spent'])}" for c in u["categories"] if c["spent"])
+    lines.append(f"Uncapped: {q(u['spent'])}" + (f" ({top})" if top else ""))
+    lines.append(f"All spending {q(s['total'])}, on pace for {q(s['projection'])} "
+                 f"(last month {q(s['prev_month_total'])})")
     return "\n".join(lines)
 
 
 def txns_text(p: dict[str, Any]) -> str:
-    rows = [[t["date"], _m(t["amount"]), t["merchant"], t["category"], t["category_source"], t["account"],
+    rows = [[t["date"], _m(t["amount"], t.get("iso_currency") or p.get("currency")), t["merchant"], t["category"], t["category_source"], t["account"],
              ",".join(x for x, on in (("pending", t["pending"]), ("flagged", t["ai_flagged"])) if on)]
             for t in p["rows"]]
     head = f"Transactions {_period_text(p['period'])}{_filters_text(p['filters'])}: {p['total']} match"
@@ -725,12 +750,13 @@ def txns_text(p: dict[str, Any]) -> str:
 
 
 def networth_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
     mode = p.get("mode")
-    head = {"cash_only": f"Net worth (cash & debts only) {_m(p['net'])}: cash {_m(p['assets'])}, owe {_m(p['debts'])}",
-            "custom": f"Net worth (custom) {_m(p['net'])}: own {_m(p['assets'])}, owe {_m(p['debts'])}"}
-    lines = [head.get(mode, f"Net worth {_m(p['net'])}: own {_m(p['assets'])}, owe {_m(p['debts'])}")]
+    head = {"cash_only": f"Net worth (cash & debts only) {q(p['net'])}: cash {q(p['assets'])}, owe {q(p['debts'])}",
+            "custom": f"Net worth (custom) {q(p['net'])}: own {q(p['assets'])}, owe {q(p['debts'])}"}
+    lines = [head.get(mode, f"Net worth {q(p['net'])}: own {q(p['assets'])}, owe {q(p['debts'])}")]
     for g in p["groups"]:
-        lines.append(f"  {g['label']} ({g['count']}): {_m(g['signed'])}")
+        lines.append(f"  {g['label']} ({g['count']}): {q(g['signed'])}")
         for a in g["accounts"]:
             tag = " [manual]" if a["source"] == "manual" else ""
             if mode == "all" and not a["counted"]:
@@ -740,13 +766,22 @@ def networth_text(p: dict[str, Any]) -> str:
             if a.get("valuation"):
                 v = a["valuation"]
                 est = v["estimate"]
-                other = (f"; {usage.LABELS[est['source']]} {BASIS_WORDS[est['basis']]} {_m(est['value'])} on {est['date']}"
+                other = (f"; {usage.LABELS[est['source']]} {BASIS_WORDS[est['basis']]} {q(est['value'])} on {est['date']}"
                          if est and v["source"] == "user" else "")
                 basis = (valuation.BASIS_LABELS[v["basis"]] + " · ") if v["provider"] else ""
                 val = f" ({basis}{v['label']} · as of {v['as_of']}{other})"
-            lines.append(f"    {account_label(a['name'], a['mask'])}{tag}  {_m(a['signed'])}{val}{stale}")
+            lines.append(f"    {account_label(a['name'], a['mask'])}{tag}  {q(a['signed'])}{val}{stale}")
     for e in p.get("in_transit") or ():
         lines.append(f"  {e['line']}, counted as paid")
+    other = p.get("other_currencies") or []
+    if other:
+        totals: dict[str, float] = {}
+        for a in other:
+            totals[a["currency"]] = totals.get(a["currency"], 0.0) + (a.get("signed") or 0.0)
+        lines.append("Not counted (other currencies): " + ", ".join(
+            f"{money(v, cents=True, currency=c)}" for c, v in totals.items()) + " · " + ", ".join(
+            f"{account_label(a['name'], a['mask'])} {money(a.get('signed'), cents=True, currency=a['currency'])}"
+            for a in other))
     left = p["custom"]["excluded"]
     if mode == "cash_only":
         lines.append("(investments, vehicles, property and other assets not counted; without --cash-only for all of it)")
@@ -754,42 +789,44 @@ def networth_text(p: dict[str, Any]) -> str:
         lines.append(f"(not counted: {', '.join(account_label(a['name'], a['mask']) for a in left)}; without --custom for "
                      "all of it)" if left else "(every account counted)")
     elif left:
-        lines.append(f"(Custom, finance networth --custom: {_m(p['custom']['net'])}, "
+        lines.append(f"(Custom, finance networth --custom: {q(p['custom']['net'])}, "
                      f"{len(left)} account{'s' if len(left) != 1 else ''} not counted)")
     if p["history"] is not None:
         if mode == "cash_only":
             lines.append(_table(["date", "cash", "debts", "net"],
-                                [[h["date"], _m(h["cash_assets"]), _m(h["custom_debts"]), _m(h["cash_net"])] for h in p["history"]]))
+                                [[h["date"], q(h["cash_assets"]), q(h["custom_debts"]), q(h["cash_net"])] for h in p["history"]]))
         else:
             pre = "custom_" if mode == "custom" else ""
             lines.append(_table(["date", "assets", "debts", "net"],
-                                [[h["date"], _m(h[pre + "assets"]), _m(h[pre + "debts"]), _m(h[pre + "net"])] for h in p["history"]]))
+                                [[h["date"], q(h[pre + "assets"]), q(h[pre + "debts"]), q(h[pre + "net"])] for h in p["history"]]))
     elif p["tracking_since"]:
         lines.append(f"(tracking since {p['tracking_since']}; --history for the daily points)")
     return "\n".join(lines)
 
 
 def networth_custom_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
     c, n = p["custom"], len(p["excluded"])
     state = {True: "Saved. ", False: "No change. ", None: ""}[p["changed"]]
-    rows = [["yes" if a["counted"] else "no", a["group_label"], account_label(a["name"], a["mask"]), _m(a["signed"]), a["id"]]
+    rows = [["yes" if a["counted"] else "no", a["group_label"], account_label(a["name"], a["mask"]), q(a["signed"]), a["id"]]
             for a in p["accounts"]]
-    return "\n".join([f"{state}Custom net worth {_m(c['net'])}: own {_m(c['assets'])}, owe {_m(c['debts'])} "
+    return "\n".join([f"{state}Custom net worth {q(c['net'])}: own {q(c['assets'])}, owe {q(c['debts'])} "
                       f"({n} of {len(p['accounts'])} account{'s' if len(p['accounts']) != 1 else ''} not counted; "
-                      f"All is {_m(p['all']['net'])})",
+                      f"All is {q(p['all']['net'])})",
                       _table(["counted", "group", "account", "balance", "id"], rows)])
 
 
-def bill_amount_text(b: dict[str, Any]) -> str:
+def bill_amount_text(b: dict[str, Any], currency: str | None = None) -> str:
     """$465.10 for a fixed amount; ~$125 est. (usually $100–150) for one that changes (TASK-21)."""
     if not b["variable"]:
-        return _m(b["amount"])
+        return _m(b["amount"], currency)
     u = b["usual"]
-    return b["amount_label"] + (f" (usually {insights.usual_text(u['low'], u['high'])})" if u else "")
+    return b["amount_label"] + (f" (usually {insights.usual_text(u['low'], u['high'], currency)})" if u else "")
 
 
 def bills_text(p: dict[str, Any]) -> str:
-    rows = [[b["next_expected"], b["days_until"], b["merchant"], b["kind"], bill_amount_text(b), b["cadence_label"],
+    q = lambda x: _m(x, p.get("currency"))
+    rows = [[b["next_expected"], b["days_until"], b["merchant"], b["kind"], bill_amount_text(b, p.get("currency")), b["cadence_label"],
              b["status"], "yes" if b["paid_this_month"] else "no",
              account_label(b["last_account"]["name"], b["last_account"]["mask"]) if b["last_account"] else "-",
              ", ".join(x for x in ("tracked" if b["source"] == "tracked" else "",
@@ -798,36 +835,43 @@ def bills_text(p: dict[str, Any]) -> str:
     return "\n".join([_table(["expected", "days", "merchant", "kind", "amount", "cadence", "status",
                               "paid this month", "last paid from", "notes"], rows),
                       f"Recurring charges expected by {p['until']} (next {p['next_days']} days, overdue ones "
-                      f"included). Monthly totals: bills {_m(p['monthly_totals']['bill'])}, subscriptions "
-                      f"{_m(p['monthly_totals']['subscription'])}"])
+                      f"included). Monthly totals: bills {q(p['monthly_totals']['bill'])}, subscriptions "
+                      f"{q(p['monthly_totals']['subscription'])}"])
 
 
 def loans_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
     def payoff(po: dict[str, Any]) -> str:
         return f"{po['payoff_month']} ({po['payments_left']} left)" if po["payoff_month"] else po["method"]
 
-    def last(lp: dict[str, Any] | None) -> str:
-        return f"{lp['date']} {_m(lp['amount'])}" if lp else "-"
+    def last(lp: dict[str, Any] | None, cur: str | None) -> str:
+        return f"{lp['date']} {_m(lp['amount'], cur)}" if lp else "-"
 
-    rows = [[l["name"] + ("" if l["manual"] else " [plaid]"), _m(l["remaining"]),
-             "-" if l["apr"] is None else f"{l['apr']}%", _m(l["monthly_payment"]),
-             "paid off" if l["paid_off"] else payoff(l["payoff"]), last(l["last_payment"])] for l in p["loans"]]
+    def row(l: dict[str, Any]) -> list[Any]:
+        cur = l.get("currency") or p.get("currency")
+        return [l["name"] + ("" if l["manual"] else " [plaid]") + ("" if cur == p.get("currency") else f" ({cur})"),
+                _m(l["remaining"], cur), "-" if l["apr"] is None else f"{l['apr']}%", _m(l["monthly_payment"], cur),
+                "paid off" if l["paid_off"] else payoff(l["payoff"]), last(l["last_payment"], cur)]
+
+    rows = [row(l) for l in p["loans"]]
     return "\n".join([_table(["loan", "remaining", "apr", "payment", "payoff", "last payment"], rows),
-                      f"Total remaining {_m(p['total'])}, {_m(p['monthly'])} a month"])
+                      f"Total remaining {q(p['total'])}, {q(p['monthly'])} a month"])
 
 
 def holdings_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
     accts = _table(["account", "type", "value", "share"],
                    [[account_label(a["name"], a["mask"]) + (" [manual]" if a["manual"] else ""), a["type"],
-                     _m(a["value"]), _pct(a["pct"])] for a in p["accounts"]])
+                     q(a["value"]), _pct(a["pct"])] for a in p["accounts"]])
     rows = _table(["holding", "account", "quantity", "price", "value", "share"],
                   [[h["ticker"] or h["name"], account_label(h["account_name"], h["mask"]), h["quantity"],
-                    _m(h["price"]), _m(h["value"]), _pct(h["pct"])] for h in p["holdings"]])
-    return "\n".join([accts, rows, f"Portfolio {_m(p['total'])} (prices as of {p['prices_as_of'] or '-'})"])
+                    q(h["price"]), q(h["value"]), _pct(h["pct"])] for h in p["holdings"]])
+    return "\n".join([accts, rows, f"Portfolio {q(p['total'])} (prices as of {p['prices_as_of'] or '-'})"])
 
 
 def cashflow_text(p: dict[str, Any]) -> str:
-    rows = [[m["month"] + (" (so far)" if m["is_current"] else ""), _m(m["income"]), _m(m["spending"]), _m(m["net"]),
+    q = lambda x: _m(x, p.get("currency"))
+    rows = [[m["month"] + (" (so far)" if m["is_current"] else ""), q(m["income"]), q(m["spending"]), q(m["net"]),
              m["coverage"] + (f" (no history yet from {', '.join(m['missing'])})" if m["missing"] else "")]
             for m in p["months"]]
     return _table(["month", "income", "spending", "net", "coverage"], rows)

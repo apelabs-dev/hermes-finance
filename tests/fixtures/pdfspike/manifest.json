@@ -1,0 +1,2568 @@
+{
+  "generator": "tests/pdfspike_corpus.py",
+  "format": "A4 landscape, text layer, fpdf2 core fonts; the x-reviewer-left extra is A4 portrait",
+  "creation_date": "2026-04-01T00:00:00+00:00",
+  "files": [
+    {
+      "id": "au-01",
+      "country": "AU",
+      "profile": "AU",
+      "pages": 2,
+      "expected_rows": 14,
+      "opening_balance": 4820.55,
+      "closing_balance": -10397.7,
+      "sha256": "78d888cef1a410b7cc7ef2c8fcbf85d4d8a189ac945bb7ca8d4aa3966269586d",
+      "features": [
+        "multi-line description",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "opening-balance row inside the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 3049.41,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2829.6,
+          "description": "Harbourline Payroll Terminal 09"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1127.21,
+          "description": "North Pier Fuel Card 4821"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1727.6,
+          "description": "Saltbush Cafe Card 4821"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -468.4,
+          "description": "Wattle Lane Pharmacy Ref 7714"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 1254.6,
+          "description": "Monthly account fee Card 4821"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 2257.74,
+          "description": "Paperbark Books Terminal 09"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 1724.95,
+          "description": "North Pier Fuel Ref 7714"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -1203.73,
+          "description": "Monthly account fee Ref 7714"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 36.67,
+          "description": "Paperbark Books Ref 7714"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -117.14,
+          "description": "Wattle Lane Pharmacy Terminal 09"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 806.58,
+          "description": "Monthly account fee Card 4821"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -792.9,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 2986.06,
+          "description": "Harbourline Payroll"
+        }
+      ]
+    },
+    {
+      "id": "au-02",
+      "country": "AU",
+      "profile": "AU",
+      "pages": 2,
+      "expected_rows": 18,
+      "opening_balance": 9350.1,
+      "closing_balance": 8486.66,
+      "sha256": "090bf19fff4b8145e359d62d2cb9b7c74ac2e79ec9b4e3699173e94a4d0de946",
+      "features": [
+        "multi-line description",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "opening-balance row inside the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 779.34,
+          "description": "Wattle Lane Pharmacy Terminal 09"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": -3189.29,
+          "description": "North Pier Fuel Terminal 09"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -3050.25,
+          "description": "Blue Gum Transit Ref 7714"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -2317.33,
+          "description": "Blue Gum Transit Card 4821"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 965.94,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1166.54,
+          "description": "Blue Gum Transit Ref 7714"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 2512.01,
+          "description": "Paperbark Books Ref 7714"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1981.73,
+          "description": "Monthly account fee Ref 7714"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2091.45,
+          "description": "Blue Gum Transit Card 4821"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -3089.56,
+          "description": "North Pier Fuel Terminal 09"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 2312.42,
+          "description": "North Pier Fuel"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 2467.35,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 2683.87,
+          "description": "Monthly account fee Card 4821"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 3149.76,
+          "description": "Blue Gum Transit Ref 7714"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -2768.88,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -904.36,
+          "description": "Monthly account fee Ref 7714"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -904.59,
+          "description": "Harbourline Payroll Card 4821"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 1160.19,
+          "description": "Blue Gum Transit Ref 7714"
+        }
+      ]
+    },
+    {
+      "id": "au-03",
+      "country": "AU",
+      "profile": "AU",
+      "pages": 2,
+      "expected_rows": 34,
+      "opening_balance": 12880.4,
+      "closing_balance": 10307.73,
+      "sha256": "ecfda9572a05271c2135720dd60e433f2829111ea933f2e6de4aa75363199e5b",
+      "features": [
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "repeated page header",
+        "opening-balance row inside the table",
+        "page break in the middle of the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2394.81,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": 411.64,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": 2006.46,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 624.77,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 1168.96,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -233.49,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 671.69,
+          "description": "North Pier Fuel"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 964.21,
+          "description": "Monthly account fee"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1190.4,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -453.76,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 2675.86,
+          "description": "North Pier Fuel"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1477.49,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2773.72,
+          "description": "North Pier Fuel"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 219.69,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -690.17,
+          "description": "North Pier Fuel"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 526.66,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 509.39,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 1605.67,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 2955.81,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -2012.21,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 3132.18,
+          "description": "Monthly account fee"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -2331.45,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -928.14,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1705.06,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -2851.79,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -1149.91,
+          "description": "Monthly account fee"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 810.18,
+          "description": "Monthly account fee"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 150.21,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 469.13,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -1720.94,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -2814.98,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -1625.17,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": -956.18,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": -2555.69,
+          "description": "Wattle Lane Pharmacy"
+        }
+      ]
+    },
+    {
+      "id": "au-04",
+      "country": "AU",
+      "profile": "AU",
+      "pages": 1,
+      "expected_rows": 12,
+      "opening_balance": 2110.0,
+      "closing_balance": 4068.1,
+      "sha256": "72ecddd4fe752fa0d0d804f5a024f5ad49c0401058d0eb2062cf9dc376b98b4e",
+      "features": [
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "opening-balance row inside the table",
+        "ambiguous MDY/DMY date",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-05",
+          "amount": 104.91,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-06",
+          "amount": -1195.89,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 658.45,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-08",
+          "amount": -876.45,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -621.77,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 1935.8,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -3051.34,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 901.96,
+          "description": "Monthly account fee"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 215.99,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 1356.96,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -528.24,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -858.48,
+          "description": "Monthly account fee"
+        }
+      ]
+    },
+    {
+      "id": "in-01",
+      "country": "IN",
+      "profile": "IN",
+      "pages": 3,
+      "expected_rows": 12,
+      "opening_balance": 123456.78,
+      "closing_balance": -19024.83,
+      "sha256": "6bcb6c31f5d3385654d3c9b3db03bb29210b07d9561c71ad331558d9c9bfa362",
+      "features": [
+        "cells stacked one-per-line",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "repeated page header",
+        "Indian lakh grouping",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 123456.78,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -7493.05,
+          "description": "UPI SUNDARA GROCERY"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -8179.65,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 6511.19,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 5058.67,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 1466.64,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 655.42,
+          "description": "ATM CASH WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 7293.18,
+          "description": "UPI SUNDARA GROCERY"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -3143.09,
+          "description": "BILL PAY ELECTRICITY"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 1897.8,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 6981.28,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 7976.44,
+          "description": "UPI MERCHANT PAYMENT"
+        }
+      ]
+    },
+    {
+      "id": "in-02",
+      "country": "IN",
+      "profile": "IN",
+      "pages": 4,
+      "expected_rows": 16,
+      "opening_balance": 234567.89,
+      "closing_balance": 106878.79,
+      "sha256": "031fbab7a7978ed88387cf290a7546ba4b94d0b1491a0f10c5e840e1848924e0",
+      "features": [
+        "cells stacked one-per-line",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "repeated page header",
+        "Indian lakh grouping",
+        "decimal dot + comma thousands",
+        "non-amount parenthesised document number"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 123456.78,
+          "description": "UPI MERCHANT PAYMENT"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": -2079.59,
+          "description": "UPI MERCHANT PAYMENT"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -4487.75,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -3420.77,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -5486.19,
+          "description": "UPI MERCHANT PAYMENT"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 4466.43,
+          "description": "UPI SUNDARA GROCERY"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 4688.94,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 1860.87,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -124.35,
+          "description": "ATM CASH WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 2316.12,
+          "description": "ATM CASH WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 3233.73,
+          "description": "CHEQUE DEPOSIT"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 3530.17,
+          "description": "ATM CASH WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -8066.0,
+          "description": "ATM CASH WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 4108.0,
+          "description": "CHEQUE DEPOSIT"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 2525.44,
+          "description": "CHEQUE DEPOSIT"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 1167.27,
+          "description": "CHEQUE DEPOSIT"
+        }
+      ]
+    },
+    {
+      "id": "in-03",
+      "country": "IN",
+      "profile": "IN",
+      "pages": 5,
+      "expected_rows": 20,
+      "opening_balance": 98765.43,
+      "closing_balance": -49629.66,
+      "sha256": "20f102fad8c61a92d3752e7a0688031f78e68c513fbe908d62ed09487c550671",
+      "features": [
+        "cells stacked one-per-line",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "repeated page header",
+        "page break in the middle of the table",
+        "Indian lakh grouping",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 123456.78,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": 446.55,
+          "description": "ATM CASH WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 304.9,
+          "description": "BILL PAY ELECTRICITY"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -6417.36,
+          "description": "UPI SUNDARA GROCERY"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -8129.45,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 7842.06,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1072.56,
+          "description": "CHEQUE DEPOSIT"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -6000.85,
+          "description": "UPI MERCHANT PAYMENT"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -4656.44,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 3128.29,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 6246.29,
+          "description": "IMPS P2A TRANSFER"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -1246.33,
+          "description": "UPI MERCHANT PAYMENT"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 8445.0,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 5383.74,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 6571.83,
+          "description": "INTEREST CREDIT"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 2959.44,
+          "description": "CHEQUE DEPOSIT"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -6632.36,
+          "description": "ATM CASH WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 1828.64,
+          "description": "UPI SUNDARA GROCERY"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 6694.83,
+          "description": "NEFT CR SALARY"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 7096.97,
+          "description": "NEFT CR SALARY"
+        }
+      ]
+    },
+    {
+      "id": "in-04",
+      "country": "IN",
+      "profile": "IN",
+      "pages": 3,
+      "expected_rows": 10,
+      "opening_balance": 456789.01,
+      "closing_balance": 335539.12,
+      "sha256": "869300ee629ee612b65606df4b426e8d7593598d68b3efd38b6cda355e14834c",
+      "features": [
+        "multi-line description",
+        "cells stacked one-per-line",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "repeated page header",
+        "Indian lakh grouping",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 123456.78,
+          "description": "UPI MERCHANT PAYMENT TT 5512"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -2198.64,
+          "description": "INTEREST CREDIT REF 8842"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 7304.0,
+          "description": "CHEQUE DEPOSIT"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -762.15,
+          "description": "INTEREST CREDIT TT 5512"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 3762.53,
+          "description": "IMPS P2A TRANSFER"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -2389.09,
+          "description": "ATM CASH WITHDRAWAL BRANCH 0142"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -4718.12,
+          "description": "CHEQUE DEPOSIT"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 7825.19,
+          "description": "IMPS P2A TRANSFER TT 5512"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -6332.84,
+          "description": "IMPS P2A TRANSFER BRANCH 0142"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -4697.77,
+          "description": "NEFT CR SALARY BRANCH 0142"
+        }
+      ]
+    },
+    {
+      "id": "sg-01",
+      "country": "SG",
+      "profile": "SG",
+      "pages": 1,
+      "expected_rows": 12,
+      "opening_balance": 18240.0,
+      "closing_balance": 9306.07,
+      "sha256": "07f4d9f9c6f97811397af1e21eb5697fd2d0611aeb5271ae632f8193a3f9f5c3",
+      "features": [
+        "CR/DR suffix",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "summary/total lines with an explicit sign",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2093.02,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2589.07,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1240.01,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -1338.76,
+          "description": "PAYNOW TRANSFER"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 2736.26,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 2342.22,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -1627.92,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -919.81,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1678.72,
+          "description": "PAYNOW TRANSFER"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 2401.48,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 94.11,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -2354.47,
+          "description": "FAST SALARY CREDIT"
+        }
+      ]
+    },
+    {
+      "id": "sg-02",
+      "country": "SG",
+      "profile": "SG",
+      "pages": 1,
+      "expected_rows": 14,
+      "opening_balance": 7215.35,
+      "closing_balance": 1409.36,
+      "sha256": "8fd8e4bc5c112ca509e20584b714e35d88e2a5c9d636f089eec63ce77f61a337",
+      "features": [
+        "DR/CR marker column",
+        "preamble noise above the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2925.35,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -2904.18,
+          "description": "PAYNOW TRANSFER"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -199.32,
+          "description": "PAYNOW TRANSFER"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 2643.32,
+          "description": "CARD PURCHASE"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 1782.78,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 593.95,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 152.9,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 671.72,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -2907.07,
+          "description": "FAST SALARY CREDIT"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 1980.14,
+          "description": "CARD PURCHASE"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 1523.05,
+          "description": "INTERBANK TRANSFER"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -2303.38,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 1520.43,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 326.3,
+          "description": "PAYNOW TRANSFER"
+        }
+      ]
+    },
+    {
+      "id": "sg-03",
+      "country": "SG",
+      "profile": "SG",
+      "pages": 2,
+      "expected_rows": 26,
+      "opening_balance": 30990.1,
+      "closing_balance": 25227.31,
+      "sha256": "417e68f9df094b98ef1c8477c1f647bd23a058b0b8eff6a532301f367e8e46f3",
+      "features": [
+        "CR/DR suffix",
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "repeated page header",
+        "page break in the middle of the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 168.47,
+          "description": "PAYNOW TRANSFER"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": -1024.36,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 1358.7,
+          "description": "CARD PURCHASE"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -829.3,
+          "description": "INTERBANK TRANSFER"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 3057.59,
+          "description": "FAST SALARY CREDIT"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 2773.59,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 171.26,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -2053.06,
+          "description": "FAST SALARY CREDIT"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 24.16,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2166.61,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -1204.25,
+          "description": "PAYNOW TRANSFER"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -825.45,
+          "description": "FAST SALARY CREDIT"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 567.51,
+          "description": "INTERBANK TRANSFER"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 2748.56,
+          "description": "FAST SALARY CREDIT"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 2758.14,
+          "description": "INTERBANK TRANSFER"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 113.8,
+          "description": "INTERBANK TRANSFER"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1445.95,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 671.67,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -1850.21,
+          "description": "CARD PURCHASE"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -886.48,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 738.8,
+          "description": "INTERBANK TRANSFER"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 915.49,
+          "description": "PAYNOW TRANSFER"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -1970.88,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 1240.01,
+          "description": "BILL PAYMENT"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 381.51,
+          "description": "GIRO PAYMENT"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": -561.82,
+          "description": "PAYNOW TRANSFER"
+        }
+      ]
+    },
+    {
+      "id": "us-01",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 14,
+      "opening_balance": 8420.66,
+      "closing_balance": 2109.46,
+      "sha256": "f80f56de00c5da25a989b01534506dc0d7c1f6448c0be22c967e2d67bc51b118",
+      "features": [
+        "trailing minus",
+        "preamble noise above the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2611.81,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2244.8,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 2992.99,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 2529.62,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 1616.9,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -2302.45,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 389.78,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 558.82,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 2590.31,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -1560.73,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -829.74,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -2753.36,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -1873.08,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 95.53,
+          "description": "ONLINE PAYMENT UTILITY"
+        }
+      ]
+    },
+    {
+      "id": "us-02",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 14,
+      "opening_balance": 5250.25,
+      "closing_balance": 7769.43,
+      "sha256": "20b965dd12700758e65457c5a5b5c9424ccc69e241cd522f6cc3f50a0b0fb205",
+      "features": [
+        "parentheses negative",
+        "preamble noise above the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2569.72,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -2191.71,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -2391.1,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -900.58,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2506.34,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 1367.83,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 791.17,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -4.58,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -2326.38,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 2784.07,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 3159.75,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -1644.07,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -2797.12,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 1570.16,
+          "description": "CARD PURCHASE MARKET"
+        }
+      ]
+    },
+    {
+      "id": "us-03",
+      "country": "US",
+      "profile": "US",
+      "pages": 2,
+      "expected_rows": 18,
+      "opening_balance": 11760.8,
+      "closing_balance": 1627.59,
+      "sha256": "0a31d3e525e8137ae5c519a507055eae13214ae21dc3f211dac0a43b653e5efb",
+      "features": [
+        "multi-line description",
+        "trailing minus",
+        "parentheses negative",
+        "preamble noise above the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 1311.34,
+          "description": "CHECK 1042 Memo AUTH 5512"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": 1406.58,
+          "description": "CARD PURCHASE MARKET Memo AUTH 5512"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2773.67,
+          "description": "TRANSFER TO SAVINGS POS 0042"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -1923.26,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 610.46,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 784.96,
+          "description": "ONLINE PAYMENT UTILITY POS 0042"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 3064.22,
+          "description": "TRANSFER TO SAVINGS Ref 7714"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 110.4,
+          "description": "TRANSFER TO SAVINGS Ref 7714"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -1162.96,
+          "description": "CARD PURCHASE MARKET POS 0042"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -1834.64,
+          "description": "PAYROLL DIRECT DEP POS 0042"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 3079.81,
+          "description": "CARD PURCHASE MARKET POS 0042"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -2172.88,
+          "description": "TRANSFER TO SAVINGS POS 0042"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 2230.82,
+          "description": "TRANSFER TO SAVINGS Memo AUTH 5512"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -765.9,
+          "description": "ONLINE PAYMENT UTILITY POS 0042"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 1292.28,
+          "description": "CARD PURCHASE MARKET Ref 7714"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 2711.41,
+          "description": "ATM WITHDRAWAL Ref 7714"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 321.22,
+          "description": "PAYROLL DIRECT DEP Memo AUTH 5512"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": -1704.32,
+          "description": "ONLINE PAYMENT UTILITY Ref 7714"
+        }
+      ]
+    },
+    {
+      "id": "us-04",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 16,
+      "opening_balance": 6240.0,
+      "closing_balance": 9887.68,
+      "sha256": "2fc1531472cac0c454519b64cd8868cfb6fe2074243a61cb3ebdd26cb945da6b",
+      "features": [
+        "preamble noise above the table",
+        "summary/total lines with an explicit sign",
+        "ambiguous MDY/DMY date",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 460.97,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 19.54,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -3131.19,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-06",
+          "amount": 2078.81,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -2519.01,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-08",
+          "amount": 941.41,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -965.67,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -696.85,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 1402.67,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 1783.32,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -3100.43,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -1429.82,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 2253.4,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -2030.09,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 1127.28,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 157.98,
+          "description": "PAYROLL DIRECT DEP"
+        }
+      ]
+    },
+    {
+      "id": "br-01",
+      "country": "BR",
+      "profile": "BR",
+      "pages": 1,
+      "expected_rows": 12,
+      "opening_balance": 12345.67,
+      "closing_balance": 14691.19,
+      "sha256": "213dc21d2a686c2958a764e0b3dae6be9039a00fc0b55aa695283d586a37f675",
+      "features": [
+        "(+)/(-) token",
+        "preamble noise above the table",
+        "decimal comma + dot thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 1485.21,
+          "description": "PIX RECEBIDO"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -1856.7,
+          "description": "TARIFA MENSAL"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -1721.78,
+          "description": "PAGAMENTO BOLETO"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 902.52,
+          "description": "PAGAMENTO BOLETO"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 2366.21,
+          "description": "SAQUE ATM"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -57.24,
+          "description": "COMPRA CARTAO"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -1942.35,
+          "description": "SAQUE ATM"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 11.98,
+          "description": "TED RECEBIDA"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -2068.46,
+          "description": "COMPRA CARTAO"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 153.67,
+          "description": "TED RECEBIDA"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 3000.66,
+          "description": "TED RECEBIDA"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": -2619.24,
+          "description": "SALARIO"
+        }
+      ]
+    },
+    {
+      "id": "br-02",
+      "country": "BR",
+      "profile": "BR",
+      "pages": 1,
+      "expected_rows": 16,
+      "opening_balance": 87654.32,
+      "closing_balance": 86952.9,
+      "sha256": "fe52822398cc6a83ec1829e931b68260fe064aff9738c9ae9011c5f9dca72132",
+      "features": [
+        "(+)/(-) token",
+        "preamble noise above the table",
+        "opening-balance row inside the table",
+        "decimal comma + dot thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2652.79,
+          "description": "PAGAMENTO BOLETO"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": 885.8,
+          "description": "PIX RECEBIDO"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 892.41,
+          "description": "SAQUE ATM"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 217.15,
+          "description": "TARIFA MENSAL"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1989.63,
+          "description": "TED RECEBIDA"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -1675.15,
+          "description": "TARIFA MENSAL"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 570.2,
+          "description": "TARIFA MENSAL"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -2824.19,
+          "description": "TARIFA MENSAL"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 1292.99,
+          "description": "PIX RECEBIDO"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 200.47,
+          "description": "COMPRA CARTAO"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -912.79,
+          "description": "COMPRA CARTAO"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -3103.97,
+          "description": "COMPRA CARTAO"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -1259.07,
+          "description": "TED RECEBIDA"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 85.29,
+          "description": "TARIFA MENSAL"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 892.24,
+          "description": "TARIFA MENSAL"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 797.62,
+          "description": "PAGAMENTO BOLETO"
+        }
+      ]
+    },
+    {
+      "id": "cl-01",
+      "country": "CL",
+      "profile": "CL",
+      "pages": 1,
+      "expected_rows": 12,
+      "opening_balance": 15432.1,
+      "closing_balance": 10838.78,
+      "sha256": "a4ea9adfd4f1cee38d37422d63334ad39ae97c59915d2311d904556bd9ed855e",
+      "features": [
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "decimal comma + dot thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 1012.64,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2976.47,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 574.07,
+          "description": "GIRO CAJERO"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -2614.09,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 1879.86,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 3118.66,
+          "description": "PAGO TARJETA"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -1106.07,
+          "description": "PAGO TARJETA"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -2919.49,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1174.68,
+          "description": "COMISION MENSUAL"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 2334.41,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -2042.5,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 204.68,
+          "description": "GIRO CAJERO"
+        }
+      ]
+    },
+    {
+      "id": "cl-02",
+      "country": "CL",
+      "profile": "CL",
+      "pages": 1,
+      "expected_rows": 16,
+      "opening_balance": 67890.12,
+      "closing_balance": 56311.16,
+      "sha256": "bdc0c792d4b1552ff63964fe269b15c76ce3b3c4e8055331e57d445663505cf5",
+      "features": [
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "opening-balance row inside the table",
+        "decimal comma + dot thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2106.35,
+          "description": "TRANSFERENCIA RECIBIDA"
+        },
+        {
+          "date": "2026-03-01",
+          "amount": 1757.63,
+          "description": "PAGO TARJETA"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2426.33,
+          "description": "GIRO CAJERO"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 1992.49,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 2844.28,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1854.61,
+          "description": "SUELDO"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2303.53,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 1654.42,
+          "description": "SUELDO"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -736.78,
+          "description": "SUELDO"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 323.27,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -888.84,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 168.73,
+          "description": "TRANSFERENCIA RECIBIDA"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -2862.32,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 996.6,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -356.41,
+          "description": "COMPRA POS"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 2602.13,
+          "description": "PAGO TARJETA"
+        }
+      ]
+    },
+    {
+      "id": "co-01",
+      "country": "CO",
+      "profile": "CO",
+      "pages": 1,
+      "expected_rows": 14,
+      "opening_balance": 191778.17,
+      "closing_balance": 194601.86,
+      "sha256": "fd8f0d7f5d0baf8fe623d89026cc0f4d7ccc5798e04a3436e90cf198c9ae5c59",
+      "features": [
+        "preamble noise above the table",
+        "decimal dot + comma thousands"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 1468.31,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -543.76,
+          "description": "TRANSFERENCIA RECIBIDA"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -3065.51,
+          "description": "TRANSFERENCIA RECIBIDA"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1173.33,
+          "description": "TRANSFERENCIA RECIBIDA"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2795.29,
+          "description": "PAGO NOMINA"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 3171.86,
+          "description": "PAGO NOMINA"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -2947.09,
+          "description": "COMPRA DATAFONO"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -1694.62,
+          "description": "RETIRO CAJERO"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1355.75,
+          "description": "COMPRA DATAFONO"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -1319.09,
+          "description": "TRANSFERENCIA RECIBIDA"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -2939.7,
+          "description": "CUOTA MANEJO"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 2264.05,
+          "description": "PAGO NOMINA"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 2061.93,
+          "description": "PAGO SERVICIOS"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 986.14,
+          "description": "COMPRA DATAFONO"
+        }
+      ]
+    }
+  ],
+  "extra_files": [
+    {
+      "id": "x-misaligned",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 14,
+      "opening_balance": 8420.66,
+      "closing_balance": 3141.08,
+      "sha256": "1b8d3ec65463106dc0351177f60cf96b8491d981553bc8de8a1fe68c9e5e81aa",
+      "features": [
+        "header labels misaligned from values",
+        "preamble noise above the table"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 553.7,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -1865.31,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -2590.78,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -415.68,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2764.42,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -2519.17,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 1570.69,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 535.34,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1757.69,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 2715.14,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 3056.6,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 1538.62,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 2925.66,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 781.5,
+          "description": "ATM WITHDRAWAL"
+        }
+      ]
+    },
+    {
+      "id": "x-two-row",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 10,
+      "opening_balance": 6240.0,
+      "closing_balance": -1583.35,
+      "sha256": "12ff857818821cb5db8f5bc0547a73ceecf0505dd0aae1482729cfe5fb2da1f1",
+      "features": [
+        "two-row header",
+        "preamble noise above the table"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2878.98,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -2889.46,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1635.23,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1843.02,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2487.85,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 2938.89,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 2545.25,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 2637.31,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -1720.24,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 442.22,
+          "description": "TRANSFER TO SAVINGS"
+        }
+      ]
+    },
+    {
+      "id": "x-yearless",
+      "country": "AU",
+      "profile": "AU",
+      "pages": 1,
+      "expected_rows": 10,
+      "opening_balance": 8120.0,
+      "closing_balance": 10800.04,
+      "sha256": "6ba9f93483b1add4f7f9756f958d68e652074fef67771755ad089c808f8e793e",
+      "features": [
+        "dates without a year",
+        "preamble noise above the table"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 574.86,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2562.58,
+          "description": "Saltbush Cafe"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1292.53,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -1262.08,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -2877.09,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 787.74,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -134.16,
+          "description": "Monthly account fee"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -3040.66,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1727.74,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -2311.5,
+          "description": "Harbourline Payroll"
+        }
+      ]
+    },
+    {
+      "id": "x-no-balance",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 10,
+      "opening_balance": 5000.0,
+      "closing_balance": 7016.21,
+      "sha256": "9573a9c29010eee563fc966245268c56cd4bff97dbca3c1cb725a53f13680c5c",
+      "features": [
+        "no running-balance column",
+        "preamble noise above the table"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2513.2,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -2415.81,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -108.71,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -879.62,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 213.64,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 92.31,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -2722.64,
+          "description": "CHECK 1042"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": 733.61,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 2900.35,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -2342.54,
+          "description": "TRANSFER TO SAVINGS"
+        }
+      ]
+    },
+    {
+      "id": "x-no-balances",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 6,
+      "opening_balance": 5000.0,
+      "closing_balance": -6252.64,
+      "sha256": "3307cdce26aa18eeac1f2a185a5b7c777d23d1be0e0f01f235523aa4c30290aa",
+      "features": [],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2592.95,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 386.03,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 2447.01,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 2974.08,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 2377.59,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 474.98,
+          "description": "ATM WITHDRAWAL"
+        }
+      ]
+    },
+    {
+      "id": "x-off-cent",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 6,
+      "opening_balance": 5000.0,
+      "closing_balance": 4895.58,
+      "sha256": "342799363aa7f85d267dcb583ae74b8607b82b2e3b947af05e1fbefd02437a2f",
+      "features": [],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2393.02,
+          "description": "CARD PURCHASE COFFEE HOUSE"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": -2972.76,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1581.55,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 415.16,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": -1832.1,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 519.57,
+          "description": "ONLINE PAYMENT UTILITY"
+        }
+      ]
+    },
+    {
+      "id": "x-no-opening",
+      "country": "US",
+      "profile": "US",
+      "pages": 1,
+      "expected_rows": 14,
+      "opening_balance": 5000.0,
+      "closing_balance": -3182.44,
+      "sha256": "8e807752515d469e2d4fd2e7c4f8d1902d94d3ba08d3f065e4fe1bbdcf4d075a",
+      "features": [],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2929.57,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 526.44,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": -1591.9,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": -238.12,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 505.15,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": 2362.74,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": 1848.26,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -2820.49,
+          "description": "ONLINE PAYMENT UTILITY"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": -2173.63,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": 141.12,
+          "description": "ATM WITHDRAWAL"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": 1873.39,
+          "description": "TRANSFER TO SAVINGS"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 287.96,
+          "description": "PAYROLL DIRECT DEP"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": 2388.75,
+          "description": "CARD PURCHASE MARKET"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 3143.2,
+          "description": "CARD PURCHASE MARKET"
+        }
+      ]
+    },
+    {
+      "id": "x-reviewer-left",
+      "country": "AU",
+      "profile": "AU",
+      "pages": 1,
+      "expected_rows": 14,
+      "opening_balance": 5120.4,
+      "closing_balance": 3488.31,
+      "sha256": "ce46df9e429e5c2cbe30899cb0e97b93334337867fa16200ad19810dd26e53fb",
+      "features": [
+        "separate debit/credit columns",
+        "preamble noise above the table",
+        "header labels misaligned from values"
+      ],
+      "expected_rows_detail": [
+        {
+          "date": "2026-03-01",
+          "amount": 2998.29,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-03",
+          "amount": 2251.11,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-05",
+          "amount": 1083.04,
+          "description": "Harbourline Payroll"
+        },
+        {
+          "date": "2026-03-07",
+          "amount": 1457.5,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-09",
+          "amount": 182.87,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-11",
+          "amount": -401.42,
+          "description": "Wattle Lane Pharmacy"
+        },
+        {
+          "date": "2026-03-13",
+          "amount": -236.1,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-15",
+          "amount": -3164.95,
+          "description": "Monthly account fee"
+        },
+        {
+          "date": "2026-03-17",
+          "amount": 1489.47,
+          "description": "North Pier Fuel"
+        },
+        {
+          "date": "2026-03-19",
+          "amount": -2397.61,
+          "description": "North Pier Fuel"
+        },
+        {
+          "date": "2026-03-21",
+          "amount": -1903.5,
+          "description": "Paperbark Books"
+        },
+        {
+          "date": "2026-03-23",
+          "amount": 2307.52,
+          "description": "Kookaburra Market"
+        },
+        {
+          "date": "2026-03-25",
+          "amount": -3058.74,
+          "description": "Blue Gum Transit"
+        },
+        {
+          "date": "2026-03-27",
+          "amount": 1024.61,
+          "description": "North Pier Fuel"
+        }
+      ]
+    }
+  ],
+  "negative_controls": [
+    {
+      "id": "locked",
+      "file": "locked.pdf",
+      "sha256": "425672b08332e9507e9e8bb058ed126fa48ccec4ee211dbdcaf2f02ffc6ddbfa"
+    },
+    {
+      "id": "scan",
+      "file": "scan.pdf",
+      "sha256": "c13c4cc938598ec22d7eaee239c32b8b55a7d8d19bbbeb8538a36542fc9a177f"
+    },
+    {
+      "id": "multi_account",
+      "file": "multi_account.pdf",
+      "sha256": "4b46cbf15873814d84cda97b64083adf711ed7957cd7a64bd4018476c4caa995"
+    },
+    {
+      "id": "empty",
+      "file": "empty.pdf",
+      "sha256": "ad0866fcc85b84a008985d629795a9c2540a9368b3b8e6d6b35e8dd2d651e4b1"
+    }
+  ],
+  "required_features": [
+    "multi-line description",
+    "cells stacked one-per-line",
+    "CR/DR suffix",
+    "DR/CR marker column",
+    "separate debit/credit columns",
+    "(+)/(-) token",
+    "trailing minus",
+    "parentheses negative",
+    "preamble noise above the table",
+    "repeated page header",
+    "opening-balance row inside the table",
+    "summary/total lines with an explicit sign",
+    "page break in the middle of the table",
+    "Indian lakh grouping",
+    "decimal comma + dot thousands",
+    "decimal dot + comma thousands",
+    "ambiguous MDY/DMY date",
+    "non-amount parenthesised document number",
+    "header labels misaligned from values",
+    "two-row header",
+    "dates without a year",
+    "no running-balance column"
+  ]
+}

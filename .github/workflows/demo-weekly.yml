@@ -1,4 +1,5 @@
-# Replaces the local hf-demo-weekly-start/report crons. Logs and artifacts are public.
+# Replaces the local hf-demo-weekly-start/report crons. Logs and artifacts are public. A scheduled run is skipped while
+# the repository is private (the public repository runs the weekly demo); a manual run always goes.
 name: Weekly demo
 
 on:
@@ -17,6 +18,7 @@ concurrency:
 
 jobs:
   demo:
+    if: github.event_name != 'schedule' || !github.event.repository.private
     runs-on: ubuntu-latest
     timeout-minutes: 120
     defaults:

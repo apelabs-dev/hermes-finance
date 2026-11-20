@@ -34,6 +34,12 @@ Brains (prefs ai.mode):
           reports no price). The app never reads Hermes's keys or settings. Without Hermes, or without the plugin's
           bridge, nothing is answered: one line says so (never a made-up or canned answer).
   off     no Ask at all: the page has no button and every /api/chat route answers 404.
+  cli     a locally installed Claude Code or Codex CLI (ai.cli), run by clibrain.py as one child process per request
+          with no tools at all. It answers with the same one JSON decision the Hermes bridge uses, checked here
+          (bridge.decision), so every read is the app's to run and every write (finance_sync included) is an approval
+          card (origin "ask_cli"). A turn needs a stored, passing isolation check for the CLI's version found now; a
+          missing, unchecked or changed CLI refuses the turn with one line (never a silent fallback). The CLI's own
+          plan pays for the request, so ai.monthly_cap does not apply here: its one api_calls row is the audit trail.
 
 A turn has one deadline, TIMEOUT from its start (time.monotonic()), for all of it (chat-deadline correction and its
 follow-up):
@@ -71,8 +77,8 @@ Every expected failure (Ask off, no key or model, the endpoint down or refusing 
 ChatError: one friendly line for the panel, never a traceback. A turn that fails after it recorded a card (a ChatError or
 anything unexpected) withdraws that card, which no one could decide yet, so nothing is left half-done; if even that
 can't be written, the card stays held and mcp_state.reconcile() withdraws it later, and the turn keeps its own error.
-The panel reads and decides only Ask's own cards (origin "ask" or "ask_hermes", which no client can claim by calling
-itself "Ask"); another agent's pending actions are decided in Settings.
+The panel reads and decides only Ask's own cards (origin "ask", "ask_hermes" or "ask_cli", which no client can claim by
+calling itself "Ask"); another agent's pending actions are decided in Settings.
 """
 
 from __future__ import annotations
@@ -102,7 +108,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 from urllib.parse import urlsplit
 
-from . import access, aisession, api, bridge, config, mcp_state, prefs, redact, secretstore, tooldefs, usage
+from . import access, aisession, api, bridge, clibrain, config, mcp_state, prefs, redact, secretstore, tooldefs, usage
 from .money import money
 
 log = logging.getLogger(__name__)
@@ -110,8 +116,10 @@ log = logging.getLogger(__name__)
 CLIENT = "Ask"                     # pending_actions.client (the name shown) for a change asked for in the Ask panel
 ORIGIN = "ask"                     # pending_actions.origin: what makes it the panel's own card (mcp_state.ORIGINS)
 ORIGIN_HERMES = "ask_hermes"       # ... one a Hermes-mode turn recorded (through the completion bridge)
-ASK_ORIGINS = (ORIGIN, ORIGIN_HERMES)
+ORIGIN_CLI = "ask_cli"             # ... one a cli-mode turn recorded (a local Claude Code or Codex child)
+ASK_ORIGINS = (ORIGIN, ORIGIN_HERMES, ORIGIN_CLI)
 VIA_HERMES = "hermes"              # usage.ai_finish's `via` for a request through the bridge
+VIA_CLI = "cli"                    # a cli turn's audit row (clibrain.record_call), never usage.ai_finish
 MAX_OUTPUT_TOKENS = 1024           # the most a request asks the model to write (max_tokens; OpenAI: max_completion_tokens)
 WAIT_STEP = 0.2                    # seconds between two looks while another turn's request is out
 DB_STEP = 0.05                     # seconds between two tries of a turn's write while another writer holds the database
@@ -126,7 +134,9 @@ MAX_CONTENT = 4000                 # characters per message
 EST_IN, EST_OUT = 3.0, 15.0        # $ per million tokens when the endpoint reports no cost (a mid-range model's price)
 PRESET_NAMES = {"openrouter": "OpenRouter", "openai": "OpenAI", "local": "Local", "custom": "Custom"}
 TOOL_TITLES = {"finance_set_cap": "Set a budget cap", "finance_set_category": "File a transaction",
-               "finance_add_rule": "Add a rule", "finance_track_bill": "Track a bill", "finance_sync": "Ask banks for fresh data"}
+               "finance_add_rule": "Add a rule", "finance_track_bill": "Track a bill", "finance_sync": "Ask banks for fresh data",
+               "finance_create_category": "Add a category", "finance_update_category": "Change a category",
+               "finance_delete_category": "Delete a category"}
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 LATE = "Ask took too long to answer (over a minute). Try again."
 # what _lookup's child process runs: getaddrinfo's answer for argv[1]:argv[2] as JSON, [family, type, proto, address] each
@@ -167,10 +177,13 @@ def _turn_slot(app):
 
 def brain(conn) -> dict[str, Any]:
     """What the header chip says and where a turn goes."""
-    p = prefs.get_many(conn, ["ai.mode", "ai.preset", "ai.base_url", "ai.model", "ai.monthly_cap"])
+    p = prefs.get_many(conn, ["ai.mode", "ai.preset", "ai.base_url", "ai.model", "ai.monthly_cap", "ai.cli"])
     mode = p["ai.mode"]
     if mode == "hermes":   # Hermes's own model (its choice, never named here), under the same spend cap
         return {"mode": mode, "label": "via Hermes", "cap": p["ai.monthly_cap"]}
+    if mode == "cli":      # a local CLI's own plan pays; the monthly cap doesn't apply
+        return {"mode": mode, "label": f"via {clibrain.CLIS[p['ai.cli']]['name']}", "cli": p["ai.cli"], "model": None,
+                "cap": p["ai.monthly_cap"]}
     if mode == "api":
         model = p["ai.model"]
         name = PRESET_NAMES.get(p["ai.preset"], "API")
@@ -188,6 +201,10 @@ def state(app, conn) -> dict[str, Any]:
         out.update(cap=b["cap"], spent=round(spent, 2), paused=spent >= b["cap"])
     if b["mode"] == "api":
         out.update(key_set=bool(secretstore.status()["ai_key"]["set"]), model=b["model"])
+    if b["mode"] == "cli":
+        _exe, why = clibrain.ready(conn, b["cli"])
+        out.update(cli_ready=not why,
+                   cli_note=None if not why else clibrain.line(why, name=clibrain.CLIS[b["cli"]]["name"]))
     return out
 
 
@@ -437,8 +454,20 @@ def _stats(reads: list[tuple[str, Any]], reply: str) -> list[dict[str, Any]]:
 
 # --- approval cards --------------------------------------------------------------------------------------------------
 
-def _usd(x: Any) -> str:
-    return money(x, none="no cap")
+def _currency_of(text: str) -> str | None:
+    """The currency a summary's amounts are written in (the display currency): a symbol, or a code before a number."""
+    if "€" in text:
+        return "EUR"
+    if "£" in text:
+        return "GBP"
+    if "$" in text:
+        return "USD"
+    m = re.search(r"\b([A-Z]{3}) [\d,]", text or "")
+    return m.group(1) if m else None
+
+
+def _usd(x: Any, text: str = "") -> str:
+    return money(x, none="no cap", currency=_currency_of(text))
 
 
 def _title(action: dict[str, Any]) -> str:
@@ -449,7 +478,7 @@ def _title(action: dict[str, Any]) -> str:
         if a.get("monthly_cap") is None:
             return f"Clear the {a['category']} cap?"
         verb = "Raise" if was is not None and a["monthly_cap"] > was else "Lower" if was is not None and a["monthly_cap"] < was else "Set"
-        return f"{verb} {a['category']} cap to {_usd(a['monthly_cap'])}?"
+        return f"{verb} {a['category']} cap to {_usd(a['monthly_cap'], action['summary'])}?"
     if tool == "finance_set_category":
         return f"File it under {a['category']}?"
     if tool == "finance_add_rule":
@@ -457,6 +486,22 @@ def _title(action: dict[str, Any]) -> str:
     if tool == "finance_track_bill":
         return {"track": f"Track {a['merchant']} as a bill?", "update": f"Change the {a['merchant']} bill?",
                 "stop": f"Stop tracking {a['merchant']}?"}.get(a.get("action"), f"Change {a['merchant']}?")
+    if tool == "finance_create_category":
+        return f"Add {a['name']} as a category?"
+    if tool == "finance_update_category":
+        if a.get("rename"):
+            return f"Rename {a['name']} to {a['rename']}?"
+        if a.get("hidden") is True:
+            return f"Hide {a['name']}?"
+        if a.get("hidden") is False:
+            return f"Show {a['name']} again?"
+        if a.get("icon"):
+            return f"Change the {a['name']} icon to {a['icon'].replace('-', ' ')}?"
+        if a.get("group"):
+            return f"Move {a['name']} to {a['group']}?"
+        return f"Change {a['name']}?"
+    if tool == "finance_delete_category":
+        return f"Move {a['name']} into {a['move_to']} and delete it?"
     if tool == "finance_sync":   # (a plain sync is a card only in a Hermes turn: bridge.sync_summary)
         return "Ask your banks for fresh data?" if a.get("refresh") else "Sync your banks now?"
     return TOOL_TITLES.get(tool, tool)
@@ -478,7 +523,8 @@ def _result_line(action: dict[str, Any]) -> str | None:
     if tool == "finance_set_cap":
         cat = r.get("category", a["category"])
         cap = r.get("monthly_cap", a.get("monthly_cap"))
-        return f"Saved: {cat} cap is now {_usd(cap)}" if cap is not None else f"Saved: {cat} has no cap now"
+        return (f"Saved: {cat} cap is now {_usd(cap, action['summary'])}" if cap is not None
+                else f"Saved: {cat} has no cap now")
     if tool == "finance_set_category":
         return f"Saved: filed under {r.get('category', a['category'])}"
     if tool == "finance_add_rule":
@@ -488,6 +534,12 @@ def _result_line(action: dict[str, Any]) -> str | None:
         return f"Saved: {r.get('summary') or 'the bill is updated'}"
     if tool == "finance_sync":
         return "Done: your banks were asked for fresh data"
+    if tool == "finance_create_category":
+        return f"Saved: added the {r.get('name', a['name'])} category"
+    if tool == "finance_update_category":
+        return f"Saved: {r.get('name', a['name'])} updated"
+    if tool == "finance_delete_category":
+        return f"Saved: moved its rows to {r.get('name', a['move_to'])} and deleted {r.get('deleted', a['name'])}"
     return "Saved"
 
 
@@ -534,12 +586,14 @@ def _history(data: Any) -> list[dict[str, str]]:
 def _system(today: date, mode: str) -> str:
     base = (f"You are Ask, inside the owner's own personal finance app. Today is {today.isoformat()}. "
             + tooldefs.instructions() + " Answer in plain, short sentences (no tables, no markdown headings), with the "
-            "exact figures the data gives, in dollars. Never guess a number.")
-    if mode == "hermes":
+            "exact figures the data gives, each in its own currency. Never convert, never add different currencies, "
+            "and never guess a number.")
+    if mode in ("hermes", "cli"):   # (a CLI child answers with the bridge's decision contract, never tool calls)
         return base + (" Look things up before answering. Suggest at most one change per answer, only when it clearly "
                        "helps.\n\n" + bridge.contract())
     return base + (" Use the finance_* tools to look things up before answering. A write tool (finance_set_cap, "
-                   "finance_set_category, finance_add_rule, finance_track_bill) changes nothing when you call it: the owner "
+                   "finance_set_category, finance_add_rule, finance_track_bill, finance_create_category, "
+                   "finance_update_category, finance_delete_category) changes nothing when you call it: the owner "
                    "sees an approval card and decides. Suggest at most one change per answer, only when it clearly helps, "
                    "and never say a change was made.")
 
@@ -832,6 +886,8 @@ def turn(app, conn, data: Any, owner: str | None = None) -> dict[str, Any]:
         deadline = time.monotonic() + TIMEOUT
         if b["mode"] == "hermes":
             return _hermes_turn(conn, b, history, path, today, deadline, owner)
+        if b["mode"] == "cli":
+            return _cli_turn(conn, b, history, path, today, deadline, owner)
         return _api_turn(conn, b, history, path, today, deadline, owner)
     finally:
         slots.release()
@@ -854,18 +910,18 @@ def _bridge_cost(reply: bridge.Reply, req: dict[str, Any], failed: bool = False)
 
 
 def _propose(path: Path, today: date, name: str, args: dict[str, Any], turn_id: str,
-             deadline: float, owner: str | None = None) -> tuple[str, dict[str, Any] | None]:
-    """A Hermes turn's proposed change: (what the model gets back, the card or None). Its plan and card text are made
-    in a child (_isolated), as in the api mode; the card is recorded here, held by the turn, origin ask_hermes. A
-    finance_sync is a card too, even one an api turn would run without asking: a Hermes turn never syncs itself (a sync
-    can't be cut short). A change that can't be made: its error, and no card."""
+             deadline: float, owner: str | None = None, origin: str = ORIGIN_HERMES) -> tuple[str, dict[str, Any] | None]:
+    """A Hermes or CLI turn's proposed change: (what the model gets back, the card or None). Its plan and card text are
+    made in a child (_isolated), as in the api mode; the card is recorded here, held by the turn, origin ask_hermes or
+    ask_cli. A finance_sync is a card too, even one an api turn would run without asking: these turns never sync
+    themselves (a sync can't be cut short). A change that can't be made: its error, and no card."""
     try:
         if tooldefs.tool(name).write:
             checked, summary = _isolated("describe", name, args, path, today, deadline)
         else:
             checked, summary = _isolated("approval", name, args, path, today, deadline)
             summary = summary or bridge.sync_summary(checked)
-        action = _record(path, name, checked, summary, turn_id, deadline, origin=ORIGIN_HERMES, owner=owner)
+        action = _record(path, name, checked, summary, turn_id, deadline, origin=origin, owner=owner)
     except ToolOutputTooLarge:
         return tooldefs.render({"error": "the proposed change was too large to validate safely"}), None
     except tooldefs.ToolError as e:
@@ -942,6 +998,82 @@ def _hermes_turn(conn, b, history, path, today, deadline, owner: str | None = No
                         reads.append((d.tool, payload))
             else:
                 result, action = _propose(path, today, d.tool, d.arguments, turn_id, deadline, owner)
+                if action is not None:
+                    actions.append(action)
+            steps.append((d, bridge.bounded(result)))
+            _in_time(deadline)
+        raise ChatError(f"That took more than {MAX_ROUNDS} look-ups, so Ask stopped. Try a narrower question.")
+    except Exception:   # a ChatError or anything unexpected: no card is left waiting from a turn never answered
+        if actions:
+            _withdraw(path, turn_id, settle)
+        raise
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {busy}")
+
+
+def _cli_turn(conn, b, history, path, today, deadline, owner: str | None = None) -> dict[str, Any]:
+    """A cli-mode turn: up to MAX_ROUNDS requests through a local Claude Code or Codex child (clibrain.complete), each
+    answered with one decision the app checks, by the turn's deadline. No reservation and no ai_finish: the CLI's own
+    plan pays, so ai.monthly_cap doesn't apply; each request leaves one api_calls row (clibrain.record_call). The same
+    read, card and publication steps as _hermes_turn."""
+    cli_id = b["cli"]
+    name = clibrain.CLIS[cli_id]["name"]
+    exe, why = clibrain.ready(conn, cli_id)          # nothing sent, nothing recorded when it isn't usable
+    if why:
+        raise ChatError(clibrain.line(why, name=name), clibrain.ERRORS[why][1])
+    version = (clibrain.check_state(conn).get(cli_id) or {}).get("version")   # what ready just matched
+    instructions = _system(today, "cli")
+    reads: list[tuple[str, Any]] = []
+    actions: list[dict[str, Any]] = []
+    steps: list[tuple[bridge.Decision, str]] = []
+    turn_id = secrets.token_hex(8)
+    settle = deadline + SETTLE
+    busy = conn.execute("PRAGMA busy_timeout").fetchone()[0]   # (conn is the route's: given back as it was)
+    conn.execute("PRAGMA busy_timeout = 0")                    # _write waits for the lock, by the clock
+    try:
+        for _ in range(MAX_ROUNDS):
+            try:
+                req = clibrain.request(cli_id, instructions, history, steps, MAX_OUTPUT_TOKENS)
+            except clibrain.CliError as e:
+                raise ChatError(str(e), e.status) from None
+            _in_time(deadline)
+            try:
+                reply = clibrain.complete(cli_id, exe, req, deadline)
+            except clibrain.CliError as e:
+                _write(settle, conn, clibrain.record_call, cli_id, version, None,
+                       "timeout" if e.code == "timeout" else "error", e.status, day=today)
+                raise ChatError(str(e), e.status) from None
+            _write(settle, conn, clibrain.record_call, cli_id, version, reply.model, "ok", 200,
+                   reply.tokens_in, reply.tokens_out, reply.cost_usd, day=today,
+                   list_usd=reply.list_usd)   # a list price, never this app's spend
+            try:
+                d = bridge.decision(reply.text)   # the app's own check: the CLI's text is data until it passes
+            except bridge.Invalid:
+                raise ChatError(clibrain.line("garbled", name=name), clibrain.ERRORS["garbled"][1]) from None
+            if d.kind == "answer":
+                out = {"reply": d.text, "sources": list(dict.fromkeys(source_line(n, p) for n, p in reads)),
+                       "stats": _stats(reads, d.text), "brain": b["label"]}
+                if actions:
+                    out["cards"] = _publish(path, turn_id, len(actions), deadline)   # the last step, in time or not at all
+                else:
+                    _in_time(deadline)
+                    out["cards"] = []
+                return out
+            _in_time(deadline)                  # no step starts after the deadline
+            if d.kind == "read":
+                try:
+                    payload = _isolated("read", d.tool, d.arguments, path, today, deadline)
+                except ToolOutputTooLarge:
+                    result = tooldefs.render({"error": "the result is too large to send; ask a narrower question"})
+                except tooldefs.ToolError as e:
+                    result = tooldefs.render({"error": redact.scrub(str(e))})
+                else:
+                    result = tooldefs.render(payload)
+                    if bridge.bounded(result) == result:   # a source only when the model got all of it
+                        reads.append((d.tool, payload))
+            else:
+                result, action = _propose(path, today, d.tool, d.arguments, turn_id, deadline, owner,
+                                          origin=ORIGIN_CLI)
                 if action is not None:
                     actions.append(action)
             steps.append((d, bridge.bounded(result)))
@@ -1044,8 +1176,8 @@ def _ids(q: str) -> list[int]:
 
 def _own(conn, action_id: Any, owner: str | None = None) -> dict[str, Any] | None:
     """Ask's pending action #action_id (any status), or None: the panel only reads and decides the cards its own turns
-    recorded (origin ask or ask_hermes, set by _record: never what a client calls itself) and that turn has answered
-    (not held); another agent's actions are decided in Settings."""
+    recorded (origin ask, ask_hermes or ask_cli, set by _record: never what a client calls itself) and that turn has
+    answered (not held); another agent's actions are decided in Settings."""
     if isinstance(action_id, bool) or not isinstance(action_id, int):
         return None
     found = mcp_state.pending(conn, action_id)

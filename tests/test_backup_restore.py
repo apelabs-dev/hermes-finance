@@ -22,6 +22,7 @@ from hermes_finance import auth, backup, db, prefs
 from hermes_finance.web import App
 
 import gate_dbs
+from offline_env import OFFLINE_SWITCHES
 
 ROOT = Path(__file__).resolve().parents[1]
 TODAY = date(2026, 9, 25)
@@ -34,8 +35,7 @@ def cli_env(tmp: Path, data: Path) -> dict:
     (tmp / "home").mkdir(exist_ok=True)
     return {"HOME": str(tmp / "home"), "PATH": "/usr/bin:/bin", "PYTHONPATH": str(ROOT / "src"),
             "HERMES_ENV_FILE": str(tmp / "no-env-file"), "FINANCE_SECRETS_FILE": str(tmp / "no-secrets-file"),
-            "HERMES_ALPACA_KEY_FILE": str(tmp / "no-alpaca-file"), "HERMES_PLAID": "off", "HERMES_ALPACA": "off",
-            "HERMES_CHROME_DEVTOOLS": "off", "FINANCE_DATA_DIR": str(data), "TZ": "UTC"}
+            "HERMES_ALPACA_KEY_FILE": str(tmp / "no-alpaca-file"), **OFFLINE_SWITCHES, "FINANCE_DATA_DIR": str(data), "TZ": "UTC"}
 
 
 def finance(tmp: Path, data: Path, *args: str) -> subprocess.CompletedProcess:

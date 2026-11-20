@@ -33,7 +33,7 @@ from pathlib import PurePath
 from typing import Any
 
 from . import classify, importfile, manual
-from .db import IMPORT_ITEM, now
+from .db import IMPORT_ITEM, display_currency, now
 
 TARGET_KINDS = ("bank", "credit_card")
 MAX_ROWS = 20_000
@@ -60,7 +60,20 @@ class ImportRefused(ValueError):
         self.field = field
 
 
-def _parse(filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
+def _chosen_currency(conn: sqlite3.Connection, data: dict[str, Any]) -> str:
+    """The picker's default: the target manual account's currency when one is chosen, else the display currency."""
+    chosen = data.get("targets") or {}
+    if isinstance(chosen, dict):
+        for choice in chosen.values():
+            if isinstance(choice, dict) and isinstance(choice.get("account_id"), int):
+                row = conn.execute("SELECT currency FROM manual_accounts WHERE id = ?",
+                                   (choice["account_id"],)).fetchone()
+                if row is not None and (row["currency"] or "").strip():
+                    return row["currency"].strip().upper()
+    return display_currency(conn)
+
+
+def _parse(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
     """The file read with the page's choices (a CSV's column mapping, date format and sign; guesses when absent)."""
     try:
         kind = importfile.sniff(filename, raw)
@@ -71,6 +84,10 @@ def _parse(filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict
                 raise ImportRefused("mapping must name the columns", "mapping")
             mapping = {k: (int(v) if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < len(pv.headers) else None)
                        for k, v in mapping.items() if k in pv.guess}
+            currency = data.get("currency") or _chosen_currency(conn, data)
+            if not isinstance(currency, str) or not re.fullmatch(r"[A-Za-z0-9]{1,12}", currency.strip()):
+                raise ImportRefused("currency must be a 3-letter code such as USD or EUR", "currency")
+            currency = currency.strip().upper()
             date_format = data.get("date_format") or pv.date_format
             if date_format not in (pv.date_formats or [date_format]):
                 raise ImportRefused("that date format doesn't read every date in the file", "date_format")
@@ -79,22 +96,25 @@ def _parse(filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict
                 raise ImportRefused("sign must be minus_out, minus_in or split", "sign")
             if not date_format:
                 raise ImportRefused("The date column couldn't be read: pick the column with the dates.", "date")
-            rows = importfile.csv_rows(raw, mapping, date_format, sign, today=today)
+            rows = importfile.csv_rows(raw, mapping, date_format, sign, today=today, currency=currency)
             label = _stem(filename)
             groups: dict[str, list] = defaultdict(list)
             for r in rows:
                 groups[r.account or label].append(r)
             out_groups = [{"label": k, "kind": "bank", "subtype": None, "balance": None, "balance_date": None,
-                           "institution": None, "rows": v, "card": False} for k, v in groups.items()]
+                           "institution": None, "rows": v, "card": False, "currency": currency}
+                          for k, v in groups.items()]
             info = {"headers": pv.headers, "sample": pv.sample, "mapping": mapping, "guess": pv.guess,
-                    "date_format": date_format, "date_formats": pv.date_formats, "sign": sign, "delimiter": pv.delimiter}
+                    "date_format": date_format, "date_formats": pv.date_formats, "sign": sign, "delimiter": pv.delimiter,
+                    "currency": currency, "currencies": pv.currencies}
         else:
             stmts = importfile.ofx_statements(raw)
             out_groups = [{"label": s.account_label, "kind": s.kind, "subtype": s.subtype, "balance": s.balance,
                            "balance_date": s.balance_date, "institution": getattr(s, "institution", None),
-                           "rows": s.rows, "card": s.card}
+                           "rows": s.rows, "card": s.card, "currency": s.currency}
                           for s in stmts]
-            info = {}
+            info = {"currency": next((s.currency for s in stmts if s.currency), display_currency(conn)),
+                    "currencies": sorted({r.currency for s in stmts for r in s.rows if r.currency})}
     except importfile.ImportFileError as e:
         raise ImportRefused(str(e), getattr(e, "field", None) or "file") from None
     total = sum(len(g["rows"]) for g in out_groups)
@@ -112,9 +132,10 @@ def _stem(filename: str) -> str:
 
 def targets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """The manual accounts an import may go into: bank accounts and cards, not archived."""
-    return [{"id": r["id"], "name": r["name"], "kind": r["kind"], "institution": r["institution"]}
-            for r in conn.execute("SELECT id, name, kind, institution FROM manual_accounts WHERE archived_at IS NULL "
-                                  "AND kind IN ('bank', 'credit_card') ORDER BY name COLLATE NOCASE")]
+    return [{"id": r["id"], "name": r["name"], "kind": r["kind"], "institution": r["institution"],
+             "currency": r["currency"]}
+            for r in conn.execute("SELECT id, name, kind, institution, currency FROM manual_accounts WHERE archived_at "
+                                  "IS NULL AND kind IN ('bank', 'credit_card') ORDER BY name COLLATE NOCASE")]
 
 
 def _key(row) -> tuple[str, float, str]:
@@ -172,7 +193,7 @@ def _target(conn: sqlite3.Connection, choice: Any, group: dict[str, Any]) -> dic
 
 def preview(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
     """What the import would do with these choices, changing nothing."""
-    p = _parse(filename, raw, data, today)
+    p = _parse(conn, filename, raw, data, today)
     chosen = data.get("targets") or {}
     groups = []
     for g in p["groups"]:
@@ -181,7 +202,8 @@ def preview(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str,
         dates = sorted(r.date for r in g["rows"])
         groups.append({"label": g["label"], "kind": g["kind"], "subtype": g["subtype"], "rows": len(g["rows"]),
                        "new": len(new), "skipped": skipped, "first": dates[0], "last": dates[-1], "target": t,
-                       "balance": g["balance"], "balance_date": g["balance_date"], "institution": g["institution"]})
+                       "balance": g["balance"], "balance_date": g["balance_date"], "institution": g["institution"],
+                       "currency": g["currency"]})
     rows = [r for g in p["groups"] for r in g["rows"]]
     dates = sorted(r.date for r in rows)
     out = {k: v for k, v in p.items() if k != "groups"}
@@ -195,7 +217,8 @@ def _new_account(conn: sqlite3.Connection, spec: dict[str, Any], group: dict[str
     data = {"kind": kind, "name": spec.get("name") or group["label"],
             "institution": spec.get("institution") or group["institution"] or "Imported file",
             "balance": abs(balance) if isinstance(balance, (int, float)) and not isinstance(balance, bool) else balance,
-            "balance_as_of": spec.get("balance_as_of") or group["balance_date"] or today.isoformat()}
+            "balance_as_of": spec.get("balance_as_of") or group["balance_date"] or today.isoformat(),
+            "currency": spec.get("currency") or group.get("currency") or display_currency(conn)}
     if kind == "bank":
         data["subtype"] = spec.get("subtype") or group["subtype"] or "checking"
     else:
@@ -239,7 +262,7 @@ def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, 
     """Import the file with these choices: new accounts first, then every new row (one transaction; an OFX money-in row
     with its TRNTYPE's income code, or a card payment's transfer code, _pfc_hint), then the rules and the
     Plaid-category defaults (classify.apply). Returns what was added and skipped, per account."""
-    p = _parse(filename, raw, data, today)
+    p = _parse(conn, filename, raw, data, today)
     chosen = data.get("targets") or {}
     plan = [(g, _target(conn, chosen.get(g["label"]) if isinstance(chosen, dict) else None, g)) for g in p["groups"]]
     for g, t in plan:  # everything checked before anything is written
@@ -250,7 +273,9 @@ def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, 
     for g, t in plan:
         account_id = t.get("account_id") or _new_account(conn, t["new"], g, today)
         new, skipped = _split(conn, t.get("account_id"), g["rows"])
-        name = conn.execute("SELECT name FROM manual_accounts WHERE id = ?", (account_id,)).fetchone()["name"]
+        account = conn.execute("SELECT name, currency FROM manual_accounts WHERE id = ?", (account_id,)).fetchone()
+        name = account["name"]
+        account_currency = (account["currency"] or "").strip().upper() or display_currency(conn)
         with conn:
             cur = conn.execute("INSERT INTO imports (created_at, filename, kind, manual_account_id, rows_new, rows_skipped) "
                                "VALUES (?, ?, ?, ?, ?, ?)", (ts, filename[:200], p["kind"], account_id, len(new), skipped))
@@ -264,8 +289,10 @@ def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, 
                     "pfc_primary, pfc_detailed, raw_json, removed, first_seen_at, updated_at, source, import_id, fitid) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, ?, 'import', ?, ?)",
                     (_tid(account_id, row, seen[k]), f"manual:{account_id}", IMPORT_ITEM, row.date, row.description[:300],
-                     round(row.amount, 2), None, *_pfc_hint(row, g["card"]), _raw_json(filename, row), ts, ts, import_id, row.fitid))
-        results.append({"label": g["label"], "account": {"id": account_id, "name": name}, "new": len(new), "skipped": skipped})
+                     round(row.amount, 2), (row.currency or g.get("currency") or account_currency).strip().upper(),
+                     *_pfc_hint(row, g["card"]), _raw_json(filename, row), ts, ts, import_id, row.fitid))
+        results.append({"label": g["label"], "account": {"id": account_id, "name": name, "currency": account_currency},
+                        "new": len(new), "skipped": skipped})
     classify.apply(conn)
     dates = sorted(r.date for g, _ in plan for r in g["rows"])
     return {"filename": filename, "kind": p["kind"], "new": sum(r["new"] for r in results),

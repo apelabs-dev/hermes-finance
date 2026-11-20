@@ -1,0 +1,156 @@
+{
+  "note": "Final split of the public statement corpus. Twelve of the 24 files came from outside the card's R2 source list. The split was assigned by hand with the research table's per-file descriptions (pages, type, PII status) in view, to maximise country spread in the held-out set. v1 (commit 9afde05) was written and committed before any file was opened; the eight third-party converter-site samples then read as real customers' statements and were dropped. The eight replacements were fetched afterwards and only ever entered the tune set. Held-out ids are unchanged from v1. ids and sha256 only; the PDFs are never committed.",
+  "counts": {
+    "total": 24,
+    "tune": 16,
+    "held": 8,
+    "countries": 7,
+    "held_countries": 6
+  },
+  "files": [
+    {
+      "id": "c01",
+      "set": "tune",
+      "sha256": "f1aa9c97ef0a64fec8fac14f93153d10d1e10c305287d8400db2c2288d14fe67",
+      "bytes": 840338
+    },
+    {
+      "id": "c04",
+      "set": "tune",
+      "sha256": "738d015a58c7d4fab0bcb84bc2ecb496f7f4a954c1f51bcd7d9842e97526640e",
+      "bytes": 5183
+    },
+    {
+      "id": "c05",
+      "set": "tune",
+      "sha256": "0217d5e0aad66456a02cfb8733cd7d347d5c17f01c4cdb890ff0d6baec46319f",
+      "bytes": 3521
+    },
+    {
+      "id": "c07",
+      "set": "tune",
+      "sha256": "3e2db587017c4c3a8024559fb1a0be661b04943f11ffa31d80666ddd89ee6deb",
+      "bytes": 966843
+    },
+    {
+      "id": "c09",
+      "set": "tune",
+      "sha256": "2398ef7f3e12409156ad756cc7d43be2e240208c22825cb5a42de54404b78fa1",
+      "bytes": 146039
+    },
+    {
+      "id": "c11",
+      "set": "tune",
+      "sha256": "a2b4d495871179f7c825ed8ca343be816f040a86de6cfc669eed34a013763a31",
+      "bytes": 299608
+    },
+    {
+      "id": "c14",
+      "set": "tune",
+      "sha256": "36a166a5a13e6d6d86b391233023f83f6f7b4d268a4a23fbae01cb81290e3b96",
+      "bytes": 1180661
+    },
+    {
+      "id": "c29",
+      "set": "tune",
+      "sha256": "7c2b1ac19b3327ae46ced04f6f13930112f5df902884ef45bf08c34aba8fd962",
+      "bytes": 1261612
+    },
+    {
+      "id": "c31",
+      "set": "tune",
+      "sha256": "d937748a73297b0df1b3bcf75196a43741cf1ab21afc9e95f4a4f91c55ff7851",
+      "bytes": 166715
+    },
+    {
+      "id": "c32",
+      "set": "tune",
+      "sha256": "c4c1b5fa5e5fd606b1205f034b7c18793f199b8297ba0a140d10f09007a63790",
+      "bytes": 254903
+    },
+    {
+      "id": "c33",
+      "set": "tune",
+      "sha256": "57fc5d7df55de1a83b92d872e42f66eca30bf3c8b9b89d3ed396d5bd44baa2c0",
+      "bytes": 169780
+    },
+    {
+      "id": "c34",
+      "set": "tune",
+      "sha256": "324c80d2fbaae8b21cb98bde40aee6cdadcd5e90e69bfd13ed44eee0529e1079",
+      "bytes": 93791
+    },
+    {
+      "id": "c35",
+      "set": "tune",
+      "sha256": "ef46d84a4804cc7cc635ccaa37254a7d3b9e8069bb365504e13dc8cf5158b1af",
+      "bytes": 2911
+    },
+    {
+      "id": "c36",
+      "set": "tune",
+      "sha256": "75511bcf91b9e1aa62c77363fb341cf8777fd0c40f44075c1ba46d0e7229145e",
+      "bytes": 498093
+    },
+    {
+      "id": "c38",
+      "set": "tune",
+      "sha256": "9c1d4bfdf1a800a54dca60da6dd1d33ae8ff18460f522d3d702d405ae50fc75c",
+      "bytes": 592778
+    },
+    {
+      "id": "c39",
+      "set": "tune",
+      "sha256": "9f9a5b2bc92ec9dace5f355afd9cd73f4cda46a309b1da12c4578caafae83f0f",
+      "bytes": 3320208
+    },
+    {
+      "id": "c02",
+      "set": "held",
+      "sha256": "53cb0d6fcea0691c567f874309df843df7d7386842a5443907825fc3ddeb235c",
+      "bytes": 55071
+    },
+    {
+      "id": "c03",
+      "set": "held",
+      "sha256": "c4255bc5d9b30ac9d2edff29bb58cb4c538bd56d8ab2d91878ea2589472431d0",
+      "bytes": 1484418
+    },
+    {
+      "id": "c06",
+      "set": "held",
+      "sha256": "59bf7377a6ade965a270a4486f4c40be27c6c3d58af2bc9849149a1ea05ece4f",
+      "bytes": 69323
+    },
+    {
+      "id": "c08",
+      "set": "held",
+      "sha256": "34016701ac42243b0f38ea4dd9a6acace08266522879b36f476228ff57681224",
+      "bytes": 66389
+    },
+    {
+      "id": "c10",
+      "set": "held",
+      "sha256": "40c750f008343fac52f8c7d3b10832912087596c0a8cea654704abda5efb565b",
+      "bytes": 143664
+    },
+    {
+      "id": "c12",
+      "set": "held",
+      "sha256": "b403783543f0128d687bbe5d8f12eb01de000cad95e6b0a9d42155e3a592f707",
+      "bytes": 102902
+    },
+    {
+      "id": "c13",
+      "set": "held",
+      "sha256": "f9f4394d5a903abfd849cc644b410fb047b0b2615038516faae695ce4f190e22",
+      "bytes": 1165220
+    },
+    {
+      "id": "c17",
+      "set": "held",
+      "sha256": "b6d9be27615d9aa96ef8957c53af3cbdd50c3022cf8b5d61d3f483e91f732479",
+      "bytes": 6158
+    }
+  ]
+}

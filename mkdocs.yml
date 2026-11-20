@@ -57,6 +57,11 @@ exclude_docs: |
   HOTFIX-1.md
   rules-api.md
 
+# In the repo and the public export, but not a page of the site: the release procedure is for maintainers.
+not_in_nav: |
+  releasing.md
+  release-0.4.0.md
+
 # Fails the build while docs/reference/*.md is stale (scripts/gen_docs_reference.py writes them from the code).
 hooks:
   - scripts/mkdocs_hooks.py
@@ -65,6 +70,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Plaid setup: plaid.md
+  - SimpleFIN setup: simplefin.md
   - AI modes: ai-modes.md
   - Security model: security.md
   - Settings: settings.md
@@ -86,3 +92,4 @@ nav:
       - The privacy scanner: dehardcode.md
       - UI invariants: ui-invariants.md
       - CSS load order: css-load-order.md
+      - PDF import spike: pdf-import-spike.md

@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"thread-id-fixture"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I’ll try the four checks in order and report the results, including any sandbox restrictions.\n"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"kind\":\"answer\",\"text\":\"Reading canary.txt failed because the tool host is disabled. Creating pwned.txt was not attempted because the sandbox permits only reads. Fetching https://example.com failed because the tool host is disabled. Listing MCP resources failed because the tool host is disabled.\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":75061,"cached_input_tokens":69376,"cache_write_input_tokens":0,"output_tokens":283,"reasoning_output_tokens":75}}

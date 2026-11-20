@@ -13,7 +13,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import ai, api, classify, config, db, insights, logos, manual, photos, reads, redact, report, syncnow, usage, valuation
+from . import ai, api, classify, config, db, insights, logos, manual, photos, reads, redact, report, simplefin, simplefin_sync, syncnow, usage, valuation
 from .plaid import PlaidClient
 from .sync import sync_all
 
@@ -114,36 +114,148 @@ def cmd_serve(args) -> int:
 
 
 def cmd_sync(args) -> int:
-    client = _client()
+    try:
+        client = _client()
+    except config.ConfigError:
+        client = None                     # SimpleFIN alone needs no Plaid keys
     conn = db.connect()
     _load_known_tokens(conn)
-    if args.item and not conn.execute("SELECT 1 FROM items WHERE item_id=?", (args.item,)).fetchone():
-        emit(f"unknown item {args.item}", sys.stderr)
-        return 2
+    plaid_item = True
+    if args.item:
+        row = conn.execute("SELECT provider FROM items WHERE item_id=?", (args.item,)).fetchone()
+        if row is None:
+            emit(f"unknown item {args.item}", sys.stderr)
+            return 2
+        plaid_item = row[0] == "plaid"
     before = syncnow.balances(conn)
-    results = sync_all(conn, client, args.item)
-    if not results:
+    results = sync_all(conn, client, args.item) if client is not None and plaid_item else []
+    sf = None
+    if not args.item or not plaid_item:
+        if simplefin_sync.connected(conn):
+            try:
+                sf = simplefin_sync.sync(conn, "daily" if args.scheduled else "manual")
+            except Exception as e:      # SimpleFIN never stops a Plaid sync
+                log.exception("SimpleFIN sync failed")
+                sf = {"ok": False, "connected": True, "state": "error",
+                      "message": f"SimpleFIN sync failed ({type(e).__name__}). Nothing changed."}
+    if not results and not (sf and sf.get("connected")):
         emit("No active Items to sync. Connect a bank with `finance serve`.")
         return 0
-    if any(r.ok for r in results):  # TASK-22e: a bank still drawn with initials is looked up again, once a day
+    if any(r.ok for r in results) and client is not None:
+        # TASK-22e: a bank still drawn with initials is looked up again, once a day
         try:
             logos.refresh_institutions(conn, client, missing_only=True)
         except Exception as e:  # never fails the sync
             log.warning("bank logo retry failed: %s", e)
+    try:   # the vendor logos the Add account chooser shows; no connection is needed for them
+        logos.ensure_vendor_logos(conn, background=False)
+    except Exception as e:  # never fails the sync
+        log.warning("vendor logo retry failed: %s", e)
     fail = syncnow.failure(results)
-    if fail and fail["unreachable"]:   # TASK-22c: as the page's toast: one line, not an error per bank
+    if fail and fail["unreachable"] and not (sf and sf.get("connected") and sf.get("ok")):
         emit(syncnow.UNREACHABLE)
         return 1
     for r in results:
         emit(r.summary())
-    ok = sum(r.ok for r in results)
-    emit(f"synced {ok}/{len(results)} item(s)")
-    c = syncnow.changes(before, syncnow.balances(conn), results, insights.excluded_accounts(conn))
+    if sf and sf.get("connected"):
+        emit(simplefin_sync.summary_text(sf))
+    total = len(results) + (1 if sf and sf.get("connected") else 0)
+    ok = sum(r.ok for r in results) + (1 if sf and sf.get("connected") and sf.get("ok") else 0)
+    emit(f"synced {ok}/{total} item(s)")
+    c = syncnow.changes(before, syncnow.balances(conn), results, insights.excluded_accounts(conn),
+                            db.display_currency(conn))
     if c["text"]:   # (none when no bank synced)
         emit(syncnow.summary_line(c))   # TASK-22: as the page's toast
     if fail:
         emit(" ".join(fail["lines"]))
+    if sf and sf.get("connected") and not sf.get("ok"):
+        if sf.get("message"):
+            emit(sf["message"])
+        return 1
     return 0 if ok else 1
+
+
+def cmd_simplefin_status(args) -> int:
+    with db.connect() as conn:
+        st = simplefin_sync.status(conn)
+    if args.json:
+        emit_json(st)
+        return 0
+    state = st["state"]
+    line = {"connected": "connected", "needs_confirm": "setup token received; confirm the account types",
+            "needs_retry": "the access link is saved; the first fetch failed, try again",
+            "needs_login": "needs a new login at Bridge", "subscription": "needs an active subscription",
+            "quota": "request budget used up for today", "disconnected": "removed on this computer",
+            "not_connected": "not connected"}.get(state, state)
+    emit(f"SimpleFIN: {line}")
+    if st["connected"]:
+        emit(f"{st['banks']} bank(s) · {st['accounts']} account(s)")
+    emit(f"requests today: {st['requests_today']}/{st['request_limit']} · manual syncs left: {st['manual_left']}"
+         f" of {st['manual_limit']}")
+    if st["coverage_start"] or st["as_of"]:
+        emit(f"coverage: {st['coverage_start'] or 'unknown'} · balances as of {st['as_of'] or 'never'}")
+    if st["duplicate_reviews"]:
+        emit(f"{st['duplicate_reviews']} SimpleFIN/Plaid duplicate(s) need a source pick")
+    emit(f"daily minute: {st['daily_minute']} (schedule the external daily job at that minute)")
+    if st["message"]:
+        emit(st["message"])
+    for e in st["errors"]:
+        if e.get("user"):
+            emit(f"  {e.get('message')}")
+    return 0
+
+
+def _pairs(values, what) -> dict[str, str]:
+    out = {}
+    for value in values or []:
+        key, sep, rest = str(value).partition("=")
+        if not sep or not key or not rest:
+            raise ValueError(f"--{what} expects KEY=VALUE")
+        out[key] = rest
+    return out
+
+
+def cmd_simplefin_claim(args) -> int:
+    with db.connect() as conn:
+        try:
+            got = simplefin_sync.claim(conn, args.token)
+            types = _pairs(args.type, "type")
+            skip = set(args.skip or [])
+            if not types and not skip:
+                emit("Claimed; the access link is saved. This token is spent, so finish the confirm in the app "
+                     "(Settings \u2192 Connections \u2192 SimpleFIN \u2192 Finish setup), or pass the types next time:")
+                for a in got["accounts"]:
+                    emit(f"  {a['key']}  {a['name']}  looks like {a['guess']['type']}")
+                return 2
+            choices = {}
+            for a in got["accounts"]:
+                key = a["key"]
+                if key in skip:
+                    choices[key] = {"add": False}
+                elif key in types:
+                    choices[key] = {"type": types[key]}
+                elif a.get("plaid"):
+                    choices[key] = {"add": False}
+                else:
+                    emit(f"no type for {key} ({a['name']}): pass --type {key}=checking (or --skip {key})",
+                         sys.stderr)
+                    return 2
+            out = simplefin_sync.confirm(conn, choices)
+        except (simplefin_sync.SimpleFinRefused, simplefin.InvalidToken, ValueError) as e:
+            emit(f"error: {e}", sys.stderr)
+            return 2
+        except simplefin.SimpleFinError as e:
+            emit(f"error: {e}", sys.stderr)
+            return 1
+    if args.json:
+        emit_json(out)
+    else:
+        emit(f"SimpleFIN connected: {out['banks']} bank(s) · {out['accounts']} account(s)")
+        emit(f"requests today: {out['requests_today']}/{out['request_limit']} · coverage from "
+             f"{out['coverage_start'] or 'unknown'}")
+        if out["duplicate_reviews"]:
+            emit(f"{out['duplicate_reviews']} SimpleFIN/Plaid duplicate(s) need a source pick in the app")
+    return 0
 
 
 def cmd_status(args) -> int:
@@ -220,7 +332,7 @@ def cmd_unclassified(args) -> int:
     else:
         emit(report.table(["transaction_id", "date", "amount", "name", "merchant_name", "suggested_category",
                            "pfc_confidence"],
-                          [[report.money(r[c]) if c == "amount" else r[c]
+                          [[report.money(r[c], currency=r.get("iso_currency")) if c == "amount" else r[c]
                             for c in ("transaction_id", "date", "amount", "name", "merchant_name",
                                       "suggested_category", "pfc_confidence")] for r in rows], 40))
     return 0
@@ -348,6 +460,7 @@ def _manual_fields(args) -> dict:
 
 
 def _manual_line(m: dict) -> str:
+    cur = m.get("currency")
     extra = []
     if m["kind"] == "loan":
         extra.append(f"{m['paid_pct']:.0f}% paid off" if m["paid_pct"] is not None else "")
@@ -357,8 +470,8 @@ def _manual_line(m: dict) -> str:
         if m["match_pattern"]:
             extra.append(f"matches {m['match_pattern']!r}")
     if m["kind"] == "credit_card" and m.get("approx"):
-        extra.append(f"approx: last set {report.money(m['entered_balance'])} on {m['balance_as_of']}, minus "
-                     f"{report.money(m['matched_total'])} in {m['matched_count']} matched payment(s)")
+        extra.append(f"approx: last set {report.money(m['entered_balance'], currency=cur)} on {m['balance_as_of']}, "
+                     f"minus {report.money(m['matched_total'], currency=cur)} in {m['matched_count']} matched payment(s)")
         if m["match_pattern"]:
             extra.append(f"matches {m['match_pattern']!r}")
         if m.get("nudge"):
@@ -370,7 +483,8 @@ def _manual_line(m: dict) -> str:
     if m["archived_at"]:
         extra.append("archived")
     sub = f" {m['subtype_label']}" if m.get("subtype_label") else ""
-    return (f"#{m['id']:<3} {m['kind']:<15} {m['name']}{sub}  {report.money(m['signed'])}  as of {m['balance_as_of']}"
+    return (f"#{m['id']:<3} {m['kind']:<15} {m['name']}{sub}  {report.money(m['signed'], currency=cur)}  "
+            f"as of {m['balance_as_of']}"
             + "".join(f"  · {x}" for x in extra if x))
 
 
@@ -383,8 +497,9 @@ def _valuation_text(m: dict) -> str:
         text = (f"{est['basis_label']} · {est['source_label']} · {est['date']}" if est
                 else f"no estimate yet ({v['last_error']['message'] if v['last_error'] else v['refresh_note']})")
     else:
-        text = "Your value" + (f" ({est['source_label']} {reads.BASIS_WORDS[est['basis']]} {report.money(est['value'])} "
-                               f"on {est['date']})" if est else "")
+        text = "Your value" + (f" ({est['source_label']} {reads.BASIS_WORDS[est['basis']]} "
+                               f"{report.money(est['value'], currency=m.get('currency'))} on {est['date']})"
+                               if est else "")
     if v["mileage_nudge"]:
         text += "; update mileage for a better estimate"
     if v.get("odometer_hint"):
@@ -395,6 +510,7 @@ def _valuation_text(m: dict) -> str:
 def cmd_manual_list(args) -> int:
     with db.connect() as conn:
         s = manual.summary(conn, date.today(), include_archived=args.archived)
+        cur = db.display_currency(conn)
     if args.json:
         emit_json(s)
         return 0
@@ -403,7 +519,8 @@ def cmd_manual_list(args) -> int:
         return 0
     for m in s["accounts"]:
         emit(_manual_line(m))
-    emit(f"manual assets {report.money(s['assets'])}, liabilities {report.money(s['debts'])}, net {report.money(s['net'])}")
+    emit(f"manual assets {report.money(s['assets'], currency=cur)}, liabilities {report.money(s['debts'], currency=cur)}, "
+         f"net {report.money(s['net'], currency=cur)}")
     return 0
 
 
@@ -459,16 +576,20 @@ def cmd_manual_archive(args) -> int:
 
 
 def _payment_line(p: dict, verb: str) -> str:
+    cur, txn_cur = p.get("loan_currency"), p.get("txn_currency")
     if p.get("kind") == "credit_card":
-        split = f"card payment, {report.money(p['principal'])} off the balance"
+        split = f"card payment, {report.money(p['principal'], currency=cur)} off the balance"
     elif p["apr_set"]:
-        split = f"interest {report.money(p['interest'])} + principal {report.money(p['principal'])}"
+        split = (f"interest {report.money(p['interest'], currency=cur)} + principal "
+                 f"{report.money(p['principal'], currency=cur)}")
     else:
-        split = f"principal {report.money(p['principal'])} (APR not set, whole payment counted as principal)"
+        split = (f"principal {report.money(p['principal'], currency=cur)} "
+                 "(APR not set, whole payment counted as principal)")
     done = "  · PAID OFF" if p["paid_off"] else ""
-    return (f"{verb} {p['transaction_id']}  {p['date']}  {p['name']}  {report.money(p['amount'])} -> "
-            f"#{p['loan_id']} {p['loan']}: {split}; balance {report.money(p['balance_before'])} -> "
-            f"{report.money(p['balance_after'])}{done}")
+    return (f"{verb} {p['transaction_id']}  {p['date']}  {p['name']}  "
+            f"{report.money(p['amount'], currency=txn_cur)} -> "
+            f"#{p['loan_id']} {p['loan']}: {split}; balance {report.money(p['balance_before'], currency=cur)} -> "
+            f"{report.money(p['balance_after'], currency=cur)}{done}")
 
 
 def cmd_match_payments(args) -> int:
@@ -483,7 +604,8 @@ def cmd_match_payments(args) -> int:
             for x in out["suggestions"]:
                 shared = " (connected cards use this label too; their payments are never applied)" \
                     if x["shared_with_connected_cards"] else ""
-                emit(f"#{x['card_id']} {x['card']}: {x['date']} {x['name']} {report.money(x['amount'])} from "
+                emit(f"#{x['card_id']} {x['card']}: {x['date']} {x['name']} "
+                     f"{report.money(x['amount'], currency=x.get('currency'))} from "
                      f"{report.account_name(x['account_name'], x['account_mask']) or 'an account'}"
                      f"{' ••' + x['account_mask'] if x['account_mask'] else ''} pays no "
                      f"connected card{shared}. Suggested pattern: {x['pattern']!r} "
@@ -533,8 +655,10 @@ def cmd_loan_unapply(args) -> int:
             emit(f"error: {e} (nothing was changed)", sys.stderr)
             return 2
     verb = "would unapply" if args.dry_run else "unapplied"
-    emit(f"{verb} {p['transaction_id']} ({report.money(p['amount'])}) from #{p['loan_id']} {p['loan']}: balance "
-         f"{report.money(p['balance_before'])} -> {report.money(p['balance_after'])}")
+    emit(f"{verb} {p['transaction_id']} ({report.money(p['amount'], currency=p.get('txn_currency'))}) from "
+         f"#{p['loan_id']} {p['loan']}: balance "
+         f"{report.money(p['balance_before'], currency=p.get('loan_currency'))} -> "
+         f"{report.money(p['balance_after'], currency=p.get('loan_currency'))}")
     return 0
 
 
@@ -847,6 +971,7 @@ def _bill_write(args, action: str, **kw) -> int:
     from . import bills
     conn = db.connect()
     try:
+        cur = db.display_currency(conn)
         p = bills.plan(conn, _today(), action, merchant=args.merchant, **kw)
         out = bills.apply(conn, p, _today())
     except bills.BillError as e:
@@ -861,8 +986,9 @@ def _bill_write(args, action: str, **kw) -> int:
     b = out["bill"]
     if b:
         acct = reads.account_label(b["last_account"]["name"], b["last_account"]["mask"]) if b["last_account"] else "-"
-        emit(f"{b['merchant']}: {b['cadence_label']}, next expected {b['next_expected']}, {reads.bill_amount_text(b)}, "
-             f"last paid {b['last_date']} {report.money(b['last_amount'])} from {acct}"
+        emit(f"{b['merchant']}: {b['cadence_label']}, next expected {b['next_expected']}, "
+             f"{reads.bill_amount_text(b, cur)}, "
+             f"last paid {b['last_date']} {report.money(b['last_amount'], currency=cur)} from {acct}"
              + (f"; that charge is {b['outlier']} than usual" if b["outlier"] else ""))
     return 0
 
@@ -909,13 +1035,28 @@ def build_parser() -> argparse.ArgumentParser:
                         "FINANCE_ALLOWED_USERS; the first start saves them: Settings -> Access & security)")
     s.set_defaults(func=cmd_serve)
 
-    s = sub.add_parser("sync", help="pull transactions, balances, liabilities, holdings")
+    s = sub.add_parser("sync", help="pull transactions, balances, liabilities, holdings (Plaid and SimpleFIN)")
     s.add_argument("--item", help="only this item_id")
+    s.add_argument("--scheduled", action="store_true",
+                   help="the daily job's run: SimpleFIN's daily request, not one of the six manual syncs")
     s.set_defaults(func=cmd_sync)
 
     s = sub.add_parser("status", help="items, accounts, balances, errors, slots used")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("simplefin", help="SimpleFIN Bridge: connection status, or claim a setup token")
+    ssub = s.add_subparsers(dest="simplefin_command", required=True)
+    st = ssub.add_parser("status", help="connection state, requests today, coverage, duplicates")
+    st.add_argument("--json", action="store_true")
+    st.set_defaults(func=cmd_simplefin_status)
+    cl = ssub.add_parser("claim", help="claim a setup token and confirm account types (writes)")
+    cl.add_argument("token", help="the one-time setup token from SimpleFIN Bridge")
+    cl.add_argument("--type", action="append", metavar="KEY=TYPE",
+                    help="KEY=<checking|savings|credit|loan|investment> for each account to add (repeatable)")
+    cl.add_argument("--skip", action="append", metavar="KEY", help="don't add this account (repeatable)")
+    cl.add_argument("--json", action="store_true")
+    cl.set_defaults(func=cmd_simplefin_claim)
 
     s = sub.add_parser("query", help="read-only SQL against the database")
     s.add_argument("sql")
@@ -1075,6 +1216,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_mcp_command(sub)
     _add_settings_commands(sub)
     _add_task19_commands(sub)
+    _add_categories_commands(sub)   # v23
     _add_rules_commands(sub)   # TASK-24
     return p
 
@@ -1330,13 +1472,15 @@ def _add_read_commands(sub) -> None:
 MCP_EPILOG = """Serves the finance_* tools over the Model Context Protocol on stdin/stdout, for an MCP client that starts it
 (Claude Desktop, Cursor, Codex, ...). The same tools as the Hermes plugin and the same numbers as `finance <command>
 --json`: finance_spend, finance_budget_status, finance_transactions, finance_networth, finance_bills, finance_loans,
-finance_holdings, finance_cashflow, finance_status, finance_goals, finance_rules. Read-only (the database is opened read-only; never calls Plaid).
+finance_holdings, finance_cashflow, finance_status, finance_goals, finance_rules, finance_categories. Read-only (the
+database is opened read-only; never calls Plaid).
 `finance serve` also serves them over streamable HTTP at /mcp, behind its access gate.
 
 finance_sync syncs the banks now (Plaid, one sync a minute per bank) and says what changed; with refresh=true it
 first asks the banks for fresh data, only if Settings allows it, and on a paid Plaid plan as a pending action.
 
-The write tools (finance_set_category, finance_add_rule, finance_set_cap, finance_track_bill) are listed only after
+The write tools (finance_set_category, finance_add_rule, finance_set_cap, finance_track_bill,
+finance_create_category, finance_update_category, finance_delete_category) are listed only after
 `finance mcp allow-writes on`, and even then a call changes nothing: it is saved as a pending action for you to
 decide (Settings -> Connect other agents -> Approve / Decline). Needs the optional extra: uv sync --extra mcp"""
 
@@ -1593,6 +1737,116 @@ def cmd_rules(args) -> int:
     if getattr(args, "rules_action", None) == "suggestions":
         return _read(args, lambda conn, today: rulebook.suggestions(conn), rulebook.suggestions_text)
     return _read(args, lambda conn, today: rulebook.payload(conn), rulebook.text)
+
+
+CATEGORIES_EPILOG = """Categories organise spending: each user-made one is spending-only and sits in one of the eight groups
+(Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc). The 36 built-in categories can be given a new icon or
+hidden, never renamed, deleted or moved; Income and Transfers stay outside the groups and stay visible.
+
+  finance categories [list] [--json]   every category: group, name, icon, built-in/yours, hidden, spend this month
+  finance categories add NAME [--group GROUP] [--icon ICON]   a new spending category (Misc and the group's icon by default)
+  finance categories rename OLD NEW    a user category's new name (saved filters and the chart follow it)
+  finance categories icon NAME ICON     any category's icon, from the 100 (GET /api/categories/icons)
+  finance categories hide NAME          hide it from new pickers and the chart; every past total keeps counting it
+  finance categories unhide NAME        show it again
+  finance categories move NAME --group GROUP   a user category to another group
+  finance categories delete NAME --to DESTINATION   move everything it references to DESTINATION, then delete it
+
+JSON: {"month", "groups": [{name, rgb, categories: [{name, is_income, is_transfer, spending, monthly_cap, group, icon,
+rgb, built_in, hidden, spend}]}], "ungrouped", "categories", "hidden", "counts": {total, builtin, user, hidden,
+spending}}. Writes print the resulting category (delete: plus "deleted" and "moved": {store: rows})."""
+
+
+def _moved_phrase(moved: dict[str, int]) -> str:
+    from .catops import STORE_WORDS
+    parts = [f"{n} {word if n == 1 else word + 's'}" for store, n in moved.items() if n
+             for word in [STORE_WORDS[store]]]
+    return ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1] if parts else "nothing"
+
+
+def cmd_categories(args) -> int:
+    from . import catops
+    action = getattr(args, "categories_action", None) or "list"
+    if action == "list":
+        return _read(args, lambda conn, today: catops.payload(conn, today), catops.text)
+    try:
+        with db.connect() as conn:
+            if action == "add":
+                out = catops.create(conn, args.name, args.group, args.icon)
+                done = f"Added category {out['name']} ({out['group']}, icon {out['icon']})."
+            elif action == "rename":
+                out = catops.rename(conn, args.old, args.new)
+                done = f"Renamed {args.old} to {out['name']}."
+            elif action == "icon":
+                out = catops.set_icon(conn, args.name, args.icon)
+                done = f"{out['name']} now uses the {out['icon']} icon."
+            elif action in ("hide", "unhide"):
+                hidden = action == "hide"
+                out = catops.set_hidden(conn, args.name, hidden)
+                done = (f"{out['name']} is hidden: past totals stay, new pickers and the chart leave it out."
+                        if hidden else f"{out['name']} is visible again.")
+            elif action == "move":
+                out = catops.move(conn, args.name, args.group)
+                done = f"{out['name']} moved to {out['group']}."
+            elif action == "delete":
+                out = catops.delete(conn, args.name, args.move_to)
+                done = (f"Moved {_moved_phrase(out['moved'])} from {out['deleted']} to {out['name']}, "
+                        f"then deleted {out['deleted']}.")
+            else:  # pragma: no cover - argparse only offers these
+                emit(f"error: unknown categories action {action!r}", sys.stderr)
+                return 2
+    except catops.CategoryError as e:
+        emit(f"error: {e}", sys.stderr)
+        return 2
+    except sqlite3.Error as e:
+        emit(f"error: {e}", sys.stderr)
+        return 1
+    if args.json:
+        emit_json(out)
+    else:
+        emit(done)
+    return 0
+
+
+def _add_categories_commands(sub) -> None:
+    """v23: finance categories list|add|rename|icon|hide|unhide|move|delete."""
+    s = sub.add_parser("categories", help="categories: list, add, rename, icon, hide, unhide, move, delete",
+                       description="User-managed categories and the 100-icon set.", epilog=CATEGORIES_EPILOG,
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    s.add_argument("--json", action="store_true", help="print the JSON described below")
+    s.set_defaults(func=cmd_categories, categories_action="list")
+    cs = s.add_subparsers(dest="categories_action")
+    x = cs.add_parser("list", help="every category: group, name, icon, tags, spend this month (read-only)")
+    x.add_argument("--json", action="store_true")
+    x = cs.add_parser("add", help="a new user spending category")
+    x.add_argument("name")
+    x.add_argument("--group", metavar="GROUP", help=", ".join(["Home", "Food", "Transport", "Shopping", "Bills",
+                                                               "Health", "Leisure", "Misc"]) + " (default Misc)")
+    x.add_argument("--icon", metavar="ICON", help="one of the 100 icons (GET /api/categories/icons); default: the group's")
+    x.add_argument("--json", action="store_true")
+    x = cs.add_parser("rename", help="a user category's new name")
+    x.add_argument("old")
+    x.add_argument("new")
+    x.add_argument("--json", action="store_true")
+    x = cs.add_parser("icon", help="any category's icon (Income and Transfers included)")
+    x.add_argument("name")
+    x.add_argument("icon")
+    x.add_argument("--json", action="store_true")
+    for command, text in (("hide", "hide it from new pickers and the chart (past totals stay)"),
+                          ("unhide", "show a hidden category again")):
+        x = cs.add_parser(command, help=text)
+        x.add_argument("name")
+        x.add_argument("--json", action="store_true")
+    x = cs.add_parser("move", help="a user category to another group")
+    x.add_argument("name")
+    x.add_argument("--group", metavar="GROUP", required=True,
+                   help=", ".join(["Home", "Food", "Transport", "Shopping", "Bills", "Health", "Leisure", "Misc"]))
+    x.add_argument("--json", action="store_true")
+    x = cs.add_parser("delete", help="move everything it references to --to, then delete it")
+    x.add_argument("name")
+    x.add_argument("--to", dest="move_to", metavar="DESTINATION", required=True,
+                   help="the visible spending category its transactions, rules and the rest move to")
+    x.add_argument("--json", action="store_true")
 
 
 def _add_rules_commands(sub) -> None:
