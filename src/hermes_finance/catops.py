@@ -450,10 +450,10 @@ def _rename_name_refs(conn: sqlite3.Connection, old: str, new: str) -> None:
 def payload(conn: sqlite3.Connection, today: date | None = None) -> dict[str, Any]:
     """Groups (display order) with their categories, Income & Transfers last, each category with its month spend and
     its transaction count (the transactions filed under it: what a delete would move); the flat list; the hidden names;
-    and the counts. Every category is here (hidden ones flagged): the card filters."""
+    and the counts. Every category is here (hidden ones flagged): the card filters. The spend is the Budgets page's
+    number (insights.spend_by: a split's lines, the display currency only), keyed by category id."""
     month = insights.month_of(today or date.today())
-    spend = {r[0]: r[1] for r in conn.execute(
-        "SELECT category, spend FROM v_monthly_category_spend WHERE month = ?", (month,))}
+    spend = {cid: s for cid, (s, _n) in insights.spend_by(conn, "v.month = ?", (month,), "v.category_id").items()}
     filed = {r[0]: r[1] for r in conn.execute(
         "SELECT category_id, COUNT(*) FROM classifications GROUP BY category_id")}
     groups = {name: {"name": name, "rgb": rgb, "categories": []} for name, rgb, _ in CATEGORY_GROUPS}
@@ -461,7 +461,7 @@ def payload(conn: sqlite3.Connection, today: date | None = None) -> dict[str, An
     flat = []
     for r in conn.execute(f"{CATEGORY_ROWS} ORDER BY c.sort, c.name"):
         item = _json(r)
-        item["spend"] = round(float(spend.get(item["name"], 0.0)), 2)
+        item["spend"] = round(float(spend.get(r["id"], 0.0)), 2)
         item["transactions"] = filed.get(r["id"], 0)
         flat.append(item)
         (groups[item["group"]]["categories"] if item["group"] in groups else ungrouped).append(item)

@@ -328,7 +328,7 @@ Everything that leaves the computer, and when: [Security model](docs/security.md
 - **10 Plaid connections per database, ever.** The cap is fixed in the code at the Trial plan's limit
   (`config.SLOT_LIMIT`). Every connection ever made counts. Use **Reconnect** for a broken one, never a second
   connection.
-- **US banks only** in Plaid Link. The currency setting only changes how amounts are written.
+- **US banks only** in Plaid Link. Totals count only accounts in the display currency (Settings → Region); nothing is converted.
 - **SimpleFIN is read-only and balance-only for investments.** It imports balances and transactions, not holdings or
   liability detail, and the account type is a guess you confirm once. It allows 24 requests a day and 6 manual syncs.
 - **Nothing runs on a schedule by itself.** Run `finance sync` from the Hermes jobs, cron or launchd, or tap

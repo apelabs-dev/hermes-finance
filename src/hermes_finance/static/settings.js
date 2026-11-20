@@ -697,7 +697,7 @@
     const r = d.prefs.region;
     const again = () => location.reload();  // numbers and dates are formatted once per page load
     return card({cls: 'sc', title: 'Region', icon: 'globe', rgb: RGB.ok},
-      srow('Currency', 'How amounts are written (nothing is converted)', select(d.options.currencies.map((c) => [c, `${c} · ${symbolOf(c)}`]), r.currency, 'Currency',
+      srow('Currency', 'Totals count only accounts in this currency. Nothing is converted.', select(d.options.currencies.map((c) => [c, `${c} · ${symbolOf(c)}`]), r.currency, 'Currency',
         (v) => save({'region.currency': v}, again)), 'tight'),
       srow('Number and date format', sample(r.locale, r.currency), select(d.options.locales.map((l) => [l, l]), r.locale, 'Locale',
         (v) => save({'region.locale': v}, again)), 'tight'),

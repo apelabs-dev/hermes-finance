@@ -10,8 +10,9 @@ from pathlib import Path
 
 import pytest
 
+import factory
 from agent_tools import ROOT, mcp_session, plugin_ctx, rows, table_hashes
-from hermes_finance import catops, chat, config, mcp_state, tooldefs
+from hermes_finance import catops, chat, config, insights, mcp_state, tooldefs
 
 TODAY = date(2026, 9, 28)
 TS = "2026-08-01T00:00:00Z"
@@ -59,6 +60,47 @@ def test_finance_categories_reads_and_changes_nothing(scene, conn):
     assert p["hidden"] == ["Kids"]
     assert "Kids" in {c["name"] for g in p["groups"] for c in g["categories"]}
     assert next(c for c in p["categories"] if c["name"] == "Coffee")["built_in"] is True
+
+
+def _month_spend_everywhere(conn):
+    """{category: (finance_categories spend, finance_budget_status caps[].spent, insights.category_spend spend)} for
+    every spending category of the current month."""
+    path = config.db_path()
+    month = insights.month_of(TODAY)
+    listed = {c["name"]: c["spend"] for c in tooldefs.run_read("finance_categories", {}, path, TODAY)["categories"]}
+    capped = {c["category"]: c["spent"]
+              for c in tooldefs.run_read("finance_budget_status", {}, path, TODAY)["caps"]}
+    cats = {c["category"]: c["spend"] for c in insights.category_spend(conn, month, TODAY)}
+    return {name: (listed[name], capped.get(name), spend) for name, spend in cats.items()}
+
+
+def test_category_spend_is_the_budgets_number_for_every_category(scene, conn):
+    """One source per number: the Settings card / finance_categories, finance_budget_status and the Budgets page all
+    read insights.spend_by (split lines, display currency only). A split transaction lands in both its categories and
+    a EUR charge is in none of them. Reading the whole-transaction view instead gave a different figure for each."""
+    factory.basic(conn)
+    factory.tx(conn, "2026-09-03", 100.0, "Market", cat="Groceries")
+    factory.tx(conn, "2026-09-05", 40.0, "Bistro", cat="Eating Out")
+    eur = factory.tx(conn, "2026-09-06", 70.0, "Brasserie", cat="Eating Out")
+    conn.execute("UPDATE transactions SET iso_currency = 'EUR' WHERE transaction_id = ?", (eur,))
+    split = factory.tx(conn, "2026-09-10", 90.0, "Warehouse", cat="Other Shopping")
+    for line, (category, amount) in enumerate((("Groceries", 60.0), ("Kids", 30.0)), start=1):
+        conn.execute("INSERT INTO transaction_splits (transaction_id, line, category_id, amount, created_at) "
+                     "SELECT ?, ?, id, ?, ? FROM categories WHERE name = ?", (split, line, amount, TS, category))
+    conn.commit()
+    for category in ("Groceries", "Eating Out", "Other Shopping", "Kids"):
+        factory.cap(conn, category, 500.0)
+
+    expected = {"Groceries": 160.0, "Eating Out": 40.0, "Other Shopping": 0.0, "Kids": 30.0}
+    seen = _month_spend_everywhere(conn)
+    for name, value in expected.items():
+        assert seen[name] == (value, value, value), name
+    assert all(listed == capped == spend for name, (listed, capped, spend) in seen.items() if capped is not None)
+    assert all(listed == spend for listed, _, spend in seen.values())
+
+    catops.rename(conn, "Kids", "Children")   # keyed by id: the figure follows the rename
+    renamed = _month_spend_everywhere(conn)
+    assert renamed["Children"] == (30.0, 30.0, 30.0) and "Kids" not in renamed
 
 
 def test_create_is_described_in_plain_words_and_changes_nothing_until_applied(scene, conn, plugin):

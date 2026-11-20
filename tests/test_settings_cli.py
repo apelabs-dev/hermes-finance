@@ -50,7 +50,7 @@ def test_the_settings_page_lists_both_clis_and_the_chosen_one(app, stub):
     assert [(i["name"], i["found"], i["version"]) for i in cli["items"]] == [
         ("Claude Code", True, "2.1.286"), ("Codex", True, "0.162.1")]
     for item in cli["items"]:
-        assert item["path"] == str(stub[item["id"]].path) and item["display"] == item["path"]
+        assert item["path"] == str(stub[item["id"]].path) and item["display"] == cs.shown(item["path"])
         assert item["passed"] is False and item["checked_version"] is None and item["reason"] == ""
 
 

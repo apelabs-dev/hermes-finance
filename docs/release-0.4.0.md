@@ -90,7 +90,47 @@ database and refuses an old one with a clear message.
 
 ## Verification at the release head
 
-The commands and counts are in the hand-off for card t_46c034ae. In short: the non-browser suite and every browser
-file ran once on the integrated branch, the migration proof test above passes, `scripts/dehardcode.py
---release-tracked` is clean, and a case-insensitive search of the tracked tree for the former product's name finds
-nothing.
+Every number below can be reproduced from a checkout of the release head:
+
+```
+uv run python scripts/check.py full --part 1   # every test but the gates; the browser files run with it
+uv run python scripts/check.py full --part 2   # tests/test_gates.py: the numbers, layout and controls gates
+python3 scripts/dehardcode.py --release-tracked
+```
+
+`full --part 2` takes about an hour on a CI runner with four headless Chromes. The same two commands run from the
+manual Nightly workflow (Actions, Nightly, Run workflow, on macOS).
+
+**The three gates** (all on synthetic databases built by `tests/gate_dbs.py`; nothing real is read):
+
+- **Numbers** (`scripts/audit_numbers.py`: every number the pages show, the API and the read-only CLI agree, to
+  ±$0.01): 4,339 checks on six databases, 0 failed. By database: full 937, nocaps 516, empty 295, history-empty 771,
+  onepoint 790, features 1,030.
+- **Layout** (`scripts/audit_layout.py`: five widths, both themes, every page and every modal, drawer and editor
+  state): 5,220 states planned on eight databases. 4,509 were checked and 711 are reported **absent**, not checked,
+  because their database lacks the thing to open (no bill with an estimate in a database without one, no Alpaca
+  account outside the features database, and so on). The 4,509 checked states made 90,180 layout checks. The audit's
+  self-test passed on the six databases that run it. One check failed in the CI run: on the onepoint database,
+  `sync-result` in the light theme at 360 px, the overlay check saw Chrome log
+  `net::ERR_NETWORK_CHANGED` for a request to the local test server, which Chrome reports when the machine's network
+  configuration changes under a request; the page logged no other error and no CSP violation. Running that database
+  alone again gave 14,820 layout checks and 0 failed.
+- **Controls** (`scripts/audit_controls.py`: every visible, enabled control on every page does something you can see
+  when clicked, at 1440 and 390 px): on the full database 18 of 18 pages (nine pages at two widths) passed,
+  0 failed, 334 controls clicked; on the nocaps database 18 of 18 passed, 0 failed, 224 clicked. The planted dead controls were caught on both
+  (self-test ok).
+
+**The rest of the suite** (`full --part 1`, macOS runner): 4,412 tests, 40 failed, 94 skipped. All 40 failures come
+from the CI runner's setup, not the app:
+
+- 38 tests in `tests/test_task23_wrappers.py` and `tests/test_task24_wrappers.py` run the check wrappers in
+  `scripts/`, which call GNU `timeout`. The macOS runner has none (`timeout: command not found`, exit 127). With
+  `timeout` installed those two files and `tests/test_settings_cli.py` pass: 65 passed.
+- 2 tests (`tests/test_settings_cli.py` and `tests/test_browser_cli_mode.py`) expect the full path of a stub CLI in a
+  temp directory, but the app shows a path under the home folder as `~/...`, and the runner's temp directory is under
+  its home. They pass with the temp directory elsewhere (5 passed in `tests/test_browser_cli_mode.py`) and fail when
+  it is under the home folder.
+
+The other 4,278 tests passed (94 were skipped), among them the migration proof test above
+(`tests/test_release_040_migration.py`). The release scan (`scripts/dehardcode.py --release-tracked`) is clean, and a case-insensitive search of the tracked tree
+for the former product's name finds nothing.

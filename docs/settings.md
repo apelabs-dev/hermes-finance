@@ -106,7 +106,7 @@ Each source shows this month's calls against its cap, and stops at the cap. A fl
 
 ## Region
 
-- **Currency**: how amounts are written. Nothing is converted.
+- **Currency**: how amounts are written. Totals count only accounts in this currency; accounts in another currency are listed apart. Nothing is converted.
 - **Number and date format**: the locale.
 - **Week starts on**: Sunday or Monday (the bills calendar).
 - **Budget month starts on**: day 1 only for now. Budgets use calendar months.

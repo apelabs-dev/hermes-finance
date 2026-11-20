@@ -274,3 +274,11 @@ def gone(pids: list[int], within: float = 3.0) -> bool:
             return True
         time.sleep(0.05)
     return not any(alive(p) for p in pids)
+
+
+def shown(path) -> str:
+    """A path as Settings shows it: ~ for the home directory. A temp dir may sit under $HOME (a CI runner's does), so a
+    test that compares the page's text with a stub's path must apply the same rule instead of assuming it is outside."""
+    import os
+    home, text = os.path.expanduser("~"), str(path)
+    return "~" + text[len(home):] if text == home or text.startswith(home + os.sep) else text
