@@ -18,7 +18,9 @@
   'use strict';
   const {h, fill, icon, glyph, api, post, money, money2, plural, budgetRing, ibadge, RGB, refresh, loadCounts} = HF;
   let mode = document.body.dataset.ask;
-  const enabled = () => mode === 'api' || mode === 'hermes';
+  const enabled = () => mode === 'api' || mode === 'hermes' || mode === 'cli';
+  const labelFor = (m) => (m === 'hermes' ? 'via Hermes' : m === 'cli' ? 'via CLI' : 'via API');
+  const iconFor = (m) => (m === 'hermes' ? 'sparkles' : m === 'cli' ? 'terminal' : 'cpu');
   let settingsToken = 0;
   const KEY = 'hf.chat.v1';
   // Read-only page data, never model-generated suggestions. Dates in questions are explicit so a selected past
@@ -177,11 +179,13 @@
   const input = h('textarea', {class: 'chin', rows: 1, placeholder: 'Ask about your money', 'aria-label': 'Ask about your money', maxlength: '4000'});
   const chips = h('div', {class: 'chchips', role: 'group', 'aria-label': 'Suggestions'});
   const send = h('button', {class: 'btn sm', type: 'button', id: 'chsend'}, icon('send'), 'Send');
-  const brain = document.body.dataset.askBrain || (mode === 'hermes' ? 'via Hermes' : 'via API');
+  const brain = document.body.dataset.askBrain || labelFor(mode);
   const brainBadge = h('span', {class: 'brain'});
   function setBrain(label) {
-    brainBadge.title = mode === 'hermes' ? 'Answers come from your Hermes model' : `Answers come from ${label.replace(/^via /, '')}`;
-    fill(brainBadge, icon(mode === 'hermes' ? 'sparkles' : 'cpu'), label);
+    const from = label.replace(/^via /, '');
+    brainBadge.title = mode === 'hermes' ? 'Answers come from your Hermes model'
+      : mode === 'cli' ? `Answers come from ${from} on this computer` : `Answers come from ${from}`;
+    fill(brainBadge, icon(iconFor(mode)), label);
   }
   setBrain(brain);
   fill(panel,
@@ -213,7 +217,7 @@
     }
     if (!askBtn.isConnected) document.body.append(askBtn, panel);
     askBtn.hidden = !panel.hidden;
-    setBrain(mode === 'hermes' ? 'via Hermes' : 'via API');
+    setBrain(labelFor(mode));
     try {
       const state = await api('/api/chat');   // metadata only; the server owns provider/model labels
       if (token !== settingsToken || !enabled()) return;

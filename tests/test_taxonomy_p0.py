@@ -99,7 +99,7 @@ def test_v15_to_v16_twice_keeps_every_transaction_in_its_category(data_dir):
     raw.close()
 
     conn = db.connect(path)   # the app's own startup path upgrades it
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     # every transaction keeps its category (v19's renames keep the ids), but for Plaid's defaults: v19 re-files them by
     # today's map, so the gas station, the coffee and the car payment land where a new sync would put them
     after = {**before, "t_cvs": "Other Health", "t_park": "Other Shopping",
@@ -130,7 +130,7 @@ def test_v15_to_v16_twice_keeps_every_transaction_in_its_category(data_dir):
         conn.execute("PRAGMA user_version = 15")                                  # as if it stopped before v16 was written
     conn.close()
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert snapshot(conn) == done and categories_of(conn) == after
 
     # the next sync's classify finds Plaid's defaults already where it would put them; the user's, the rule's and the
@@ -296,9 +296,10 @@ def test_the_api_gives_the_groups_and_each_categorys_group(conn, client):
     assert [c["name"] for c in tree["ungrouped"]] == ["Income", "Transfers"]
     coffee = tree["groups"][1]["categories"][2]
     assert coffee == {"name": "Coffee", "is_income": False, "is_transfer": False, "spending": True, "monthly_cap": None,
-                      "group": "Food", "icon": "coffee", "rgb": "245,180,84"}
+                      "group": "Food", "icon": "coffee", "rgb": "245,180,84", "built_in": True, "hidden": False}
     assert tree["ungrouped"][0] == {"name": "Income", "is_income": True, "is_transfer": False, "spending": False,
-                                    "monthly_cap": None, "group": None, "icon": "arrow-down-left", "rgb": None}
+                                    "monthly_cap": None, "group": None, "icon": "arrow-down-left", "rgb": None,
+                                    "built_in": True, "hidden": False}
     flat = http_get(app, "/api/categories")
     assert [c["name"] for c in flat] == sorted(SPENDING + ["Income", "Transfers", "Kids"])
     assert {c["name"]: c for c in flat}["Coffee"] == coffee

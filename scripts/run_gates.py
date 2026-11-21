@@ -34,6 +34,7 @@ import audit_controls  # noqa: E402
 import audit_layout  # noqa: E402
 import audit_numbers  # noqa: E402
 import gate_dbs  # noqa: E402
+from offline_env import OFFLINE_SWITCHES  # noqa: E402
 import hermes_finance  # noqa: E402
 from hermes_finance import photos, valuation  # noqa: E402
 
@@ -61,21 +62,15 @@ def offline_valuation(tmp: Path):
     os.environ["FINANCE_SECRETS_FILE"] = str(tmp / "gates-secrets.env")  # never the real one (TASK-18)
     old_env, old_transport, old_browser = os.environ.get("HERMES_ENV_FILE"), valuation.transport, valuation.browser
     old_schedule = photos.schedule
-    old_cdp = os.environ.get("HERMES_CHROME_DEVTOOLS")
-    old_alpaca = {k: os.environ.get(k) for k in ("HERMES_ALPACA", "HERMES_ALPACA_KEY_FILE")}
+    old_switches = {k: os.environ.get(k) for k in (*OFFLINE_SWITCHES, "HERMES_ALPACA_KEY_FILE")}
     os.environ["HERMES_ENV_FILE"] = str(env)
-    os.environ["HERMES_CHROME_DEVTOOLS"] = "off"
-    os.environ["HERMES_ALPACA"] = "off"                                       # TASK-19: no Alpaca call, no key file read
+    os.environ.update(OFFLINE_SWITCHES)                                       # no Plaid, SimpleFIN or Alpaca call, no DevTools
     os.environ["HERMES_ALPACA_KEY_FILE"] = str(tmp / "gates-no-alpaca.env")
     _offline()
     try:
         yield
     finally:
         valuation.transport, valuation.browser, photos.schedule = old_transport, old_browser, old_schedule
-        if old_cdp is None:
-            os.environ.pop("HERMES_CHROME_DEVTOOLS", None)
-        else:
-            os.environ["HERMES_CHROME_DEVTOOLS"] = old_cdp
         if old_env is None:
             os.environ.pop("HERMES_ENV_FILE", None)
         else:
@@ -84,7 +79,7 @@ def offline_valuation(tmp: Path):
             os.environ.pop("FINANCE_SECRETS_FILE", None)
         else:
             os.environ["FINANCE_SECRETS_FILE"] = old_secrets
-        for k, v in old_alpaca.items():
+        for k, v in old_switches.items():
             if v is None:
                 os.environ.pop(k, None)
             else:
@@ -111,7 +106,7 @@ class ServerProcess:
     It exits when this process goes away however that happens (its stdin closes)."""
 
     def __init__(self, db_path: Path, cache_static: bool = True):
-        env = {**os.environ, "HERMES_PLAID": "off",
+        env = {**os.environ, **OFFLINE_SWITCHES,
                "PYTHONPATH": os.pathsep.join([str(Path(hermes_finance.__file__).resolve().parents[1]),
                                               *filter(None, [os.environ.get("PYTHONPATH")])])}
         log = os.environ.get("HF_GATE_SERVER_LOG")   # scripts/check.py: the servers' own lines in its log, not on screen

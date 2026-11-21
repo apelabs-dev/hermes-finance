@@ -19,9 +19,11 @@ import base64
 import binascii
 import http.client
 import logging
+import os
 import re
 import sqlite3
 import struct
+import threading
 import urllib.error
 import urllib.request
 import zlib
@@ -45,6 +47,14 @@ INSTITUTION_RETRY_DAYS = 1   # a bank (or Alpaca) drawn with initials: tried aga
 MAX_ICON_TRIES = 4     # icon URLs tried per bank site, after its home page
 USER_AGENT = "hermes-finance/0.1 (logo cache; one fetch per bank or ticker)"
 FMP_URL = "https://financialmodelingprep.com/image-stock/{}.png"
+# The two vendors in the Add account chooser (owner decision 2026-11-15): their own site icon, fetched server-side and
+# cached here, served at /api/institutions/<id>/logo. No logo file is committed; the page falls back to initials.
+VENDOR_LOGOS = {
+    "ins_hf_simplefin": ("SimpleFIN", "https://www.simplefin.org/", "HERMES_SIMPLEFIN"),
+    "ins_hf_plaid": ("Plaid", "https://plaid.com/", "HERMES_PLAID"),
+}
+_VENDOR_LOCK = threading.Lock()
+_VENDOR_RUNNING: set[str] = set()
 INSTITUTION_ID = re.compile(r"ins_[A-Za-z0-9_]{1,40}")
 TICKER = re.compile(r"[A-Z0-9][A-Z0-9.\-]{0,11}")
 COLOR = re.compile(r"#[0-9a-fA-F]{6}")
@@ -508,6 +518,83 @@ def institution_logo(conn: sqlite3.Connection, institution_id: str) -> tuple[str
                      (institution_id,)).fetchone()
     kind = sniff(r[0]) if r else None
     return (kind, r[0]) if kind else None
+
+
+# --- the two chooser vendors ---------------------------------------------------------------------------
+
+def _vendor_off(switch: str) -> bool:
+    return (os.environ.get(switch) or "").strip().lower() == "off"
+
+
+def refresh_vendor_logo(conn: sqlite3.Connection, institution_id: str, fetch: Fetch | None = None) -> dict[str, Any]:
+    """One vendor's own site icon (logos.site_icon: a real image, never SVG), stored like a bank's row."""
+    if institution_id not in VENDOR_LOGOS:
+        raise LogoError(f"not a vendor logo row: {institution_id}")
+    name, site, switch = VENDOR_LOGOS[institution_id]
+    if _vendor_off(switch):
+        return {"institution_id": institution_id, "name": name, "source": None, "skipped": "off", "error": None}
+    png, source, note = None, "none", ""
+    try:
+        png, source = site_icon(fetch or http_get, site), "site"
+    except LogoError as e:
+        note = str(e)
+    with conn:
+        conn.execute(
+            """INSERT INTO institutions (institution_id, name, logo_png, logo_source, primary_color, url, fetched_at)
+               VALUES (?,?,?,?,NULL,?,?)
+               ON CONFLICT(institution_id) DO UPDATE SET name=excluded.name, logo_png=excluded.logo_png,
+                   logo_source=excluded.logo_source, url=excluded.url, fetched_at=excluded.fetched_at""",
+            (institution_id, name, png, source, site, now()))
+    return {"institution_id": institution_id, "name": name, "source": source, "skipped": None, "error": note or None}
+
+
+def _vendor_due(conn: sqlite3.Connection, institution_id: str, today: date) -> bool:
+    row = conn.execute("SELECT logo_png IS NOT NULL, fetched_at FROM institutions WHERE institution_id = ?",
+                       (institution_id,)).fetchone()
+    return not row or (not row[0] and retry_due(row[1], INSTITUTION_RETRY_DAYS, today))
+
+
+def _vendor_worker(db_path, ids: list[str]) -> None:
+    conn = None
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=10)
+        for iid in ids:
+            try:
+                refresh_vendor_logo(conn, iid)
+            except Exception as e:   # one fetch never breaks the other, and nothing reaches a request
+                log.info("vendor logo failed for %s: %s", iid, e)
+            finally:
+                with _VENDOR_LOCK:
+                    _VENDOR_RUNNING.discard(iid)
+    except Exception:
+        log.exception("vendor logo fetch failed")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def ensure_vendor_logos(conn: sqlite3.Connection, fetch: Fetch | None = None, today: date | None = None,
+                        background: bool = False, db_path=None, force: bool = False) -> list[dict[str, Any]]:
+    """Make sure both chooser logos have a cache row. Missing (or a miss at least a day old) is fetched; with
+    `background`, a daemon thread does it on its own connection so a page request never waits on a site. The switches
+    are the same ones their provider uses (HERMES_SIMPLEFIN / HERMES_PLAID=off): a test never touches a vendor."""
+    today = today or utc_today()
+    todo = [iid for iid in VENDOR_LOGOS
+            if not _vendor_off(VENDOR_LOGOS[iid][2]) and (force or _vendor_due(conn, iid, today))]
+    if not todo:
+        return []
+    if background and db_path is not None:
+        scheduled = []
+        with _VENDOR_LOCK:
+            for iid in todo:
+                if iid not in _VENDOR_RUNNING:
+                    _VENDOR_RUNNING.add(iid)
+                    scheduled.append(iid)
+        if scheduled:
+            threading.Thread(target=_vendor_worker, args=(db_path, scheduled), daemon=True,
+                             name="vendor-logos").start()
+        return [{"institution_id": iid, "scheduled": True} for iid in scheduled]
+    return [refresh_vendor_logo(conn, iid, fetch) for iid in todo]
 
 
 # --- holdings -----------------------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -635,6 +636,13 @@ def headless(monkeypatch):
     monkeypatch.setattr(valuation, "CARFAX_PAGE", f"http://127.0.0.1:{port}/value/")
     monkeypatch.setattr(valuation, "CARFAX_TRIMS_URL", f"http://localhost:{port}/hbv/cow/trims/{{vin}}")
     monkeypatch.setattr(valuation, "CARFAX_PRICES_URL", f"http://localhost:{port}/hbv/cow/prices")
+    # cdp_client asks Chrome's /json/version with a 2 s timeout (made for the always-on local Chrome), and a lookup that
+    # fails there is counted and never retried. On a starved runner a loaded Chrome can stay silent longer than that
+    # (Nightly 44803010495: "Chrome not running (nothing answers on 127.0.0.1:...)" with Chrome up). This test is about
+    # the lookup, not about that timeout (test_the_devtools_client_says_when_chrome_is_not_there covers it), so a slow
+    # answer is waited for here: the same client, a longer wait for the answer.
+    version = cdp_client.Chrome._version
+    monkeypatch.setattr(cdp_client.Chrome, "_version", lambda self, timeout=2.0: version(self, max(timeout, 30.0)))
     with Chrome() as b:
         devtools = int((Path(b.profile) / "DevToolsActivePort").read_text().split()[0])
         monkeypatch.setattr(valuation, "browser", cdp_client.Chrome(port=devtools))
@@ -644,11 +652,25 @@ def headless(monkeypatch):
 
 
 def targets(port):
-    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
     c.request("GET", "/json/list")
     out = [(t["id"], t["type"], t["url"]) for t in json.loads(c.getresponse().read()) if t["type"] == "page"]
     c.close()
     return out
+
+
+def tabs_settle_to(port, before, wait=30.0):
+    """The page targets Chrome lists once closing a tab has finished (it is asynchronous: Target.closeTarget answers
+    before the target leaves /json/list, and a starved Chrome takes a while): polled, the last list returned."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            now = targets(port)
+        except (OSError, http.client.HTTPException):   # the listing itself timed out (5 s): ask again
+            now = None
+        if now == before or time.monotonic() > deadline:
+            return now
+        time.sleep(0.1)
 
 
 def test_a_real_chrome_runs_the_lookup_in_a_new_tab_and_closes_it(conn, free_sources, headless):
@@ -657,12 +679,12 @@ def test_a_real_chrome_runs_the_lookup_in_a_new_tab_and_closes_it(conn, free_sou
     car = manual.create(conn, {**COMET, "vehicle_make": "Zenith", "vehicle_model": "Comet Prime", "vehicle_year": 2020},
                         TODAY, estimate=True)
     r = valuation.refresh(conn, car["id"], TODAY)
-    assert r["estimate_result"]["ok"] is True and r["balance"] == 14090.0
+    assert r["estimate_result"]["ok"] is True and r["balance"] == 14090.0, (r["estimate_result"], r["balance"])
     assert [(m, p) for m, p, _ in FakeCarfax.seen if p != "/favicon.ico"] == [
         ("GET", "/value/"), ("GET", f"/hbv/cow/trims/{CARFAX_VIN}"), ("OPTIONS", "/hbv/cow/prices"),
         ("POST", "/hbv/cow/prices")]
     assert json.loads(FakeCarfax.seen[-1][2]) == {**RECORDED_BODY, "condition": "good"}
-    assert targets(port) == before                                     # the tab it opened is gone, the other untouched
+    assert tabs_settle_to(port, before) == before                      # the tab it opened is gone, the other untouched
     assert calls(conn, "carfax") == 1
 
 
@@ -676,8 +698,8 @@ def test_a_real_chrome_reads_a_cors_blocked_403_as_a_block(conn, free_sources, h
     assert r["reason"] == "blocked" and r["blocked_until"] == day(7).isoformat()
     # the page's fetch() can't read a 403 without CORS headers (it fails as a TypeError); the tab's network log can
     assert r["message"].split(". Paused")[0] in ("Carfax blocked the check (trims: a captcha page)",
-                                                 "Carfax blocked the check (trims: HTTP 403)")
-    assert targets(port) == before
+                                                 "Carfax blocked the check (trims: HTTP 403)"), r
+    assert tabs_settle_to(port, before) == before
 
 
 def test_the_devtools_client_says_when_chrome_is_not_there(monkeypatch):
@@ -748,7 +770,7 @@ def test_upgrade_from_v7_rebuilds_asset_valuations_and_keeps_every_row(data_dir)
     raw.close()
 
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     after = [tuple(r)[:10] for r in conn.execute("SELECT * FROM asset_valuations ORDER BY id")]
     assert after == before                                             # every row, every value
     assert [tuple(r)[10:] for r in conn.execute("SELECT * FROM asset_valuations")] == [(None, None, None)] * 2

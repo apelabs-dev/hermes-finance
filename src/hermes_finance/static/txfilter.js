@@ -178,7 +178,9 @@
           n(facets && facets.uncategorized)));
       }
       for (const g of data.groups) {
-        const cats = hit(g.name) ? g.categories : g.categories.filter((c) => hit(c.name, g.name));
+        // v23: a hidden category is not a new filter choice; a saved filter that already names it keeps showing it
+        const offered = g.categories.filter((c) => !c.hidden || D.category.has(c.name));
+        const cats = hit(g.name) ? offered : offered.filter((c) => hit(c.name, g.name));
         if (!cats.length) continue;
         const open = words.length > 0 || expanded.has(g.name);
         const state = groupState(g);
@@ -325,6 +327,7 @@
   }
 
   // Escape closes the drawer only (not a sheet under it); so does leaving the page
+  document.addEventListener('hf-categories-changed', () => { GROUPS = null; });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && OPEN) { e.preventDefault(); e.stopImmediatePropagation(); closeDrawer(); }
   }, true);

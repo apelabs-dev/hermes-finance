@@ -3,7 +3,7 @@
 
 # Agent tools reference
 
-The 16 `finance_*` tools. One definition each, in `src/hermes_finance/tooldefs.py`, shared by the Hermes plugin (`hermes_plugin/`) and the MCP server (`finance mcp`, and `/mcp` on `finance serve`). A read tool answers exactly what its `finance <command> --json` prints.
+The 20 `finance_*` tools. One definition each, in `src/hermes_finance/tooldefs.py`, shared by the Hermes plugin (`hermes_plugin/`) and the MCP server (`finance mcp`, and `/mcp` on `finance serve`). A read tool answers exactly what its `finance <command> --json` prints.
 
 - **read**: opens the database read-only and never calls Plaid. Listed everywhere.
 - **action** (`finance_sync`): syncs with Plaid now. It changes nothing you entered, so it runs without an approval, except `refresh=true` on a paid Plaid plan (Plaid bills each refresh), which needs one.
@@ -11,7 +11,7 @@ The 16 `finance_*` tools. One definition each, in `src/hermes_finance/tooldefs.p
 
 The MCP server's instructions to every client:
 
-> hermes-finance: the owner's own money data from a local database, read-only. Amounts use the app's sign: spend and money out are positive, refunds and income negative. Use a category's exact name (finance_spend with by=category lists them); never guess one. Dates are local. In human-facing text, use $ and thousands separators. Round to cents, omit cents for whole dollars, and keep two decimals otherwise. Put an ASCII minus before $ for negatives and suppress it for rounded zero. Keep numeric tool arguments and JSON fields numeric.
+> hermes-finance: the owner's own money data from a local database, read-only. Amounts use the app's sign: spend and money out are positive, refunds and income negative. Use a category's exact name (finance_spend with by=category lists them); never guess one. Dates are local. In human-facing text, format each amount in its own currency: use the ISO code or its symbol, thousands separators and the currency's official decimals (JPY has none, KWD three). Never convert or add amounts in different currencies. Put an ASCII minus before the currency for negatives and suppress it for rounded zero. Keep numeric tool arguments and JSON fields numeric.
 
 | Tool | Kind | Same as |
 |---|---|---|
@@ -26,10 +26,14 @@ The MCP server's instructions to every client:
 | [`finance_status`](#finance-status) | read | `finance status --json` |
 | [`finance_goals`](#finance-goals) | read | `finance goals --json` |
 | [`finance_rules`](#finance-rules) | read | `finance rules --json` |
+| [`finance_categories`](#finance-categories) | read | `finance categories --json` |
 | [`finance_sync`](#finance-sync) | action | - |
 | [`finance_set_category`](#finance-set-category) | write (needs approval) | - |
 | [`finance_add_rule`](#finance-add-rule) | write (needs approval) | - |
 | [`finance_set_cap`](#finance-set-cap) | write (needs approval) | - |
+| [`finance_create_category`](#finance-create-category) | write (needs approval) | - |
+| [`finance_update_category`](#finance-update-category) | write (needs approval) | - |
+| [`finance_delete_category`](#finance-delete-category) | write (needs approval) | - |
 | [`finance_track_bill`](#finance-track-bill) | write (needs approval) | - |
 
 ## `finance_spend` {#finance-spend}
@@ -336,6 +340,14 @@ Kind: read. Same answer as `finance rules --json`.
 
 No arguments.
 
+## `finance_categories` {#finance-categories}
+
+Every category with its group, icon, built-in/user flag, hidden flag, monthly cap and spend this month. Hidden categories are also named separately: never offer one as a new filing target.
+
+Kind: read. Same answer as `finance categories --json`.
+
+No arguments.
+
 ## `finance_sync` {#finance-sync}
 
 Sync now: pull what the banks already sent Plaid (new transactions, balances) and say what changed, with data_age. refresh=true first asks the banks for fresh data, if Settings allows it; on a paid Plaid plan that needs the user's approval.
@@ -467,7 +479,7 @@ Kind: write (needs approval).
 | Argument | Type | Required | Limits | Description |
 |---|---|---|---|---|
 | `category` | string | yes |  | spending category name, case-insensitive |
-| `monthly_cap` | number or null | yes | min 0; max 100000 | the cap in dollars, or null to clear it |
+| `monthly_cap` | number or null | yes | min 0; max 100000 | the cap in the display currency, or null to clear it |
 
 <details><summary>JSON schema</summary>
 
@@ -486,12 +498,138 @@ Kind: write (needs approval).
       ],
       "minimum": 0,
       "maximum": 100000,
-      "description": "the cap in dollars, or null to clear it"
+      "description": "the cap in the display currency, or null to clear it"
     }
   },
   "required": [
     "category",
     "monthly_cap"
+  ],
+  "additionalProperties": false
+}
+```
+
+</details>
+
+## `finance_create_category` {#finance-create-category}
+
+Add a spending category (never Income or Transfers) in one of the eight groups, Misc by default, with an icon from the app's 100. Needs the user's approval.
+
+Kind: write (needs approval).
+
+| Argument | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `name` | string | yes |  | the category's name (up to 60 characters, unique ignoring case) |
+| `group` | string | no |  | one of Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc, any case (default Misc) |
+| `icon` | string | no |  | an icon name from finance_categories' set (GET /api/categories/icons); default: the group's |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "the category's name (up to 60 characters, unique ignoring case)"
+    },
+    "group": {
+      "type": "string",
+      "description": "one of Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc, any case (default Misc)"
+    },
+    "icon": {
+      "type": "string",
+      "description": "an icon name from finance_categories' set (GET /api/categories/icons); default: the group's"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false
+}
+```
+
+</details>
+
+## `finance_update_category` {#finance-update-category}
+
+Change a category: rename it (your own categories only), change its icon (any category), hide / unhide it (any spending category), or move it to another group (your own only). Needs the user's approval.
+
+Kind: write (needs approval).
+
+| Argument | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `name` | string | yes |  | the category to change, case-insensitive |
+| `rename` | string | no |  | its new name (user categories only; unique ignoring case) |
+| `icon` | string | no |  | a new icon from the app's 100 |
+| `hidden` | boolean | no |  | true hides it from new pickers and the chart; past totals stay |
+| `group` | string | no |  | a new group for a user category: Home, Food, Transport, Shopping, Bills, Health, Leisure or Misc, any case |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "the category to change, case-insensitive"
+    },
+    "rename": {
+      "type": "string",
+      "description": "its new name (user categories only; unique ignoring case)"
+    },
+    "icon": {
+      "type": "string",
+      "description": "a new icon from the app's 100"
+    },
+    "hidden": {
+      "type": "boolean",
+      "description": "true hides it from new pickers and the chart; past totals stay"
+    },
+    "group": {
+      "type": "string",
+      "description": "a new group for a user category: Home, Food, Transport, Shopping, Bills, Health, Leisure or Misc, any case"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false
+}
+```
+
+</details>
+
+## `finance_delete_category` {#finance-delete-category}
+
+Delete one of the user's own categories after moving everything filed under it to another visible spending category: transactions, rules, splits, rollovers and the rest, in one transaction. Built-ins cannot be deleted. Needs the user's approval.
+
+Kind: write (needs approval).
+
+| Argument | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `name` | string | yes |  | the user category to delete, case-insensitive |
+| `move_to` | string | yes |  | the visible spending category everything filed under it moves to |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "the user category to delete, case-insensitive"
+    },
+    "move_to": {
+      "type": "string",
+      "description": "the visible spending category everything filed under it moves to"
+    }
+  },
+  "required": [
+    "name",
+    "move_to"
   ],
   "additionalProperties": false
 }

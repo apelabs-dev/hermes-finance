@@ -4,6 +4,8 @@ data/
 *.db-*
 *.sqlite
 *.jsonl
+# captured CLI event streams are committed fixtures (scrubbed), not run logs
+!tests/fixtures/cli_streams/*.jsonl
 
 # secrets
 .env*

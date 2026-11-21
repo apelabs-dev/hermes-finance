@@ -53,14 +53,19 @@ a.btn { text-decoration: none; }
 button.lnk { background: none; border: 0; padding: 0; color: var(--acc); font-weight: 600; font-size: 14px; display: inline-flex;
   align-items: center; gap: 6px; cursor: pointer; }
 button.lnk svg.i { width: 16px; height: 16px; }
-.soon { font-size: 13px; color: var(--dim); }
 /* AI provider */
 .aiseg { display: flex; width: 100%; margin: 0 0 4px; }
 .aiseg button { flex: 1 1 0; text-align: center; }
+/* four modes on a 360 px phone: the tight padding keeps the widest label ("API key") on one line and every segment
+   the same width (the layout gate's stretched/wrapped/orphan checks at 360, and it costs nothing at 390) */
+@media (max-width: 380px) {
+  .aiseg button { padding: 6px 5px; font-size: 13px; white-space: nowrap; }
+}
 .aist { display: flex; align-items: center; gap: 8px 12px; padding: 14px 0 4px; flex-wrap: wrap; }
 .aist .grow { min-width: 160px; }
 .aist .grow > b { display: block; font-weight: 600; }
-.aist .grow > span { display: block; font-size: 13px; color: var(--mut); white-space: normal; }
+.aist .grow > span { display: block; font-size: 13px; color: var(--mut); white-space: normal; overflow-wrap: anywhere;
+  overflow: visible; text-overflow: clip; }  /* a long CLI path wraps in full, never a truncated "…" */
 .inp.fx { height: 38px; border-radius: 10px; padding: 0 12px; width: 272px; max-width: 100%; }
 .inp.fx input { font-size: 14px; }
 .inp.fx.hdr { width: 230px; }
@@ -281,4 +286,31 @@ table.map { width: 100%; border-collapse: collapse; font-size: 14px; }
   .rbar .search.rq { flex: 1 1 100px; width: 100px; padding: 7px 8px; }
   .rbar .rseg { flex: none; display: flex; }
   .rbar .rseg button { min-width: 56px; min-height: 44px; padding: 6px 8px; text-align: center; justify-content: center; }
+}
+
+/* v23: Settings -> Categories (above Categorization rules), in the rules card's look: the same head, search line,
+ * group headers and dense one-line rows (icon tile, name and its Yours / Hidden tag, the transaction count, icon actions;
+ * on a phone the count under the name and one ⋯). Hidden rows stay in their group, greyed. Delete asks in the row. */
+.sc.cats h3 { margin-bottom: 0; }
+.sc.cats.open h3 { margin-bottom: 10px; }
+.cats .rbar .catnew { flex: none; }
+.cats .rlist > .gh:first-child { margin-top: 4px; }
+.cats .rlist .gh { margin-top: 12px; }
+.cats .rrow .grow > .rpat { display: flex; align-items: center; gap: 8px; }
+.cats .rrow .grow > .rpat b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cats .rrow .grow > .rpat .tag { flex: none; }
+.cats .rn { width: 124px; }
+.cats .racts { width: auto; min-width: 102px; align-items: center; }
+.cats .racts .catshow { margin-left: 2px; }
+.catrow.off .cb { opacity: .5; }
+.catrow.off .rpat b { color: var(--mut); font-weight: 550; }
+.rrow.confirm.catask { margin: 6px 0; padding: 8px 10px; gap: 8px 12px; }   /* one line on a wide screen, as in the frame */
+.rrow.confirm.catask .grow > b { color: var(--fg); font-weight: 600; white-space: normal; }
+.rrow.confirm.catask .pairc { display: flex; flex: none; align-items: center; gap: 8px; flex-wrap: nowrap; justify-content: flex-end; }
+.rrow.confirm.catask .selv { flex: 0 1 200px; min-width: 0; }
+.catsheet .fld { margin-top: 12px; }
+@media (max-width: 1023.98px) {
+  .cats .rrow .grow > .rpat b { white-space: normal; overflow-wrap: anywhere; }
+  .rrow.confirm.catask { padding: 10px 12px; flex-wrap: wrap; }
+  .rrow.confirm.catask .pairc { flex: 1 1 100%; flex-wrap: wrap; }
 }

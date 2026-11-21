@@ -125,7 +125,25 @@ def plaid_default(conn: sqlite3.Connection, pfc_detailed: str | None, pfc_primar
     return category_id(conn, "Other")
 
 
+def default_filing(conn: sqlite3.Connection, t: sqlite3.Row) -> int:
+    """The category a Plaid-default row (no rule, nothing from the AI or the user) is filed under: plaid_default(), except
+    that a refund is never Income (owner decision). When the default lands in an income category and the row is money
+    in (amount < 0) on a credit or loan account, or one whose name says REFUND, RETURN, REVERSAL or CREDIT VOUCHER, the
+    row is filed Other and nets against spending. A merchant category (Plaid's own refund under General merchandise)
+    is kept, and so is a bank deposit that is simply income. A tax refund on a bank account stays Income (owner
+    decision): Plaid's INCOME_TAX_REFUND code, or a name that says so (TAX_REFUND_WORDS). `t` is a _candidates() row."""
+    cat = plaid_default(conn, t["pfc_detailed"], t["pfc_primary"])
+    if (t["amount"] is not None and t["amount"] < 0
+            and (t["account_type"] in ("credit", "loan")
+                 or (REFUND_WORDS.search(t["name"] or "") and not is_tax_refund(t["name"], t["pfc_detailed"])))
+            and conn.execute("SELECT is_income FROM categories WHERE id = ?", (cat,)).fetchone()[0]):
+        return category_id(conn, "Other")
+    return cat
+
+
 def category_id(conn: sqlite3.Connection, name_or_id: str | int) -> int:
+    """Resolve a category by id or name, case-insensitively. A hidden category (v23) is still accepted by name: an
+    existing rule or the user's own filing must keep working; hidden only leaves the new-selection lists."""
     row = conn.execute("SELECT id FROM categories WHERE id = ? OR name = ? COLLATE NOCASE",
                        (name_or_id, str(name_or_id))).fetchone()
     if not row:
@@ -140,9 +158,11 @@ def _candidates(conn: sqlite3.Connection, sources: tuple[str, ...], unlinked: bo
     marks = ", ".join("?" * len(sources))
     keep = "" if unlinked else " AND NOT COALESCE(c.source = 'rule' AND c.rule_id IS NULL, 0)"  # no row: a candidate
     return conn.execute(
-        f"""SELECT t.transaction_id, t.name, t.merchant_name, t.pfc_primary, t.pfc_detailed,
+        f"""SELECT t.transaction_id, t.name, t.merchant_name, t.pfc_primary, t.pfc_detailed, t.source, t.amount,
+                   a.type AS account_type,
                    c.category_id AS cur_category, c.source AS cur_source, c.rule_id AS cur_rule
             FROM transactions t LEFT JOIN classifications c USING (transaction_id)
+                 LEFT JOIN accounts a ON a.account_id = t.account_id
             WHERE t.removed = 0 AND (c.source IS NULL OR c.source IN ({marks})){keep}""", sources).fetchall()
 
 
@@ -162,6 +182,55 @@ def _file(conn: sqlite3.Connection, transaction_id: str, new: tuple, ts: str, ov
         (transaction_id, *new, ts, *over))
 
 
+# What a row that is money IN is saved with when its provider sends no category (SimpleFIN; the importer shares the card
+# payment hint): income or a transfer in on a bank account, a card payment on a card or loan. A refund is never Income
+# (owner decision), so on a card or loan every inflow but a payment, and on any account a line that says REFUND, RETURN,
+# REVERSAL or CREDIT VOUCHER, gets no hint: it stays undecided and nets against spending.
+INCOME_HINT = ("INCOME", "INCOME_OTHER_INCOME")
+TRANSFER_IN_HINT = ("TRANSFER_IN", "TRANSFER_IN_ACCOUNT_TRANSFER")
+CARD_PAYMENT_HINT = ("LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT")
+CARD_PAYMENT_WORDS = re.compile(r"\b(?:PAYMENT|PAYMT|PMT)\b", re.IGNORECASE)
+_TRANSFER_WORDS = re.compile(r"\b(?:TRANSFER|XFER)\b", re.IGNORECASE)
+REFUND_WORDS = re.compile(r"\b(?:REFUND|RETURN|REVERSAL|CREDIT\s+VOUCHER)\b", re.IGNORECASE)   # whole words: not RETURNS
+# A tax refund stays Income on both sides (owner decision): Plaid's INCOME_TAX_REFUND code, or a description that names
+# one. Whole words, so the Plaid default and the SimpleFIN hint agree.
+TAX_REFUND_WORDS = re.compile(r"\b(?:TAX\s*REF(?:UND)?|TAX\s*RFD|IRS\s+TREAS)\b", re.IGNORECASE)
+INCOME_TAX_REFUND_HINT = ("INCOME", "INCOME_TAX_REFUND")
+
+
+def is_tax_refund(description: str | None, pfc_detailed: str | None = None) -> bool:
+    return pfc_detailed == "INCOME_TAX_REFUND" or bool(TAX_REFUND_WORDS.search(description or ""))
+
+
+def inflow_hint(description: str | None, account_type: str | None, amount: float) -> tuple[str | None, str | None]:
+    """(pfc_primary, pfc_detailed) for a row from a provider that sends no category: only money IN (the app's amount
+    < 0) can get one, money out gets none. In this order:
+      1. on a credit card or loan, a line whose description names a payment is that account's own payment
+         (CARD_PAYMENT_HINT: a transfer);
+      2. on a bank account, a description that names a tax refund (TAX_REFUND_WORDS) is INCOME_TAX_REFUND: it stays
+         Income, ahead of the refund rule below;
+      3. a description with the whole word REFUND, RETURN or REVERSAL, or the phrase CREDIT VOUCHER, gets none: a
+         refund is never Income, so it stays undecided and nets against spending;
+      4. every other inflow on a credit card or loan gets none either (a merchant credit is a refund);
+      5. a description that says TRANSFER or XFER is a transfer in (TRANSFER_IN_HINT);
+      6. any other inflow on a bank account (or an account of unknown type) is income (INCOME_HINT).
+    A rule or the user's own filing still wins over all of these: apply() checks rules first and never touches a
+    user's choice."""
+    if amount >= 0:
+        return None, None
+    text = description or ""
+    on_credit = account_type in ("credit", "loan")
+    if on_credit and CARD_PAYMENT_WORDS.search(text):
+        return CARD_PAYMENT_HINT
+    if not on_credit and TAX_REFUND_WORDS.search(text):
+        return INCOME_TAX_REFUND_HINT
+    if REFUND_WORDS.search(text) or on_credit:
+        return None, None
+    if _TRANSFER_WORDS.search(text):
+        return TRANSFER_IN_HINT
+    return INCOME_HINT
+
+
 def apply(conn: sqlite3.Connection) -> dict[str, int]:
     """(a) apply rules, (b) fill Plaid-mapped defaults, for everything not decided by ai/user."""
     rules = load_rules(conn)
@@ -173,8 +242,15 @@ def apply(conn: sqlite3.Connection) -> dict[str, int]:
             rule = next((r for r in rules if r.matches(t)), None)
             if rule:
                 new = (rule.category_id, "rule", rule.id, f"rule #{rule.id}")
+            elif t["source"] == "simplefin" and not t["pfc_primary"]:
+                # SimpleFIN sends no category, and a money-out row has no hint (inflow_hint): it stays
+                # undecided for the AI / a person. A 'plaid' filing left by an earlier hint (the row's sign changed) goes.
+                if t["cur_source"] == "plaid":
+                    conn.execute("DELETE FROM classifications WHERE transaction_id = ? AND source = 'plaid'",
+                                 (t["transaction_id"],))
+                continue
             else:
-                new = (plaid_default(conn, t["pfc_detailed"], t["pfc_primary"]), "plaid", None, None)
+                new = (default_filing(conn, t), "plaid", None, None)
             if (t["cur_category"], t["cur_source"], t["cur_rule"]) == new[:3]:
                 counts["unchanged"] += 1
                 continue
@@ -290,7 +366,7 @@ def _release(conn: sqlite3.Connection, rule_id: int) -> int:
             continue
         rule = next((r for r in rules if r.matches(t)), None)
         new = ((rule.category_id, "rule", rule.id, f"rule #{rule.id}") if rule
-               else (plaid_default(conn, t["pfc_detailed"], t["pfc_primary"]), "plaid", None, None))
+               else (default_filing(conn, t), "plaid", None, None))
         _file(conn, t["transaction_id"], new, ts, ("rule",))
         n += 1
     return n

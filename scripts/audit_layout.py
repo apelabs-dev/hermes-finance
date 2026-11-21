@@ -769,12 +769,17 @@ for (const cv of [...document.querySelectorAll('canvas')].filter((c) => roots.so
       // These checks read pixels, so the ring's current frame must be painted first. The app's charts grow in (400ms,
       // and this harness pins prefers-reduced-motion: no-preference) and a responsive chart is cleared by a resize
       // that a ResizeObserver delivers; neither is something __settled can see inside Chart.js. A sample taken then
-      // sees transparent pixels, which is a race in this harness, not a notch. Finish a running grow-in at its end
-      // state (update('none') draws now), deliver a pending resize, and if the canvas is still blank draw once more
-      // before judging. A chart that is already painted is left alone: the plants below paint their notches after
-      // Chart.js's own draw, and a needless redraw would erase the very bug the check must catch.
+      // sees a partial sweep or transparent pixels, which is a race in this harness, not a notch. The state that
+      // matters is Chart.js's own animator (Chart.animator) — a chart instance has no $animations — and while it
+      // holds a chart's animation items update() draws nothing (it only starts the animator), so the grow-in is
+      // stopped and its end state drawn now. Deliver a pending resize first, then stop, and if the canvas is still
+      // blank draw once more before judging. A chart that is already painted is left alone: the plants below paint
+      // their notches after Chart.js's own draw, and a needless redraw would erase the very bug the check must catch.
+      const animator = window.Chart && window.Chart.animator;
+      const growing = !!(animator && animator.has(ch));   // a grow-in is pending: this canvas holds a partial sweep
       if (Math.abs(ch.width - cv.clientWidth) > 1 || Math.abs(ch.height - cv.clientHeight) > 1) ch.resize();
-      if (ch.$animations && Object.keys(ch.$animations).length) ch.update('none');
+      let stopped = !!(animator && animator.has(ch));
+      if (stopped) { animator.stop(ch); ch.update('none'); }
       let arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
       let r = (arc.innerRadius + arc.outerRadius) / 2;
       const dpr = ch.currentDevicePixelRatio;
@@ -804,6 +809,7 @@ for (const cv of [...document.querySelectorAll('canvas')].filter((c) => roots.so
       };
       let samples = grab();
       if (samples.length && samples.every((p) => p[5] === 0)) {   // still blank (a cleared canvas): draw once more
+        if (animator && animator.has(ch)) { animator.stop(ch); stopped = true; }
         ch.update('none');
         arc = ch.getDatasetMeta(0).data.find((a) => a.circumference > 0);
         r = (arc.innerRadius + arc.outerRadius) / 2;
@@ -832,7 +838,7 @@ for (const cv of [...document.querySelectorAll('canvas')].filter((c) => roots.so
         startAngle: +arc.startAngle.toFixed(4), circumference: +arc.circumference.toFixed(4),
         rotation, optionCircumference: sweepDeg}, dpr,
         canvas: {css: [+C.width.toFixed(2), +C.height.toFixed(2)], device: [cw, chh]},
-        borderWidth: ds.borderWidth, samples};
+        borderWidth: ds.borderWidth, samples, growIn: growing, growStopped: stopped};
       if (sweep < 2 * Math.PI - 1e-3 || sweepDeg < 360 - 0.06)
         fail('charts', `a one-slice doughnut drawn as a partial ring (sweep ${Math.min(sweep * 180 / Math.PI, sweepDeg).toFixed(1)} deg)`, [cv], detail);
       if (!rgb) {
@@ -1824,6 +1830,55 @@ CHART_PLANT_JS = r"""(() => {
 CHART_UNPLANT_JS = ("(() => { (window.__plantcharts || []).forEach((c) => c.destroy()); window.__plantcharts = [];"
                     " const h = document.getElementById('plantchart-card'); if (h) h.remove(); return 1; })()")
 
+# charts, the grow-in: the app's doughnuts grow in over 400 ms (the harness pins prefers-reduced-motion: no-preference),
+# and Chart.js's animator holds a chart's update() until the animation is done. The plant below is the same one-slice ring
+# as the painted() control, but animated for GROW_MS: long enough that the judge cannot outlast it. A check that samples a
+# partial sweep there has not seen a notch, only the harness racing the grow-in (the nocaps Nightly flake).
+GROW_MS = 10_000       # the plant's grow-in: long enough that no judging pass can outlast it
+PART_DRAWN = 0.6       # rad of sweep the ring must have before the check judges it (a tenth of the circle: ~1 s of
+                       # GROW_MS, leaving ~9 s of animation). Below this the check's blank fallback would draw the end
+                       # state for the wrong reason, and neither branch of the fix would be exercised.
+GROW_PLANT_JS = r"""(() => {
+  const holder = Object.assign(document.createElement('div'), {id: 'plantgrow-card', className: 'card'});
+  holder.style.cssText = 'display:flex;gap:12px;align-items:flex-start;width:fit-content';
+  document.getElementById('page').append(holder);
+  const w = 200, h = 200, dpr = window.devicePixelRatio || 1;
+  const box = Object.assign(document.createElement('div'), {id: 'plantgrow-box'});
+  box.style.cssText = `position:relative;width:${w}px;height:${h}px;flex:0 0 auto`;
+  const cv = Object.assign(document.createElement('canvas'), {className: 'plantchart-grow', width: w, height: h});
+  cv.style.cssText = `display:block;width:${w}px;height:${h}px`;
+  box.append(cv);
+  holder.append(box);
+  const chart = new window.Chart(cv, {type: 'doughnut',
+    data: {labels: ['plantchart-grow'], datasets: [{data: [100], backgroundColor: ['#7bd88f'], borderWidth: 0}]},
+    options: {responsive: false, maintainAspectRatio: false, animation: {duration: GROW_MS}, cutout: '76%',
+      layout: {padding: 6}, devicePixelRatio: dpr, rotation: 0, circumference: 360,
+      plugins: {legend: {display: false}, tooltip: {enabled: false}}}});
+  window.__plantgrow = {chart, canvas: cv, heldAtPlant: !!(window.Chart.animator && window.Chart.animator.has(chart))};
+  // Wait until the ring is genuinely part-painted, not merely one frame old: at the first frames it is so thin that
+  // every sample the check takes is transparent and the check's blank fallback would draw the end state for the wrong
+  // reason (measured: a check that skipped stop() still passed then). Bounded, so a chart that never animates cannot
+  // hang the self-test: the circumference assertion below fails instead.
+  return new Promise((done) => {
+    let n = 0;
+    const tick = () => {
+      const arc = chart.getDatasetMeta(0).data[0];
+      if (++n >= 120 || (arc && Math.abs(arc.circumference) >= PART_DRAWN)) return done(1);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+})()""".replace("GROW_MS", str(GROW_MS)).replace("PART_DRAWN", str(PART_DRAWN))
+GROW_STATE_JS = r"""(() => {
+  const g = window.__plantgrow, animator = window.Chart && window.Chart.animator;
+  if (!g) return {heldAtPlant: false, pendingNow: false, circumference: 0, full: 2 * Math.PI};
+  const arc = g.chart.getDatasetMeta(0).data.find((a) => a.circumference > 0);
+  return {heldAtPlant: g.heldAtPlant, pendingNow: !!(animator && animator.has(g.chart)),
+          circumference: arc ? Math.abs(arc.circumference) : 0, full: 2 * Math.PI};
+})()"""
+GROW_UNPLANT_JS = ("(() => { const g = window.__plantgrow; if (g) g.chart.destroy(); window.__plantgrow = null;"
+                   " const h = document.getElementById('plantgrow-card'); if (h) h.remove(); return 1; })()")
+
 
 def selftest(b: Chrome, base: str, emit) -> None:
     """Plant one bug per new check on the Overview at 1440 (where the tiles sit side by side; TASK-20's tap check at 390,
@@ -1895,6 +1950,23 @@ def selftest(b: Chrome, base: str, emit) -> None:
     b.js(CHART_UNPLANT_JS)
     settled("chart plants removed")
     left += [v for v in b.js(f"{CHECK_JS}('page')")["violations"] if "plantchart" in json.dumps(v)]
+    # charts, the grow-in: a one-slice doughnut still growing in when it is judged is a correct control — a partial
+    # sweep there is the harness sampling mid-animation, not a notch (the nocaps Nightly flake). Judged with no
+    # settled() in between: the grow-in has to still be running when the check reads it.
+    b.js(GROW_PLANT_JS)
+    was = b.js(GROW_STATE_JS)
+    assert was["heldAtPlant"], f"layout gate self-test: the grow-in plant never animated ({was})"
+    assert PART_DRAWN <= was["circumference"] < was["full"], \
+        f"layout gate self-test: the grow-in was not judged part-way round ({was})"
+    assert was["pendingNow"], f"layout gate self-test: the grow-in finished before the check judge it ({was})"
+    judge("charts-grow", [json.dumps(v) for v in b.js(f"{CHECK_JS}('page')")["violations"] if v["check"] == "charts"],
+          (), ("plantchart-grow",))
+    now = b.js(GROW_STATE_JS)
+    assert not now["pendingNow"], f"layout gate self-test: the check left the grow-in running ({now})"
+    assert now["circumference"] == now["full"], f"layout gate self-test: the grow-in was not drawn at its end state ({now})"
+    b.js(GROW_UNPLANT_JS)
+    settled("grow-in plant removed")
+    left += [v for v in b.js(f"{CHECK_JS}('page')")["violations"] if "plantgrow" in json.dumps(v)]
     # TASK-20, tap (phones only): at 390 a planted 30px button and a lone small link are caught; the same button with a
     # transparent 44px ::before hit box, and a link inside a sentence, are not
     b.size(390, HEIGHT[390])

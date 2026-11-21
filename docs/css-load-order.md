@@ -9,22 +9,24 @@ page lists the order `web.py` sends, and the rules for putting a rule in the rig
 The app page (`web.render_page`):
 
 1. `app.css`
-2. `goals.css`
-3. `txmeta.css`
-4. `billcal.css`
-5. `rollover.css`
-6. `alpaca.css`
-7. `bills.css`
-8. `chat.css`
-9. `catpick.css`
-10. `txfilter.css`
-11. `wherewent.css`
-12. `budgets.css`
-13. `settings.css`
-14. `light.css`
-15. `tap.css`
+2. `iconpick.css`
+3. `goals.css`
+4. `txmeta.css`
+5. `billcal.css`
+6. `rollover.css`
+7. `alpaca.css`
+8. `bills.css`
+9. `chat.css`
+10. `catpick.css`
+11. `txfilter.css`
+12. `wherewent.css`
+13. `simplefin.css`
+14. `budgets.css`
+15. `settings.css`
+16. `light.css`
+17. `tap.css`
 
-Sheets 2 to 12 are the feature sheets, in `web.FEATURE_FILES` order. Each entry there also loads its `.js`, so a
+Sheets 2 to 14 are the feature sheets, in `web.FEATURE_FILES` order. Each entry there also loads its `.js`, so a
 feature sheet always comes with a script of the same name.
 
 The sign-in and first-run page: `app.css`, `settings.css`, `light.css`, `tap.css` (`web.render_login_page`; no feature sheet).

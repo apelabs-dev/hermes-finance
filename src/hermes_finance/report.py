@@ -109,8 +109,10 @@ def status_text(s: dict[str, Any]) -> str:
         for a in it["accounts"]:
             lines.append(
                 f"    {account_name(a['name'], a['mask']) or '?'} ••{a['mask'] or '----'}  {a['type']}/{a['subtype']}  "
-                f"current {money(a['current_balance'])}  available {money(a['available_balance'])}"
-                + (f"  limit {money(a['credit_limit'])}" if a["credit_limit"] is not None else "")
+                f"current {money(a['current_balance'], currency=a['iso_currency'])}  "
+                f"available {money(a['available_balance'], currency=a['iso_currency'])}"
+                + (f"  limit {money(a['credit_limit'], currency=a['iso_currency'])}"
+                   if a["credit_limit"] is not None else "")
                 + ("  left out by the account policy" if a.get("excluded") else "")
                 + f" {a['iso_currency'] or ''}")
     return "\n".join(lines)

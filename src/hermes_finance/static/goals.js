@@ -4,7 +4,8 @@
  * when it closes (POST /api/goals/edit). Every string from the server goes in as text (h()), never as markup. */
 (window.HF_EXT = window.HF_EXT || []).push((X) => {
   'use strict';
-  const {h, fill, icon, glyph, plural, clamp, sum, money, money2, bigMoney, pct, monthName, monthShort, monthYear, thisMonth,
+  const gm = (g, x, cents = false) => moneyIn(g.currency, x, cents);
+  const {h, fill, icon, glyph, plural, clamp, sum, money, money2, moneyIn, bigMoney, pct, monthName, monthShort, monthYear, thisMonth,
     addMonths, fmtDate, RGB, OK, WARN, ACC, ibadge, ring, pill, tag, track, api, post, PAGES, S, RENDER, HOOKS, openSheet,
     closeModal, closeBtn, toast, card, small, skeleton, errorCard, pack, parseAmount, acctName, nameMask} = X;
 
@@ -35,22 +36,22 @@
   // Historical growth without a deadline; otherwise the required monthly saving or Past due.
   function paceLine(g) {
     const p = g.pace || {};
-    const trend = p.growth_90d > 0.5 ? `+${money(p.growth_90d)} in the last 90 days` : p.growth_90d < -0.5
-      ? `${money(p.growth_90d)} in the last 90 days` : 'No change in the last 90 days';
+    const trend = p.growth_90d > 0.5 ? `+${gm(g, p.growth_90d)} in the last 90 days` : p.growth_90d < -0.5
+      ? `${gm(g, p.growth_90d)} in the last 90 days` : 'No change in the last 90 days';
     if (p.past_due) return [h('b', {class: 'bad'}, 'Past due')];
     if (p.need_per_month != null) {
-      return [h('b', {}, `${money(p.need_per_month)} a month to reach it on time`),
+      return [h('b', {}, `${gm(g, p.need_per_month)} a month to reach it on time`),
         h('span', {class: 'dim'}, ` · ${trend}`)];
     }
     if (p.on_pace_month) {
       return [h('b', {class: 'pos'}, `On pace for ${monthYear(p.on_pace_month)}`),
-        h('span', {class: 'dim'}, ` · ${trend}, about ${money(p.per_month)} a month`)];
+        h('span', {class: 'dim'}, ` · ${trend}, about ${gm(g, p.per_month)} a month`)];
     }
     return [h('b', {}, 'Not growing yet'), h('span', {class: 'dim'}, ` · ${trend}. Add a month to see what to save.`)];
   }
 
   function doneLine(g) {
-    return h('div', {class: 'gdone'}, h('p', {class: 'gpace'}, h('b', {class: 'pos'}, `100% of ${money(g.target)} saved`),
+    return h('div', {class: 'gdone'}, h('p', {class: 'gpace'}, h('b', {class: 'pos'}, `100% of ${gm(g, g.target)} saved`),
       h('span', {class: 'dim'}, ' · you reached it')),
     h('div', {class: 'row'},
       h('button', {class: 'btn sm ghost', type: 'button', onclick: (e) => { e.stopPropagation(); archive(g); }}, icon('archive'), 'Archive'),
@@ -76,12 +77,12 @@
     const ratio = g.target ? g.progress / g.target : 0;
     let fig;
     if (g.kind === 'payoff') {
-      fig = h('div', {class: 'grow'}, h('div', {class: 'big s v'}, money(g.progress)),
-        h('div', {class: 'mut'}, `paid off of ${money(g.target)} · `, h('span', {}, `${money(g.remaining || 0)} left`)));
+      fig = h('div', {class: 'grow'}, h('div', {class: 'big s v'}, gm(g, g.progress)),
+        h('div', {class: 'mut'}, `paid off of ${gm(g, g.target)} · `, h('span', {}, `${gm(g, g.remaining || 0)} left`)));
     } else {
-      fig = h('div', {class: 'grow'}, h('div', {class: 'big s v'}, money2(g.progress)),
-        h('div', {class: 'mut'}, `of ${money(g.target)}${g.target_month ? ` by ${monthYear(g.target_month)}` : ''} · `,
-          h('span', {}, `${money(g.left || 0)} left`)));
+      fig = h('div', {class: 'grow'}, h('div', {class: 'big s v'}, gm(g, g.progress, true)),
+        h('div', {class: 'mut'}, `of ${gm(g, g.target)}${g.target_month ? ` by ${monthYear(g.target_month)}` : ''} · `,
+          h('span', {}, `${gm(g, g.left || 0)} left`)));
     }
     let foot;
     if (g.missing_account) {
@@ -93,8 +94,8 @@
       const po = g.payoff;
       foot = h('p', {class: 'gpace'}, g.done ? h('b', {class: 'pos'}, 'Paid off') : po && po.payoff_month
         ? [h('b', {class: 'pos'}, `Paid off ${monthYear(po.payoff_month)}`), po.monthly_payment
-          ? h('span', {class: 'dim'}, ` · ${money2(po.monthly_payment)} a month, ${plural(po.payments_left, 'payment')} left`) : null]
-        : [h('b', {}, `${money(g.remaining || 0)} to go`), h('span', {class: 'dim'}, ' · add a monthly payment on Loans & debt to see when')]);
+          ? h('span', {class: 'dim'}, ` · ${gm(g, po.monthly_payment, true)} a month, ${plural(po.payments_left, 'payment')} left`) : null]
+        : [h('b', {}, `${gm(g, g.remaining || 0)} to go`), h('span', {class: 'dim'}, ' · add a monthly payment on Loans & debt to see when')]);
     } else {
       foot = h('p', {class: 'gpace'}, paceLine(g));
     }
@@ -102,9 +103,9 @@
       'aria-label': `${g.name}: ${pctText(g)} · open to change it`},
     h('div', {class: 'hd'}, ibadge(iconName, rgb), h('span', {class: 'grow'}, h('b', {}, g.name), whereLine(g))),
     h('div', {class: 'gfig'}, ring(ratio, color, 78, 8, h('b', {class: 'v', style: {'font-size': '16px'}}, pctText(g))), fig),
-    g.short ? h('div', {class: 'gshort'}, pill('bad sm', 'alert', `Short by ${money2(g.short.amount)}`),
+    g.short ? h('div', {class: 'gshort'}, pill('bad sm', 'alert', `Short by ${gm(g, g.short.amount, true)}`),
       h('p', {}, `${g.account ? acctName(g.account.label) : 'Its account'} now holds less than its goals set aside: `
-        + `${money2(g.short.covered)} of this goal's ${money2(g.progress)} is covered.`)) : null,
+        + `${gm(g, g.short.covered, true)} of this goal's ${gm(g, g.progress, true)} is covered.`)) : null,
     foot);
     const open = () => editSheet(g);
     el.addEventListener('click', (e) => { if (!e.target.closest('button')) open(); });
@@ -116,7 +117,7 @@
     return h('section', {class: 'card goal gempty', dataset: {suggest: s.id}},
       h('div', {class: 'hd'}, ibadge('piggy', RGB.ok), h('span', {class: 'grow'}, h('b', {}, acctName(s.name)),
         h('span', {}, `Save up · ${s.vault ? 'vault' : 'savings'}${s.mask ? ` ••${s.mask}` : ''}`))),
-      h('div', {class: 'gnow'}, h('span', {class: 'mut'}, 'In it now'), h('b', {class: 'v'}, money2(s.balance))),
+      h('div', {class: 'gnow'}, h('span', {class: 'mut'}, 'In it now'), h('b', {class: 'v'}, moneyIn(s.currency, s.balance, true))),
       h('div', {class: 'row'},
         h('button', {class: 'btn sm', type: 'button', onclick: () => newGoalSheet('save', {name: acctName(s.name), track: 'account', account_id: s.id})},
           icon('target'), 'Set a target'),
@@ -161,11 +162,11 @@
     const partial = g.months.some((m) => m.coverage === 'partial');
     const el = card({cls: 's2 mscard', title: g.name, icon: goalIcon(g), rgb: goalRGB(g), extra: small('income − spending')},
       h('div', {class: 'msrow'},
-        ring(g.target ? g.progress / g.target : 0, goalColour(g), 96, 9, h('b', {class: 'v', style: {'font-size': '19px'}}, pctText(g)), h('small', {}, `of ${money(g.target)}`)),
+        ring(g.target ? g.progress / g.target : 0, goalColour(g), 96, 9, h('b', {class: 'v', style: {'font-size': '19px'}}, pctText(g)), h('small', {}, `of ${gm(g, g.target)}`)),
         h('div', {class: 'grow'}, bigMoney(g.progress, 'md'),
           h('div', {class: 'sub'}, `saved in ${monthName(g.month)} so far · `,
-            togo > 0 ? [h('b', {}, `${money2(togo)} to go`), ` with ${plural(daysLeft, 'day')} left`] : h('b', {class: 'pos'}, 'target reached')),
-          h('div', {class: 'sub dim'}, `Income ${money2(g.income)} − spending ${money2(g.spending)}`))),
+            togo > 0 ? [h('b', {}, `${gm(g, togo, true)} to go`), ` with ${plural(daysLeft, 'day')} left`] : h('b', {class: 'pos'}, 'target reached')),
+          h('div', {class: 'sub dim'}, `Income ${gm(g, g.income, true)} − spending ${gm(g, g.spending, true)}`))),
       savingsBars(g.months, g.target),
       partial ? h('div', {class: 'sub help-line'}, h('span', {}, 'Faded months: incomplete history'),
         X.help('Incomplete goal history', 'Not every bank was linked for the faded months. Their totals may be incomplete.', {key: 'goal-history'})) : null);
@@ -264,47 +265,49 @@
   }
 
   // ---- the sheets --------------------------------------------------------------------------------------------------
-  const moneyIn = (label, value, id) => {
+  const moneyField = (label, value, id, currency) => {
     const input = h('input', {type: 'text', inputmode: 'decimal', autocomplete: 'off', id, 'aria-label': label,
-      value: value != null ? X.money2(value).replace(/^\$/, '').replace(/^−\$/, '-') : ''});
-    return [h('div', {class: 'inp'}, h('span', {class: 'pre', 'aria-hidden': 'true'}, '$'), input), input];
+      value: value != null ? String(value) : ''});
+    return [h('div', {class: 'inp'}, h('span', {class: 'pre', 'aria-hidden': 'true'},
+      X.currencyPrefix(currency)), input), input];
   };
   const fld = (label, control, opts = {}) => h('div', {class: `fld${opts.half ? ' h' : ''}`, dataset: opts.key ? {f: opts.key} : null},
     h('label', {for: opts.for}, label, opts.optional ? h('em', {}, 'optional') : null), control, h('p', {class: 'ferr', role: 'alert'}));
   const choice = (on, iconName, rgb, title, text) => h('button', {class: `choice${on ? ' on' : ''}`, type: 'button', role: 'radio',
     'aria-checked': String(on)}, ibadge(iconName, rgb), h('span', {class: 'grow'}, h('b', {}, title), h('span', {}, text)), h('span', {class: 'rad'}));
-  const accountOpt = (a, selected) => h('option', {value: a.id, selected}, `${acctName(a.label)} · ${money2(a.balance)}`);
+  const accountOpt = (a, selected) => h('option', {value: a.id, selected}, `${acctName(a.label)} · ${moneyIn(a.currency, a.balance, true)}`);
   const monthInput = (value, id) => h('input', {type: 'month', id, 'aria-label': 'By', value: value || '', min: thisMonth()});
 
-  // The API owns the exact whitelist. Buttons expose selection independently of colour.
+  // The API owns the exact whitelist (the same 100 icons categories use): the shared picker draws them, and the eight
+  // colour swatches stay exactly as they were. Buttons expose selection independently of colour.
   function appearancePicker(d, state) {
     const preview = h('div', {class: 'gappearance-preview', 'aria-live': 'polite'});
-    const icons = h('div', {class: 'gicons', role: 'group', 'aria-label': 'Goal icon'});
+    const iconSlot = h('div');
     const colours = h('div', {class: 'gcolours', role: 'group', 'aria-label': 'Goal colour'});
     const colourNames = ['Mint', 'Blue', 'Cyan', 'Purple', 'Amber', 'Pink', 'Coral', 'Slate'];
+    let lastRgb = goalRGB(state);
+    const drawPreview = () => fill(preview, ibadge(goalIcon(state), goalRGB(state)), h('span', {}, 'Your goal’s look'));
+    const mountIcons = () => fill(iconSlot, X.iconPicker({
+      rgb: goalRGB(state), value: state.icon, quick: d.appearance.quick, label: 'Goal icon',
+      onPick: (name) => { state.icon = name; drawPreview(); }
+    }));
     const draw = () => {
-      fill(preview, ibadge(goalIcon(state), goalRGB(state)), h('span', {}, 'Your goal’s look'));
-      icons.querySelectorAll('button').forEach((b) => {
-        b.setAttribute('aria-pressed', String(b.dataset.icon === state.icon));
-        b.style.setProperty('--rgb', goalRGB(state));
-      });
+      drawPreview();
+      if (goalRGB(state) !== lastRgb) { lastRgb = goalRGB(state); mountIcons(); }
       colours.querySelectorAll('button').forEach((b) => {
         const selected = b.dataset.colour === state.colour;
         b.setAttribute('aria-pressed', String(selected));
         fill(b, selected ? icon('check') : null);
       });
     };
-    d.appearance.icons.forEach((name) => icons.append(h('button', {
-      class: 'cb gicon', type: 'button', dataset: {icon: name}, 'aria-label': name.replaceAll('-', ' '),
-      title: name.replaceAll('-', ' '), onclick: () => { state.icon = name; draw(); }
-    }, glyph(name))));
     d.appearance.colours.forEach((colour, i) => colours.append(h('button', {
       class: 'gcolour', type: 'button', dataset: {colour}, 'aria-label': colourNames[i], title: colourNames[i],
       style: {'--swatch': colour}, onclick: () => { state.colour = colour; draw(); }
     })));
+    mountIcons();
     draw();
     return h('div', {class: 'gappearance'}, preview,
-      fld('Icon', icons, {key: 'icon'}), fld('Colour', colours, {key: 'colour'}));
+      fld('Icon', iconSlot, {key: 'icon'}), fld('Colour', colours, {key: 'colour'}));
   }
 
   function showErrors(sheet, e) {
@@ -337,7 +340,7 @@
       seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === st.kind)));
       create.disabled = false;
       if (st.kind === 'monthly') {
-        const [box, input] = moneyIn('Monthly target', null, 'g-target');
+        const [box, input] = moneyField('Monthly target', null, 'g-target', X.CUR.code);
         inputs.target = input;
         fill(body, h('div', {class: 'flds'}, fld('Save each month', box, {key: 'target', for: 'g-target'})),
           h('p', {class: 'hint'}, `Income minus spending, the same numbers as the Overview's cash flow. This month so far: ${money2(d.cashflow[d.cashflow.length - 1].net)}.`));
@@ -356,7 +359,8 @@
         return;
       }
       const name = h('input', {id: 'g-name', 'aria-label': 'Name', maxlength: '60', value: prefill.name || '', placeholder: 'e.g. New laptop'});
-      const [tbox, target] = moneyIn('Target', null, 'g-target');
+      const stTarget = () => (d.accounts.find((a) => a.id === st.account) || {}).currency || X.CUR.code;
+        const [tbox, target] = moneyField('Target', null, 'g-target', stTarget());
       const by = monthInput(null, 'g-by');
       Object.assign(inputs, {name, target, by});
       const slot = h('div', {class: 'trk'});
@@ -385,7 +389,7 @@
           sel.addEventListener('change', () => { st.account = sel.value; });
           return h('div', {class: 'trkd'}, fld('Account', h('div', {class: 'inp sel'}, sel), {key: 'account_id', for: 'g-acct'}));
         }
-        const [abox, amt] = moneyIn('Amount to set aside', null, 'g-earmark');
+        const [abox, amt] = moneyField('Amount to set aside', null, 'g-earmark', X.CUR.code);
         inputs.earmark = amt;
         const unas = h('b', {class: 'v'});
         const unasLbl = h('span', {});
@@ -393,15 +397,17 @@
         const upd = () => {
           const a = d.accounts.find((x) => x.id === sel.value) || usable[0];
           st.account = a.id;
+          const pre = amt.parentNode.querySelector('.pre');
+          if (pre) pre.textContent = X.currencyPrefix(a.currency);
           unasLbl.textContent = `Unassigned in ${acctName(a.name) || 'this account'}`;
-          unas.textContent = money2(a.unassigned);
+          unas.textContent = moneyIn(a.currency, a.unassigned, true);
           const n = amt.value.trim() === '' ? 0 : parseAmount(amt.value);
           const bad = n == null || Number.isNaN(n) || n < 0 || Math.round(n * 100) > Math.round(a.unassigned * 100);
           amt.toggleAttribute('aria-invalid', bad);
           create.disabled = bad;
           left.className = `${bad ? 'ferr' : 'hint'} gleft`;
-          left.textContent = bad ? `Only ${money2(a.unassigned)} is unassigned in ${acctName(a.name) || 'this account'}. Set aside that much or less.`
-            : `After this, ${money2(a.unassigned - (n || 0))} stays unassigned.`;
+          left.textContent = bad ? `Only ${moneyIn(a.currency, a.unassigned, true)} is unassigned in ${acctName(a.name) || 'this account'}. Set aside that much or less.`
+            : `After this, ${moneyIn(a.currency, a.unassigned - (n || 0), true)} stays unassigned.`;
         };
         sel.addEventListener('change', upd);
         amt.addEventListener('input', upd);
@@ -460,13 +466,13 @@
     const sheet = X.$('sheet');
     const inputs = {};
     const kids = [h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, g.name), closeBtn()),
-      h('p', {}, `${KIND_LABEL[g.kind]} · ${g.excluded_account ? 'excluded' : pctText(g)}${!g.excluded_account && g.target ? ` of ${money(g.target)}` : ''}`)];
+      h('p', {}, `${KIND_LABEL[g.kind]} · ${g.excluded_account ? 'excluded' : pctText(g)}${!g.excluded_account && g.target ? ` of ${gm(g, g.target)}` : ''}`)];
     const flds = h('div', {class: 'flds'});
     const name = h('input', {id: 'ge-name', 'aria-label': 'Name', maxlength: '60', value: g.name});
     inputs.name = name;
     flds.append(fld('Name', h('div', {class: 'inp'}, name), {key: 'name', for: 'ge-name'}));
     if (g.kind !== 'payoff') {
-      const [tbox, target] = moneyIn(g.kind === 'monthly' ? 'Save each month' : 'Target', g.target, 'ge-target');
+      const [tbox, target] = moneyField(g.kind === 'monthly' ? 'Save each month' : 'Target', g.target, 'ge-target', g.currency);
       inputs.target = target;
       flds.append(fld(g.kind === 'monthly' ? 'Save each month' : 'Target', tbox, {key: 'target', for: 'ge-target', half: g.kind === 'save'}));
     }
@@ -480,7 +486,7 @@
     if (g.track === 'earmark' && d) {
       const a = d.accounts.find((x) => x.id === g.account_id);
       const free = a ? r2(a.unassigned + (g.earmark || 0)) : 0;
-      const [abox, amt] = moneyIn('Amount set aside', g.earmark, 'ge-earmark');
+      const [abox, amt] = moneyField('Amount set aside', g.earmark, 'ge-earmark', g.currency);
       inputs.earmark = amt;
       const hint = h('p', {class: 'hint', 'aria-live': 'polite'});
       const upd = () => {
@@ -488,14 +494,14 @@
         const bad = n == null || Number.isNaN(n) || n < 0 || (Math.round(n * 100) > Math.round(free * 100) && n > (g.earmark || 0));
         amt.toggleAttribute('aria-invalid', bad);
         hint.className = bad ? 'ferr' : 'hint';
-        hint.textContent = bad ? `At most ${money2(free)} can be set aside in ${a ? acctName(a.name) : 'this account'}.` : `Up to ${money2(free)} available in ${a ? acctName(a.label) : 'this account'}.`;
+        hint.textContent = bad ? `At most ${gm(g, free, true)} can be set aside in ${a ? acctName(a.name) : 'this account'}.` : `Up to ${gm(g, free, true)} available in ${a ? acctName(a.label) : 'this account'}.`;
       };
       amt.addEventListener('input', upd);
       upd();
       kids.push(h('div', {class: 'flds'}, fld('Amount set aside', abox, {key: 'earmark', for: 'ge-earmark'})), hint);
     }
     if (g.track === 'manual') {
-      const [ebox, eamt] = moneyIn('Amount', null, 'ge-entry');
+      const [ebox, eamt] = moneyField('Amount', null, 'ge-entry', g.currency);
       const note = h('input', {id: 'ge-note', 'aria-label': 'Note', maxlength: '200', placeholder: 'e.g. Paycheck'});
       const addEntry = async (sign) => {
         const n = parseAmount(eamt.value);
@@ -510,7 +516,7 @@
           closeModal();
           editSheet(upd);
           if (S.page === 'goals') X.route({keepToast: true});
-          toast(sign > 0 ? `Added ${money2(n)}.` : `Took out ${money2(n)}.`, [], {timeout: 3000});
+          toast(sign > 0 ? `Added ${gm(g, n, true)}.` : `Took out ${gm(g, n, true)}.`, [], {timeout: 3000});
         } catch (e) {
           showErrors(sheet, e);
         }
@@ -522,7 +528,7 @@
           h('button', {class: 'btn sm ghost', type: 'button', onclick: () => addEntry(-1)}, 'Take out')),
         g.entries.length ? h('div', {class: 'gents'}, g.entries.map((e) => h('div', {class: 'li'},
           h('span', {class: 'grow'}, h('b', {}, fmtDate(e.date, true)), h('span', {}, e.note || (e.amount > 0 ? 'Added' : 'Taken out'))),
-          h('span', {class: `amt v${e.amount < 0 ? ' bad' : ''}`}, `${e.amount < 0 ? '−' : '+'}${money2(Math.abs(e.amount))}`))))
+          h('span', {class: `amt v${e.amount < 0 ? ' bad' : ''}`}, `${e.amount < 0 ? '−' : '+'}${gm(g, Math.abs(e.amount), true)}`))))
           : h('p', {class: 'hint'}, 'No entries yet.'));
     }
     kids.push(h('div', {class: 'row'}, h('button', {class: 'btn sm ghost', type: 'button', onclick: () => { saveOnClose.done = true; closeModal(); archive(g); }},

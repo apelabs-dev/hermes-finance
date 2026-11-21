@@ -66,19 +66,30 @@ def _investment_series(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     policy contribute nothing."""
     out: dict[str, dict[str, Any]] = {}
     policy = set(insights.excluded_accounts(conn))
+    display = insights._display(conn)
     for r in conn.execute(
             f"""SELECT s.account_id, s.date, SUM(COALESCE(s.value, 0)) FROM holding_snapshots s
                JOIN accounts a ON a.account_id = s.account_id JOIN items i ON i.item_id = a.item_id
                WHERE i.removed_at IS NULL AND {account_policy_sql("a")}
+                 AND {insights.currency_is_sql(display, "a.iso_currency")}
                GROUP BY s.account_id, s.date"""):
         out.setdefault(f"plaid:{r[0]}", {"values": {}, "until": None})["values"][r[1]] = r[2]
     for r in conn.execute(
-            """SELECT h.manual_account_id, h.date, h.balance, m.archived_at FROM manual_balance_history h
-               JOIN manual_accounts m ON m.id = h.manual_account_id WHERE m.kind = 'investment'"""):
+            f"""SELECT h.manual_account_id, h.date, h.balance, m.archived_at FROM manual_balance_history h
+               JOIN manual_accounts m ON m.id = h.manual_account_id WHERE m.kind = 'investment'
+                 AND {insights.currency_is_sql(display, "m.currency")}"""):
         if insights.manual_nw_id(r[0]) in policy:
             continue
         out.setdefault(f"manual:{r[0]}", {"values": {}, "until": insights.local_day(r[3])})["values"][r[1]] = r[2]
-    values = alpaca.value_series(conn) if alpaca.ACCOUNT_ID not in policy else {}  # TASK-19: the Alpaca live account
+    # Alpaca's past days stay on the line after the account closes; only its own currency is counted
+    try:
+        alp_ccy = {r[0] or display for r in conn.execute(
+            "SELECT DISTINCT currency FROM alpaca_snapshots WHERE counted = 1")}
+    except sqlite3.OperationalError:
+        alp_ccy = set()
+    values = (alpaca.value_series(conn)
+              if (not alp_ccy or display in {c.strip().upper() for c in alp_ccy})
+              and alpaca.ACCOUNT_ID not in policy else {})  # TASK-19: the Alpaca live account
     if values:
         out[f"plaid:{alpaca.ACCOUNT_ID}"] = {"values": values, "until": None}
     return out
@@ -130,9 +141,10 @@ RESIDUAL_MIN = 0.01 - 1e-9  # a balance/holdings gap under a cent isn't shown
 
 def investments(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
     policy = set(insights.excluded_accounts(conn))
+    display = insights._display(conn)
     accts = conn.execute(
-        f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.subtype, a.current_balance, a.updated_at,
-                  i.institution_name, i.institution_id, i.item_id
+        f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.subtype, a.current_balance, a.iso_currency,
+                  a.updated_at, i.institution_name, i.institution_id, i.item_id, i.provider
            FROM accounts a JOIN items i ON i.item_id = a.item_id
            WHERE i.removed_at IS NULL AND a.type = 'investment' AND {account_policy_sql("a")}
            ORDER BY i.created_at, a.name""").fetchall()
@@ -142,6 +154,7 @@ def investments(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
            JOIN accounts a ON a.account_id = h.account_id JOIN items i ON i.item_id = a.item_id
            LEFT JOIN security_logos sl ON sl.ticker = UPPER(h.ticker_symbol) AND sl.png IS NOT NULL
            WHERE i.removed_at IS NULL AND a.type = 'investment' AND {account_policy_sql("a")}
+             AND {insights.currency_is_sql(display, "a.iso_currency")}
            ORDER BY COALESCE(h.institution_value, 0) DESC, h.security_id""").fetchall()
     extra = [h for h in alpaca.holding_rows(conn) if h["account_id"] not in policy]  # its positions and cash
     if extra:
@@ -153,11 +166,15 @@ def investments(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
     for a in accts:
         value = a["current_balance"] if a["current_balance"] is not None else by_acct.get(a["account_id"], 0.0)
         kind = plaid_type(a["subtype"], a["name"])
+        currency = (a["iso_currency"] or "").strip().upper() or display
         count = sum(1 for h in holdings if h["account_id"] == a["account_id"])
         accounts.append({"id": a["account_id"], "name": a["name"], "official_name": a["official_name"],
                          "mask": a["mask"], "institution": a["institution_name"],
                          "institution_id": a["institution_id"], "subtype": a["subtype"],
                          "type": kind, "group": TYPE_GROUP[kind], "value": _r(value), "updated_at": a["updated_at"],
+                         "currency": currency, "counted": currency == display,
+                         "provider": (a["provider"] if "provider" in a.keys() else "alpaca"),
+                         "holdings_imported": (a["provider"] if "provider" in a.keys() else "alpaca") != "simplefin",
                          "manual": False, "stale": False, "holdings": count,
                          # Plaid snapshots the balance and the prices at slightly different times: what the balance
                          # has that its holdings + cash don't (negative when the holdings are worth more)
@@ -167,19 +184,21 @@ def investments(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
                    if r["kind"] == "investment" and insights.manual_nw_id(r["id"]) not in policy]
     for m in manual_rows:
         kind = MANUAL_TYPE.get(m["subtype"] or "other", "Other")
+        currency = (m.get("currency") or display).strip().upper()
         accounts.append({"id": f"manual:{m['id']}", "manual_id": m["id"], "name": m["name"], "official_name": None,
                          "mask": None, "institution": m["institution"], "subtype": m["subtype"], "type": kind,
                          "subtype_label": m["subtype_label"], "group": TYPE_GROUP[kind], "value": m["balance"],
                          "updated_at": m["updated_at"], "as_of": m["as_of"], "manual": True, "stale": m["stale"],
-                         "holdings": 0, "residual": 0.0})
-    total = _r(sum(a["value"] for a in accounts))
+                         "holdings": 0, "residual": 0.0, "currency": currency, "counted": currency == display})
+    counted = [a for a in accounts if a["counted"]]
+    total = _r(sum(a["value"] for a in counted))
     hold_total = sum(h["institution_value"] or 0.0 for h in holdings)
     # hotfix 2026-10-05: what a holding's "% of portfolio" is of. Plaid can price the holdings after the balance (NVDA
     # $523.16 against a $511.55 balance), so a share of the balance total went past 100%. Each account counts at the
     # larger of its balance and its holdings (= the sum of the overview tile's positive slices), so no share passes
     # 100%. Equal to `total` whenever no account's holdings are priced above its balance.
     priced_total = _r(sum(max(a["value"], by_acct[a["id"]]) if not a["manual"] and a["holdings"] else a["value"]
-                          for a in accounts))
+                          for a in counted))
     rows = [{"account_id": h["account_id"], "account_name": h["account_name"], "mask": h["mask"],
              "ticker": h["ticker_symbol"], "name": h["security_name"], "type": h["security_type"],
              "quantity": h["quantity"], "price": h["institution_price"], "value": _r(h["institution_value"] or 0.0),
@@ -193,25 +212,25 @@ def investments(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
         e = by_holding.setdefault(key, {"label": key, "name": "Uninvested cash" if h["is_cash"] else h["name"],
                                         "value": 0.0, "cash": h["is_cash"]})
         e["value"] += h["value"]
-    plaid_without_holdings = [a for a in accounts if not a["manual"] and not a["holdings"] and a["value"]]
-    for a in plaid_without_holdings + [a for a in accounts if a["manual"]]:
+    plaid_without_holdings = [a for a in counted if not a["manual"] and not a["holdings"] and a["value"]]
+    for a in plaid_without_holdings + [a for a in counted if a["manual"]]:
         by_holding[a["id"]] = {"label": a["name"], "name": f"{a['type']}{' · added by you' if a['manual'] else ''}",
                                "value": a["value"], "cash": False, "manual": a["manual"]}
     alloc_holding = sorted(({**e, "value": _r(e["value"])} for e in by_holding.values()),
                            key=lambda e: (e.get("cash", False), -e["value"]))
     # the residual, below Cash, so the allocation adds up to the total (hidden under a cent)
-    residual = sum(a["value"] - by_acct[a["id"]] for a in accounts if not a["manual"] and a["holdings"])
+    residual = sum(a["value"] - by_acct[a["id"]] for a in counted if not a["manual"] and a["holdings"])
     if abs(residual) >= RESIDUAL_MIN:
         alloc_holding.append({"label": "Unpriced / pending", "name": "In the balance, not priced in holdings yet",
                               "value": _r(residual), "cash": False, "residual": True})
     by_type = {t: {"label": t, "value": 0.0, "count": 0} for t in TYPE_ORDER}
-    for a in accounts:
+    for a in counted:
         by_type[a["type"]]["value"] += a["value"]
         by_type[a["type"]]["count"] += 1
     alloc_type = [{**e, "value": _r(e["value"])} for t, e in by_type.items()
                   if e["count"] or t in ("Retirement", "Crypto")]
     groups = {g: {"label": g, "value": 0.0, "count": 0} for g in GROUP_ORDER}
-    for a in accounts:
+    for a in counted:
         groups[a["group"]]["value"] += a["value"]
         groups[a["group"]]["count"] += 1
     prices_as_of = max((h["updated_at"] for h in holdings), default=None)
@@ -267,20 +286,23 @@ def _matched(conn: sqlite3.Connection, row: sqlite3.Row, limit: int = 24) -> lis
 
 def debt(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
     policy = set(insights.excluded_accounts(conn))
+    display = insights._display(conn)
     liab = {(r["account_id"]): r for r in conn.execute(
         "SELECT * FROM liabilities ORDER BY CASE kind WHEN 'credit' THEN 0 ELSE 1 END")}
     plaid = conn.execute(
         f"""SELECT a.account_id, a.name, a.official_name, a.mask, a.type, a.subtype, a.current_balance, a.credit_limit,
-                  a.updated_at, i.institution_name, i.institution_id FROM accounts a JOIN items i ON i.item_id = a.item_id
+                  a.iso_currency, a.updated_at, i.institution_name, i.institution_id
+           FROM accounts a JOIN items i ON i.item_id = a.item_id
            WHERE i.removed_at IS NULL AND a.type IN ('credit', 'loan') AND {account_policy_sql("a")}
            ORDER BY i.created_at, a.name""").fetchall()
     cards, loans, others = [], [], []
     for a in plaid:
         l = liab.get(a["account_id"])
         bal = _r(a["current_balance"] or 0.0)
+        currency = (a["iso_currency"] or "").strip().upper() or display
         base = {"id": a["account_id"], "manual": False, "name": a["name"], "official_name": a["official_name"],
                 "institution": a["institution_name"], "institution_id": a["institution_id"], "mask": a["mask"],
-                "balance": bal,
+                "balance": bal, "currency": currency, "counted": currency == display,
                 "apr": l["interest_rate"] if l else None,
                 "due_date": l["next_payment_due_date"] if l else None, "updated_at": a["updated_at"]}
         if a["type"] == "credit":
@@ -301,9 +323,11 @@ def debt(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
         if r["kind"] not in manual.LIABILITY_KINDS or insights.manual_nw_id(r["id"]) in policy:
             continue
         m = manual.describe(conn, r, today)
+        currency = (m.get("currency") or display).strip().upper()
         base = {"id": m["id"], "manual": True, "name": m["name"], "official_name": None, "institution": m["institution"],
                 "mask": None, "balance": m["balance"], "apr": m["interest_rate"], "updated_at": m["updated_at"],
-                "stale": m["stale"], "as_of": m["as_of"], "balance_as_of": m["balance_as_of"]}
+                "stale": m["stale"], "as_of": m["as_of"], "balance_as_of": m["balance_as_of"],
+                "currency": currency, "counted": currency == display}
         if r["kind"] == "credit_card":
             lim = m["credit_limit"]
             cards.append({**base, "limit": lim, "util": _r(m["balance"] / lim * 100) if lim else None,
@@ -322,15 +346,18 @@ def debt(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
                           "applied_count": m["applied_count"]})
         else:
             others.append({**base, "subtype": m["subtype"]})
-    cards_total = _r(sum(c["balance"] for c in cards))
-    limit_total = _r(sum(c["limit"] or 0 for c in cards if c["limit"]))
+    cards_counted = [c for c in cards if c["counted"]]
+    loans_counted = [l for l in loans if l["counted"]]
+    others_counted = [o for o in others if o["counted"]]
+    cards_total = _r(sum(c["balance"] for c in cards_counted))
+    limit_total = _r(sum(c["limit"] or 0 for c in cards_counted if c["limit"]))
     groups = []
-    if cards:
-        util = _r(sum(c["balance"] for c in cards if c["limit"]) / limit_total * 100) if limit_total else None
-        groups.append({"key": "cards", "label": "Credit cards", "count": len(cards), "total": cards_total,
+    if cards_counted:
+        util = _r(sum(c["balance"] for c in cards_counted if c["limit"]) / limit_total * 100) if limit_total else None
+        groups.append({"key": "cards", "label": "Credit cards", "count": len(cards_counted), "total": cards_total,
                        "limit": limit_total, "util": util})
     by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for l in loans:
+    for l in loans_counted:
         by_type[l["subtype"]].append(l)
     for key in LOAN_LABELS:
         ls = by_type.get(key)
@@ -342,24 +369,26 @@ def debt(conn: sqlite3.Connection, today: date) -> dict[str, Any]:
                        "total": _r(sum(l["balance"] for l in ls)), "original": _r(orig) if orig else None,
                        "paid_pct": _r(min(max((orig - left) / orig, 0), 1) * 100) if orig else None,
                        "loans": [l["id"] for l in ls], "all_paid_off": all(l["paid_off"] for l in ls)})
-    if others:
-        groups.append({"key": "other", "label": "Other debts", "count": len(others),
-                       "total": _r(sum(o["balance"] for o in others))})
-    total = _r(cards_total + sum(l["balance"] for l in loans) + sum(o["balance"] for o in others))
-    loan_monthly = _r(sum(l["monthly_payment"] or 0 for l in loans if not l["paid_off"]))
-    card_minimums = _r(sum(c["min_payment"] or 0 for c in cards))
+    if others_counted:
+        groups.append({"key": "other", "label": "Other debts", "count": len(others_counted),
+                       "total": _r(sum(o["balance"] for o in others_counted))})
+    total = _r(cards_total + sum(l["balance"] for l in loans_counted) + sum(o["balance"] for o in others_counted))
+    loan_monthly = _r(sum(l["monthly_payment"] or 0 for l in loans_counted if not l["paid_off"]))
+    card_minimums = _r(sum(c["min_payment"] or 0 for c in cards_counted))
     upcoming = [{"date": c["due_date"], "name": c["name"], "institution": c["institution"], "kind": "card",
-                 "amount": c["min_payment"], "id": c["id"]}
-                for c in cards if c["min_payment"] and c["due_date"] and c["due_date"] >= today.isoformat()]
+                 "amount": c["min_payment"], "id": c["id"], "currency": c["currency"]}
+                for c in cards_counted if c["min_payment"] and c["due_date"] and c["due_date"] >= today.isoformat()]
     upcoming += [{"date": l["next_payment"], "name": l["name"], "institution": l["institution"], "kind": "loan",
-                  "amount": l["monthly_payment"], "id": l["id"], "type_label": l["type_label"]}
-                 for l in loans if l["next_payment"] and not l["paid_off"] and l["monthly_payment"]]
+                  "amount": l["monthly_payment"], "id": l["id"], "type_label": l["type_label"],
+                  "currency": l["currency"]}
+                 for l in loans_counted if l["next_payment"] and not l["paid_off"] and l["monthly_payment"]]
     upcoming.sort(key=lambda u: (u["date"], u["name"] or ""))
     year = str(today.year)
-    this_year = [p for l in loans for p in l["payments"] if p["date"].startswith(year)]
-    paid_off = [l for l in loans if l["paid_off"]]
+    this_year = [p for l in loans_counted for p in l["payments"] if p["date"].startswith(year)]
+    paid_off = [l for l in loans_counted if l["paid_off"]]
     return {
         "total": total,
+        "currency": display,
         "cards": cards,
         "loans": loans,
         "other": others,

@@ -108,7 +108,8 @@ def merchants(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     """Every merchant money went out to (and every tracked one): key -> {name (as shown, the latest), names (the
     statement names too, casefolded)}."""
     out: dict[str, dict[str, Any]] = {}
-    for r in conn.execute("SELECT merchant_name, name FROM v_transactions WHERE spend > 0 ORDER BY date, transaction_id"):
+    for r in conn.execute(f"SELECT merchant_name, name FROM v_transactions v WHERE spend > 0 AND {insights.currency_sql(conn)} "
+                          "ORDER BY date, transaction_id"):
         key = insights.merchant_key(r["merchant_name"], r["name"])
         if not key:
             continue
@@ -149,8 +150,8 @@ def find_merchant(conn: sqlite3.Connection, text: Any) -> tuple[str, str]:
 
 def latest_charge(conn: sqlite3.Connection, keys: list[str] | set[str]) -> sqlite3.Row | None:
     """The newest charge (money out) from any of the merchant's keys, on any account."""
-    for r in conn.execute("SELECT transaction_id, date, spend, merchant_name, name, category, pfc_detailed FROM v_transactions "
-                          "WHERE spend > 0 ORDER BY date DESC, transaction_id DESC"):
+    for r in conn.execute(f"SELECT transaction_id, date, spend, merchant_name, name, category, pfc_detailed FROM v_transactions v "
+                          f"WHERE spend > 0 AND {insights.currency_sql(conn)} ORDER BY date DESC, transaction_id DESC"):
         if insights.merchant_key(r["merchant_name"], r["name"]) in keys:
             return r
     return None
@@ -196,8 +197,8 @@ def _next_words(bill: dict[str, Any]) -> str:
 
 def _anchor(conn: sqlite3.Connection, keys: list[str], transaction_id: str | None) -> dict[str, Any]:
     if transaction_id is not None:
-        t = conn.execute("SELECT transaction_id, date, spend FROM v_transactions WHERE transaction_id = ?",
-                         (transaction_id,)).fetchone()
+        t = conn.execute(f"SELECT transaction_id, date, spend FROM v_transactions v WHERE transaction_id = ? "
+                         f"AND {insights.currency_sql(conn)}", (transaction_id,)).fetchone()
     else:
         t = latest_charge(conn, keys)
     if t is None or t["spend"] <= 0:
@@ -234,8 +235,8 @@ def plan(conn: sqlite3.Connection, today: date, action: Any, *, merchant: Any = 
         raise BillError("varies must be true (the amount changes each time) or false", field="varies")
     rec = rec if rec is not None else insights.recurring(conn, today)
     if transaction_id is not None:
-        t = conn.execute("SELECT merchant_name, name, spend FROM v_transactions WHERE transaction_id = ?",
-                         (str(transaction_id),)).fetchone()
+        t = conn.execute(f"SELECT merchant_name, name, spend FROM v_transactions v WHERE transaction_id = ? "
+                         f"AND {insights.currency_sql(conn)}", (str(transaction_id),)).fetchone()
         if t is None:
             raise BillError("unknown transaction", status=404, field="transaction_id")
         key, name = insights.merchant_key(t["merchant_name"], t["name"]), (t["merchant_name"] or t["name"] or "").strip()
@@ -335,8 +336,9 @@ def apply(conn: sqlite3.Connection, p: dict[str, Any], today: date) -> dict[str,
 def charges(conn: sqlite3.Connection, keys: list[str], usual: dict[str, Any] | None, n: int = 6) -> list[dict[str, Any]]:
     """The merchant's latest charges (any account): the bill sheet's list, each with higher / lower than usual."""
     out = []
-    for r in conn.execute("SELECT transaction_id, date, spend, merchant_name, name, account_name, account_mask, "
-                          "institution_name FROM v_transactions WHERE spend > 0 ORDER BY date DESC, transaction_id DESC"):
+    for r in conn.execute(f"SELECT transaction_id, date, spend, merchant_name, name, account_name, account_mask, "
+                          f"institution_name FROM v_transactions v WHERE spend > 0 AND {insights.currency_sql(conn)} "
+                          "ORDER BY date DESC, transaction_id DESC"):
         if insights.merchant_key(r["merchant_name"], r["name"]) in keys:
             out.append({"transaction_id": r["transaction_id"], "date": r["date"], "amount": insights._r(r["spend"]),
                         "account": {"name": r["account_name"], "mask": r["account_mask"], "institution": r["institution_name"]},
@@ -356,8 +358,8 @@ def lookup(conn: sqlite3.Connection, today: date, transaction_id: str | None = N
     rec = insights.recurring(conn, today)
     tx = None
     if transaction_id is not None:
-        tx = conn.execute("SELECT transaction_id, date, spend, merchant_name, name FROM v_transactions "
-                          "WHERE transaction_id = ?", (str(transaction_id),)).fetchone()
+        tx = conn.execute(f"SELECT transaction_id, date, spend, merchant_name, name FROM v_transactions v "
+                          f"WHERE transaction_id = ? AND {insights.currency_sql(conn)}", (str(transaction_id),)).fetchone()
         if tx is None:
             raise BillError("unknown transaction", status=404, field="transaction_id")
         key = insights.merchant_key(tx["merchant_name"], tx["name"])

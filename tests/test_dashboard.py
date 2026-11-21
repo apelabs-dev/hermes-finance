@@ -100,7 +100,8 @@ def test_counts_budgets_recurring_categories_shapes(dash):
     assert status == 200 and r["count"] == 1 and set(r["monthly_totals"]) == {"bill", "subscription"}
     status, _, cats = get(dash, "/api/categories")
     assert status == 200 and {"name": "Income", "is_income": True, "is_transfer": False, "spending": False,
-                              "monthly_cap": None, "group": None, "icon": "arrow-down-left", "rgb": None} in cats
+                              "monthly_cap": None, "group": None, "icon": "arrow-down-left", "rgb": None,
+                              "built_in": True, "hidden": False} in cats
     assert next(x for x in cats if x["name"] == "Other Shopping")["monthly_cap"] == 90
 
 

@@ -1,0 +1,158 @@
+{
+ "spike": 4,
+ "card": "t_db6cc685",
+ "written_utc": "2026-11-20 (before any extraction of any file)",
+ "selection_rule": "Spike 4 corpus selection rule (written before any file was downloaded or opened). ELIGIBLE iff, judged from the URL host and the search engine's title/description only: (E1) a direct public PDF URL, no login; (E2) published as a sample / specimen / example / how-to-read guide / demo statement, with placeholder or plainly fictional holder (e.g. MARY M MEMBER, Max Mustermann, ABC Company, John Doe, COMPANY NAME, YOUR NAME HERE); (E3) NOT from a document-sharing upload site (scribd, studocu, collegesidekick, pdfcoffee, slideshare), NOT from a statement-converter / extraction-vendor site, and NOT a real person's or real organisation's own statement (organisation transparency uploads and uploaded customer statements are excluded, the same 'reads like a real customer' rule spike 3 applied); (E4) the country has a layout profile in tests/pdfspike_layout.PROFILES; (E7) the document is primarily a statement (a how-to-read insert around a sample statement counts; a long manual with a statement appendix does not). No filter on 'has printed balances', layout difficulty, or page count beyond E7. AFTER download, automatic checks that do not print text: (E5) sha256 not in tests/fixtures/pdfspike/manifest-real.json and not a duplicate of another candidate; (E6) pdfplumber finds >= 1 character on some page (text layer present). SPLIT (deterministic, decided before download): within each country, candidates are ordered by sha256(url); HELD-OUT = the first eligible candidate of every country (7 countries) + the second eligible US candidate (the largest pool) = 8; TUNE = round-robin over countries (largest remaining pool first, ties alphabetical) taking the next eligible candidate in hash order until 8 TUNE files. A candidate failing E5/E6 is skipped and the next one in the same country's hash order takes its slot. The resulting manifest (ids, set, country, sha256, bytes, pages) is committed before any extraction.",
+ "amendment_A1": "Spike 4 corpus amendment A1. Prints ids/countries/sha/pages only, never statement text.\n\nA1 rule (written before any A1 candidate was downloaded; no extraction has run on any file yet):\n- Why: the base split (select4.py) produced HELD-OUT 6 and TUNE 7, because the only CH and CO\n  candidates failed E6/fetch, and spike 3's TUNE PDFs are not on disk (320 PDFs scanned, 0 matches).\n- The base assignments s01-s06 / s51-s57 are frozen and unchanged.\n- A1 candidates were found by further searches and judged by E1-E4 + E7 from host/title/description only,\n  plus E8 (applied to A1 only): a deposit / transaction account statement (credit-card, loan, mortgage,\n  investment statements excluded).\n- Order: all A1 candidates by sha256(url), across countries. Each eligible one (E5/E6 as before, and not a\n  duplicate of a base file) fills HELD-OUT until it has 8, then TUNE until it has 8. Leftovers are unused.",
+ "excluded": "every sha256 in manifest-real.json (spikes 1-3); spike 3's deleted names per t_7cdd023c's handoff",
+ "privacy": "held-out PDFs are deleted after the held-out run; no PDF, URL or statement text is committed",
+ "files": [
+  {
+   "id": "s01",
+   "set": "held",
+   "country": "AU",
+   "profile": "AU",
+   "pages": 1,
+   "bytes": 52030,
+   "sha256": "797e324a1737e6ced5119ff15986df8d592fc4ba0aa9e08f7f5747cd23dcbd69"
+  },
+  {
+   "id": "s02",
+   "set": "held",
+   "country": "CA",
+   "profile": "CA",
+   "pages": 4,
+   "bytes": 319564,
+   "sha256": "20d614a11364af286555e6f9e1bea4a342bf48045247501dfab75072e713ff66"
+  },
+  {
+   "id": "s03",
+   "set": "held",
+   "country": "DE",
+   "profile": "DE",
+   "pages": 2,
+   "bytes": 56245,
+   "sha256": "6d1a99fc9a95538f3282b30bc5d0461859c62a5625d0b1fe9bdd4941ae7f4538"
+  },
+  {
+   "id": "s04",
+   "set": "held",
+   "country": "SG",
+   "profile": "SG",
+   "pages": 1,
+   "bytes": 41728,
+   "sha256": "b69cb9f7f783174ab5935ec0483c57e4083cd573737b69905f4113df1841684a"
+  },
+  {
+   "id": "s05",
+   "set": "held",
+   "country": "US",
+   "profile": "US",
+   "pages": 1,
+   "bytes": 256165,
+   "sha256": "c03f57d1f350d959bd5c236299c32f7e7b4dc8c41cc7dfd598f7dd8bb2cfae42"
+  },
+  {
+   "id": "s06",
+   "set": "held",
+   "country": "US",
+   "profile": "US",
+   "pages": 1,
+   "bytes": 720078,
+   "sha256": "ae58be24657e837a62ec08179c1ebaf076b9fe07c34e607fc68615096a37d072"
+  },
+  {
+   "id": "s07",
+   "set": "held",
+   "country": "US",
+   "profile": "US",
+   "pages": 2,
+   "bytes": 326481,
+   "sha256": "4d362e2d16f37a6e0fa14610389369eafefc039932fe4566572b25d2083013f7",
+   "amendment": "A1"
+  },
+  {
+   "id": "s08",
+   "set": "held",
+   "country": "CA",
+   "profile": "CA",
+   "pages": 1,
+   "bytes": 376638,
+   "sha256": "fde79649600b4d08723fb5d80c78d302e1573c8445b3313e2b79f8f1ecacee50",
+   "amendment": "A1"
+  },
+  {
+   "id": "s51",
+   "set": "tune",
+   "country": "US",
+   "profile": "US",
+   "pages": 1,
+   "bytes": 148569,
+   "sha256": "581622114a8ff82c77365ec12cb34ac371ba8204082dfc171ede2441e113fe5c"
+  },
+  {
+   "id": "s52",
+   "set": "tune",
+   "country": "DE",
+   "profile": "DE",
+   "pages": 1,
+   "bytes": 569143,
+   "sha256": "76e5f2eba1db0b16c9bc2d97e9a4e8d038bb1eec2c69419cc4ddaef66dc139c5"
+  },
+  {
+   "id": "s53",
+   "set": "tune",
+   "country": "CA",
+   "profile": "CA",
+   "pages": 1,
+   "bytes": 564873,
+   "sha256": "638769d33a8cc074f0b76bc79e81bcde8e4b2337f2cd640589e2b35973c21e12"
+  },
+  {
+   "id": "s54",
+   "set": "tune",
+   "country": "US",
+   "profile": "US",
+   "pages": 1,
+   "bytes": 1336946,
+   "sha256": "1cd652dca150dde7bf0d234ef5b00228ee43d7112620412cfe2aa9c61018ab69"
+  },
+  {
+   "id": "s55",
+   "set": "tune",
+   "country": "CA",
+   "profile": "CA",
+   "pages": 1,
+   "bytes": 607762,
+   "sha256": "8a9f90bcc6125e9319dd27fa0183cf22ccbe7fbd64157e4fb0576c1cf0bc1bb5"
+  },
+  {
+   "id": "s56",
+   "set": "tune",
+   "country": "DE",
+   "profile": "DE",
+   "pages": 2,
+   "bytes": 569507,
+   "sha256": "d3896fb740a1bda519baa13c63446bfe6610e54eaa43302a5bf678a68550af2f"
+  },
+  {
+   "id": "s57",
+   "set": "tune",
+   "country": "US",
+   "profile": "US",
+   "pages": 1,
+   "bytes": 102531,
+   "sha256": "fdb75033aa92be1881892ddb1449bff54cd2b81c5d2296ed012dc7b5167197db"
+  },
+  {
+   "id": "s58",
+   "set": "tune",
+   "country": "US",
+   "profile": "US",
+   "pages": 2,
+   "bytes": 401722,
+   "sha256": "10153c6a7e395f0d7341c8577e0d5c9f59238bf1a46b268f001f6b67c4ac330f",
+   "amendment": "A1"
+  }
+ ]
+}

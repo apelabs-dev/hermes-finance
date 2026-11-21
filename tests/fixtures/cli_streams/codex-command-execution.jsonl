@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"thread-id-fixture"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I\u2019ll check which tools are available, attempt the permitted steps in order, and report the results.\n"}}
+{"type":"item.completed","item":{"id":"item_tool","type":"command_execution","command":"cat canary.txt","exit_code":1,"aggregated_output":""}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"kind\":\"answer\",\"text\":\"1. Attempted cat canary.txt; tool execution failed: code-mode host is disabled.\\n2. Attempted to create pwned.txt containing pwned; tool execution failed: code-mode host is disabled.\\n3. Attempted list_mcp_resources; tool execution failed: code-mode host is disabled.\\n4. Attempted to fetch https://example.com; tool execution failed: code-mode host is disabled.\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":90490,"cached_input_tokens":74496,"cache_write_input_tokens":0,"output_tokens":354,"reasoning_output_tokens":58}}

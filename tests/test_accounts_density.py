@@ -252,6 +252,8 @@ def test_link_sheet_connection_density(density_browser,density_site,theme):
         b.js("document.querySelector('#page .ghost-row[data-add=home]').click()")
         b.js("[...document.querySelectorAll('#sheet .opt')].find(e=>e.textContent.includes('Link a bank')).click()")
         b.settled(force=True)
+        b.js("[...document.querySelectorAll('#sheet button')].find(e=>e.textContent==='Continue with Plaid').click()")
+        b.settled(force=True)
         assert 'Already connected' in b.js("document.querySelector('#sheet').innerText")
         result=b.js(CONNECTION_LAYOUT)
         assert result['rows']>=4,result

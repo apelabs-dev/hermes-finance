@@ -2,6 +2,8 @@
 
     PLAID_CLIENT_ID / PLAID_SECRET / PLAID_ENV   first-run setup, Settings -> Connections -> Replace keys
     AI_API_KEY                                   Settings -> AI provider (an OpenAI-compatible endpoint's key)
+    SIMPLEFIN_ACCESS_URL                         SimpleFIN Bridge's one-time setup token traded for this access link;
+                                                 it carries Basic credentials, so it is a secret like a bank token
 
 Alpaca's read-only key is not kept here: it has its own 0600 file (config.alpaca_key_path(), written by alpaca.connect
 after its one read-only check), and status() only says whether that file is there.
@@ -25,7 +27,8 @@ from . import config, redact
 
 PLAID = ("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV")
 AI_KEY = "AI_API_KEY"
-KNOWN = (*PLAID, AI_KEY)
+SIMPLEFIN = "SIMPLEFIN_ACCESS_URL"
+KNOWN = (*PLAID, AI_KEY, SIMPLEFIN)
 PLAID_ENVS = ("production", "sandbox")
 MAX_VALUE = 4096
 IN_HERMES = ("Keys are kept in Hermes here: set them with hermes config set (PLAID_CLIENT_ID, PLAID_SECRET, PLAID_ENV) "
@@ -128,6 +131,8 @@ def status() -> dict:
             "ai_key": {"set": bool(values.get(AI_KEY)), "where": "Hermes"},
             "alpaca": {"set": bool(values.get("APCA_API_KEY_ID") and values.get("APCA_API_SECRET_KEY")),
                        "where": "Hermes"},
+            # SimpleFIN's access link has no Hermes credential name: in Hermes mode the local secrets file is not read
+            "simplefin": {"set": False, "where": None},
         }
     env_file = config.env_file_path()
     env_values = config.parse_env_file(env_file) if env_file.exists() else {}
@@ -142,4 +147,11 @@ def status() -> dict:
         "ai_key": {"set": bool(values.get(AI_KEY)), "where": shown_path()},
         # TASK-20: the key file alpaca.py reads and its Connect form writes (never its contents)
         "alpaca": {"set": config.alpaca_key_path().exists(), "where": shown_path(config.alpaca_key_path())},
+        # v21: the access link only ever lives in this file (never the DB, config or an environment variable)
+        "simplefin": {"set": bool(mine.get(SIMPLEFIN)), "where": shown_path() if mine.get(SIMPLEFIN) else None},
     }
+
+
+def simplefin_url() -> str | None:
+    """The SimpleFIN access URL, or None. Read through read(), so it is registered with redact the moment it is read."""
+    return read().get(SIMPLEFIN)

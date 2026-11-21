@@ -539,6 +539,28 @@ uv run finance photos --account 3         # its picture now (if it's due; --forc
 uv run finance api-usage                  # Carfax 1 used / cap 6 / free page, no key ...
 ```
 
+## Categories
+
+`finance categories` lists and changes the categories the dashboard's Settings → Categories card manages. The 36
+seeded categories are built-in: they can be given a new icon or hidden, never renamed, deleted or moved between groups.
+Income and Transfers stay outside the taxonomy and always visible. A user category is spending-only, sits in one of the
+eight groups (Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc) and is unique ignoring case.
+
+```sh
+finance categories                          # group, name, icon, built-in/yours, hidden, spend this month
+finance categories --json                   # the same, as JSON
+finance categories add "Meal prep" --group Food --icon utensils
+finance categories rename "Meal prep" "Meal kits"
+finance categories icon "Meal kits" salad
+finance categories hide "Meal kits"         # leaves new pickers and the chart; every past total stays
+finance categories unhide "Meal kits"
+finance categories move "Meal kits" --group Home
+finance categories delete "Meal kits" --to Groceries   # move-and-delete, all or nothing
+```
+
+`finance rules` stays the categorization-rules manager (below). Both are read-only when listing, print the same JSON the
+agent tools return, and exit 2 with a one-sentence `error:` when a change is refused.
+
 ## Agent read commands
 
 `spend`, `budget-status`, `txns`, `networth`, `bills`, `loans`, `holdings` and `cashflow` are how Hermes reads
@@ -627,9 +649,11 @@ command's `--json`: `finance_spend`, `finance_budget_status`, `finance_transacti
 the commands' flags (`month`, `since`, `until`, `category`, `merchant`, `account`, `limit`, `by`, `search`,
 `flagged`, `uncategorized`, `history`, `custom`, `next`, `months`). Four write tools: `finance_set_category`,
 `finance_add_rule` (regex by default; a pattern matching no transaction is refused), `finance_set_cap` and
-`finance_track_bill` (`action` track / update / stop, `merchant`, `every`, `varies`, `usually`). `finance_sync`
+`finance_track_bill` (`action` track / update / stop, `merchant`, `every`, `varies`, `usually`), plus the three
+category tools `finance_create_category`, `finance_update_category` and `finance_delete_category` (`id`, `name`,
+`icon`, `group`, `hidden`). `finance_sync`
 (`refresh`) syncs now and says what changed, with `data_age` (also in `finance_status`): no approval,
-except `refresh=true` on a paid Plaid plan (Plaid bills each refresh). 15 tools. One
+except `refresh=true` on a paid Plaid plan (Plaid bills each refresh). 20 tools. One
 definition each, in `src/hermes_finance/tooldefs.py`, shared by:
 
 - **The Hermes plugin** (`hermes_plugin/`, a standalone plugin directory): the reads open the database read-only; each
@@ -783,9 +807,14 @@ All behind the same Host/Origin/identity gate as the page. GETs take `?month=YYY
 | `GET /api/settings`, `POST /api/settings` | `{chart_excluded_categories, fixed_categories, networth_excluded, excluded_accounts}`; POST any one or more of `{chart_excluded_categories: [names]}` (spending categories, case-insensitive, saved once each; only the "Where it went" chart reads it), `{networth_excluded: [ids]}` (the accounts Custom leaves out: Plaid `account_id`s or `manual:<id>`, once each; an id that isn't a current account is dropped and the answer says so in `note` / `dropped`; not a list: 400) and `{excluded_accounts: [ids]}` (the account policy: every read leaves them out; an id that isn't a current account is kept and reported in `unresolved`; not a list of non-empty strings: 400). Same Host/Origin/JSON gate as every write |
 | `GET /api/investments` | total, accounts (Plaid + manual; each with `residual`: its balance minus its holdings + cash), holdings, allocation by holding (the residual as a last row with `residual: true`, from a cent) / account type, breakdown, history and change chips (null without enough real snapshots) |
 | `GET /api/debt` | total owed, cards (utilization, APR, minimum, due date), loans (APR, payment, remaining, payoff, payments left, matched payments, balance history), groups, upcoming payments, stats |
-| `GET /api/categories`, `GET /api/counts` | category list; sidebar badge counts |
+| `GET /api/categories`, `GET /api/counts` | every category (built-in/user and hidden flagged with `built_in` / `hidden`), and the sidebar badge counts |
+| `GET /api/categories/page` | Settings → Categories: the eight groups (and Income & transfers last) with each category's icon, group, flags, cap and spend this month, the flat list, the hidden names and the counts |
+| `GET /api/categories/icons` | the shared picker's one read: 100 icons in 8 groups, the 16-icon common sets for categories and goals, `count` |
 | `GET /api/institutions/<id>/logo`, `GET /api/securities/<TICKER>/logo` | the cached logo, from the DB, with its real content type and `Cache-Control: private, max-age=86400`; 404 when there's none |
 | `POST /api/transactions/category` | `{transaction_id, category, make_rule}` → how many rows changed |
+| `POST /api/categories/create` | `{name, group?, icon?}`: a user spending category (Misc and the group's icon by default; names unique ignoring case) → the category |
+| `POST /api/categories/update` | `{name, rename?, icon?, hidden?, group?}`: only what is given changes, in one transaction (built-ins: icon or hide only; Income / Transfers: icon only) → the category |
+| `POST /api/categories/delete` | `{name, move_to}`: reassign every referencing store (transactions, rules, splits, rollovers and the rest) to a visible spending category, then delete it → the destination plus `moved: {store: rows}`; missing / unknown / self / income / hidden destinations are 400 |
 | `POST /api/budgets/cap` | `{category, monthly_cap}`: a spending category, 0–100000, or `null` to clear |
 | `POST /api/manual`, `POST /api/manual/<id>`, `POST /api/manual/<id>/archive` | create (`{kind, ...fields}`), edit (the fields to change; `null` clears an optional one), archive. Errors are 400/404 with `{error, field}`. A vehicle / property's create / edit also returns `decoded`, `decode_problem` and `estimate_result` (`{ok, message, called, reason, value, applied, blocked_until}`); its picture is then fetched in the background when due |
 | `POST /api/manual/<id>/refresh`, `POST /api/manual/<id>/use-estimate` | "Refresh estimate" (one guarded call, at most one per account per day; the result in `estimate_result`) and "Use estimate again". Each manual vehicle / property in `/api/accounts` and `/api/manual` carries `valuation` (`source`, the latest `estimate` with its date and basis, `last_error`, `can_refresh` / `refresh_note`, `mileage_nudge`, the form `note`), and `/api/accounts` has `valuation` for Carfax and Redfin (`enabled`, this month's `calls` / `cap`, `blocked_until`, the privacy / off notes) |

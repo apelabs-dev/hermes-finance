@@ -33,6 +33,9 @@ jobs:
         part: [1, 2]
     env:
       HERMES_FINANCE_TEST_PRIVATE: ${{ secrets.HERMES_FINANCE_TEST_PRIVATE }}
+      # The public mirror's URL (repo variable, set on the private dev repo only), so the scanner counts
+      # CHANGELOG's links to it as the project's own URL. Empty on the public repo: GITHUB_REPOSITORY is it.
+      HERMES_FINANCE_PUBLIC_URL: ${{ vars.HERMES_FINANCE_PUBLIC_URL }}
       HERMES_PLAID: "off"
       CHECK_MAXFAIL: ${{ inputs.maxfail }}   # (empty on the schedule: the full report)
       # part 1 runs the no-browser files alongside the browser ones: on the runner's 3 cores, 4 Chromes besides left

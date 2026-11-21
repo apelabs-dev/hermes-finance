@@ -76,8 +76,9 @@ def test_every_extension_runs_once(browser, features):
     rows = browser.js("[...document.querySelectorAll('#sheet .opt b')].map((b) => b.textContent)")
     assert rows == ["Link a bank or card", "Add a property", "Add a vehicle", "Add manually", "Import a file", "Alpaca (API key)"]
     # settings, setup, import + goals, txmeta, billcal, rollover, alpaca + (TASK-21) bills + (TASK-23) chat
-    # + (polish P0) catpick + (polish P1) txfilter + (polish P2b) wherewent + (polish P2A) budgets
-    assert browser.js("window.HF_EXT.length") == 14
+    # + (polish P0) catpick + (polish P1) txfilter + (polish P2b) wherewent + (v21) simplefin + (polish P2A) budgets
+    # + (v23) iconpick, the shared 100-icon picker that Goals and the categories card both use
+    assert browser.js("window.HF_EXT.length") == 16
     assert browser.problems() == []
 
 

@@ -32,7 +32,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
-from . import api, bills, classify, config, db, goals, reads, redact, report, rulebook, syncnow
+from . import api, bills, catops, classify, config, db, goals, reads, redact, report, rulebook, syncnow
 
 DEFAULT_NEXT = "14d"       # finance bills --next
 DEFAULT_MONTHS = 6         # finance cashflow --months
@@ -191,8 +191,8 @@ def _status(conn, a, today):
 
 # --- writes: (describe, apply) --------------------------------------------------------------------------------------
 
-def _money(value: float | None) -> str:
-    return report.money(value, none="no cap")
+def _money(value: float | None, conn: sqlite3.Connection | None = None) -> str:
+    return report.money(value, none="no cap", currency=db.display_currency(conn) if conn is not None else None)
 
 
 def _category(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
@@ -214,8 +214,8 @@ def _text(value: str, name: str) -> str:
 
 
 def _transaction(conn: sqlite3.Connection, tid: str) -> sqlite3.Row:
-    row = conn.execute("SELECT transaction_id, date, name, merchant_name, amount, category, category_source "
-                       "FROM v_transactions WHERE transaction_id = ?", (tid,)).fetchone()
+    row = conn.execute("SELECT transaction_id, date, name, merchant_name, amount, iso_currency, category, "
+                       "category_source FROM v_transactions WHERE transaction_id = ?", (tid,)).fetchone()
     if row is None:
         raise ToolError(f"unknown transaction {tid[:api.MAX_TEXT]!r} (use the transaction_id finance_transactions shows)")
     return row
@@ -225,7 +225,8 @@ def _set_category_plan(conn: sqlite3.Connection, a: dict[str, Any]) -> tuple[sql
     t = _transaction(conn, _text(a["transaction_id"], "transaction_id"))
     new = _category(conn, a["category"])["name"]
     merchant = (t["merchant_name"] or t["name"] or "").strip() or "(no name)"
-    summary = (f"File the transaction {t['date']} · {merchant} · {report.money(t['amount'])} under {new} "
+    summary = (f"File the transaction {t['date']} · {merchant} · "
+               f"{report.money(t['amount'], currency=t['iso_currency'])} under {new} "
                f"(now {t['category']}, set by {t['category_source']}). It becomes your decision: rules and the AI "
                f"won't change it.")
     return t, new, summary
@@ -296,8 +297,8 @@ def _cap_plan(conn: sqlite3.Connection, a: dict[str, Any]) -> tuple[sqlite3.Row,
             raise ToolError(f"monthly_cap must be between 0 and {api.MAX_CAP:,} (or null to clear the cap)")
         cap = round(float(cap), 2)
     was = row["monthly_cap"]
-    summary = (f"Clear the monthly budget cap on {row['name']} (now {_money(was)})." if cap is None
-               else f"Set the monthly budget cap on {row['name']} to {_money(cap)} (now {_money(was)}).")
+    summary = (f"Clear the monthly budget cap on {row['name']} (now {_money(was, conn)})." if cap is None
+               else f"Set the monthly budget cap on {row['name']} to {_money(cap, conn)} (now {_money(was, conn)}).")
     return row, cap, summary
 
 
@@ -308,6 +309,94 @@ def _set_cap(conn: sqlite3.Connection, a: dict[str, Any], today: date) -> dict[s
     except api.ApiError as e:
         raise ToolError(str(e)) from None
     return {**out, "previous": row["monthly_cap"]}
+
+
+# --- v23: categories (catops.py is the one domain layer) -------------------------------------------------------------
+
+def _categories_read(conn: sqlite3.Connection, a: dict[str, Any], today: date) -> dict[str, Any]:
+    """Every category with its group, icon, flags, cap (monthly_cap) and this month's spend, hidden ones named separately.
+    Exactly `finance categories --json`."""
+    return catops.payload(conn, today)
+
+
+def _category_check(fn, *args, **kw):
+    try:
+        return fn(*args, **kw)
+    except catops.CategoryError as e:
+        raise ToolError(str(e)) from None
+
+
+def _create_category_plan(conn: sqlite3.Connection, a: dict[str, Any]) -> tuple[Any, ...]:
+    try:
+        name = catops._name(a["name"])
+        group = catops._group(a.get("group"), "Misc")
+        icon = catops._icon(a["icon"]) if a.get("icon") is not None else catops.GROUP_ICON[group]
+        catops._unique(conn, name)
+    except catops.CategoryError as e:
+        raise ToolError(str(e)) from None
+    return name, group, icon, f"Add a spending category {name} in {group} with the {icon} icon."
+
+
+def _update_category_plan(conn: sqlite3.Connection, a: dict[str, Any]) -> tuple[Any, ...]:
+    try:
+        row = catops._row(conn, a["name"])
+        changes, parts = {}, []
+        if a.get("rename") is not None:
+            catops._builtin(row, "rename it")
+            new_name = catops._name(a["rename"])
+            if new_name != row["name"]:
+                catops._unique(conn, new_name, row["id"])
+                changes["rename_to"] = new_name
+                parts.append(f"rename {row['name']} to {new_name}")
+        if a.get("icon") is not None:
+            changes["icon"] = catops._icon(a["icon"])
+            parts.append(f"change its icon to {changes['icon']}")
+        if a.get("hidden") is not None:
+            if not isinstance(a["hidden"], bool):
+                raise ToolError("hidden must be true or false")
+            if row["is_income"] or row["is_transfer"]:
+                raise ToolError(f"{row['name']} is an income / transfer category: it always stays visible")
+            changes["hidden"] = a["hidden"]
+            parts.append("hide it" if a["hidden"] else "show it again")
+        if a.get("group") is not None:
+            catops._builtin(row, "move it between groups")
+            changes["group"] = catops._group(a["group"])
+            parts.append(f"move it to {changes['group']}")
+    except catops.CategoryError as e:
+        raise ToolError(str(e)) from None
+    if not parts:
+        raise ToolError("nothing to change: give rename, icon, hidden or group")
+    summary = "For " + row["name"] + ": " + ", ".join(parts) + "."
+    return row["name"], changes, summary
+
+
+def _create_category(conn: sqlite3.Connection, a: dict[str, Any], today: date) -> dict[str, Any]:
+    name, group, icon, _ = _create_category_plan(conn, a)
+    return _category_check(catops.create, conn, name, group, icon)
+
+
+def _update_category(conn: sqlite3.Connection, a: dict[str, Any], today: date) -> dict[str, Any]:
+    name, changes, _ = _update_category_plan(conn, a)
+    return _category_check(catops.update, conn, name, **changes)
+
+
+def _delete_category_plan(conn: sqlite3.Connection, a: dict[str, Any]) -> tuple[Any, ...]:
+    try:
+        dest, counts = catops.delete_preview(conn, a["name"], a["move_to"])
+    except catops.CategoryError as e:
+        raise ToolError(str(e)) from None
+    parts = [f"{n} {catops.STORE_WORDS[store] if n == 1 else catops.STORE_WORDS[store] + 's'}"
+             for store, n in counts.items() if n]
+    if not parts:
+        return a["name"], a["move_to"], f"Delete {a['name']}. Nothing to move."
+    phrase = ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]
+    summary = f"Move {phrase} from {a['name']} to {dest['name']}, then delete {a['name']}."
+    return a["name"], a["move_to"], summary
+
+
+def _delete_category(conn: sqlite3.Connection, a: dict[str, Any], today: date) -> dict[str, Any]:
+    name, move_to, _ = _delete_category_plan(conn, a)
+    return _category_check(catops.delete, conn, name, move_to)
 
 
 def _bill_plan(conn: sqlite3.Connection, a: dict[str, Any]) -> dict[str, Any]:
@@ -365,6 +454,9 @@ PLANS: dict[str, Callable[[sqlite3.Connection, dict[str, Any]], str]] = {
     "finance_add_rule": lambda conn, a: _rule_plan(conn, a)["summary"],
     "finance_set_cap": lambda conn, a: _cap_plan(conn, a)[2],
     "finance_track_bill": lambda conn, a: _bill_plan(conn, a)["summary"],
+    "finance_create_category": lambda conn, a: _create_category_plan(conn, a)[3],
+    "finance_update_category": lambda conn, a: _update_category_plan(conn, a)[2],
+    "finance_delete_category": lambda conn, a: _delete_category_plan(conn, a)[2],
 }
 
 # --- the tools --------------------------------------------------------------------------------------------------------
@@ -420,6 +512,10 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
          "many transactions it matches now; counts; and suggested rules (merchants the user filed by hand 2+ times). "
          "Read-only.",
          {}, lambda conn, a, today: rulebook.payload(conn), "rules"),   # TASK-24 (deleting a rule is human-only)
+    Tool("finance_categories",
+         "Every category with its group, icon, built-in/user flag, hidden flag, monthly cap and spend this month. "
+         "Hidden categories are also named separately: never offer one as a new filing target.",
+         {}, _categories_read, "categories"),
     Tool("finance_sync",
          "Sync now: pull what the banks already sent Plaid (new transactions, balances) and say what changed, with "
          "data_age. refresh=true first asks the banks for fresh data, if Settings allows it; on a paid Plaid plan that "
@@ -447,8 +543,33 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
          "Set a spending category's monthly budget cap, or clear it with null. Needs the user's approval.",
          {"category": _string("spending category name, case-insensitive"),
           "monthly_cap": {"type": ["number", "null"], "minimum": 0, "maximum": api.MAX_CAP,
-                          "description": "the cap in dollars, or null to clear it"}},
+                          "description": "the cap in the display currency, or null to clear it"}},
          _set_cap, required=("category", "monthly_cap"), write=True),
+    Tool("finance_create_category",
+         "Add a spending category (never Income or Transfers) in one of the eight groups, Misc by default, with an icon "
+         "from the app's 100. Needs the user's approval.",
+         {"name": _string("the category's name (up to 60 characters, unique ignoring case)"),
+          "group": _string("one of Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc, any case "
+                           "(default Misc)"),
+          "icon": _string("an icon name from finance_categories' set (GET /api/categories/icons); default: the group's")},
+         _create_category, required=("name",), write=True),
+    Tool("finance_update_category",
+         "Change a category: rename it (your own categories only), change its icon (any category), hide / unhide it "
+         "(any spending category), or move it to another group (your own only). Needs the user's approval.",
+         {"name": _string("the category to change, case-insensitive"),
+          "rename": _string("its new name (user categories only; unique ignoring case)"),
+          "icon": _string("a new icon from the app's 100"),
+          "hidden": {"type": "boolean", "description": "true hides it from new pickers and the chart; past totals stay"},
+          "group": _string("a new group for a user category: Home, Food, Transport, Shopping, Bills, Health, "
+                           "Leisure or Misc, any case")},
+         _update_category, required=("name",), write=True),
+    Tool("finance_delete_category",
+         "Delete one of the user's own categories after moving everything filed under it to another visible spending "
+         "category: transactions, rules, splits, rollovers and the rest, in one transaction. Built-ins cannot be "
+         "deleted. Needs the user's approval.",
+         {"name": _string("the user category to delete, case-insensitive"),
+          "move_to": _string("the visible spending category everything filed under it moves to")},
+         _delete_category, required=("name", "move_to"), write=True),
     Tool("finance_track_bill",
          "Track a merchant as a bill by hand (track), change a bill's schedule or amount (update), or stop tracking one "
          "(stop: a detected one is no longer listed). A bill is the merchant: its charges on any account count. Needs "
@@ -584,6 +705,7 @@ def instructions() -> str:
     return ("hermes-finance: the owner's own money data from a local database, read-only. Amounts use the app's sign: "
             "spend and money out are positive, refunds and income negative. Use a category's exact name "
             "(finance_spend with by=category lists them); never guess one. Dates are local. "
-            "In human-facing text, use $ and thousands separators. Round to cents, omit cents for whole dollars, "
-            "and keep two decimals otherwise. Put an ASCII minus before $ for negatives and suppress it for rounded "
+            "In human-facing text, format each amount in its own currency: use the ISO code or its symbol, thousands "
+            "separators and the currency's official decimals (JPY has none, KWD three). Never convert or add amounts in "
+            "different currencies. Put an ASCII minus before the currency for negatives and suppress it for rounded "
             "zero. Keep numeric tool arguments and JSON fields numeric.")

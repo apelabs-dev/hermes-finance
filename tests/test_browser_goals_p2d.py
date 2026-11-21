@@ -37,7 +37,7 @@ def test_goal_appearance_persists_and_capture(tmp_path, width):
         target_month=month, icon='plane', colour='#8ea8ff'), today)
     goals.add_entry(conn, trip['id'], {'amount': 1800}, today)
     complete = goals.create(conn, dict(kind='save', name='New laptop', track='manual', target=1200,
-        target_month=month, icon='briefcase', colour='#c792ea'), today)
+        target_month=month, icon='briefcase-business', colour='#c792ea'), today)
     goals.add_entry(conn, complete['id'], {'amount': 1200}, today)
     conn.close()
     server = Server(path, today=today)
@@ -53,11 +53,11 @@ def test_goal_appearance_persists_and_capture(tmp_path, width):
             SHOTS.mkdir(parents=True, exist_ok=True)
             b.screenshot(SHOTS / f'goal-cards-{width}.png', full=True)
             tap(b, f'[data-goal="{emergency["id"]}"]')
-            assert b.js("document.querySelectorAll('#sheet .gicon').length") == 12
+            assert b.js("document.querySelectorAll('#sheet .ipk-quick .gicon').length") == 16
             assert b.js("document.querySelectorAll('#sheet .gcolour').length") == 8
-            tap(b, '#sheet button[data-icon="rocket"]')
+            tap(b, '#sheet .ipk-quick button[aria-label="rocket"]')
             tap(b, '#sheet [data-colour="#f5b454"]')
-            assert b.js("document.querySelector('#sheet button[data-icon=rocket]').getAttribute('aria-pressed')") == 'true'
+            assert b.js("document.querySelector('#sheet .ipk-quick button[aria-label=rocket]').getAttribute('aria-pressed')") == 'true'
             assert b.js("document.querySelector('#sheet [data-colour=\"#f5b454\"]').getAttribute('aria-pressed')") == 'true'
             assert b.js("document.querySelector('#sheet').scrollWidth <= document.querySelector('#sheet').clientWidth + 1")
             b.js("document.querySelector('#sheet').scrollTop=0")

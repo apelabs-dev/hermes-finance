@@ -7,7 +7,8 @@
  */
 (window.HF_EXT = window.HF_EXT || []).push((HF) => {
   'use strict';
-  const {h, fill, icon, card, api, post, toast, pill, tag, ibadge, pct, plural, fmtDate, ago, RGB, openSheet, closeModal, closeBtn} = HF;
+  const {h, fill, icon, card, api, post, toast, pill, tag, ibadge, badge, money, pct, plural, fmtDate, ago, RGB,
+    openSheet, closeModal, closeBtn} = HF;
   HF.PAGES.settings = 'Settings';
 
   // an address that may be longer than its card: a break chance only after the scheme, so it wraps as
@@ -161,6 +162,56 @@
       }}, {label: 'Keep it', onclick: closeModal}]);
   }
 
+  // v21: one SimpleFIN row, in the same logo slot as the Alpaca one. It shows the connection's state, the banks and
+  // accounts, the request budget and the broken-state copy; Replace / Remove (or Connect) are the actions.
+  function simplefinRows(sf) {
+    const state = sf.state || 'not_connected';
+    const connected = Boolean(sf.connected);
+    const bad = ['needs_login', 'subscription', 'quota'].includes(state);
+    const status = !connected ? (sf.needs_confirm ? pill('sm nt', 'clock', 'Needs confirming')
+      : sf.needs_retry ? pill('sm nt', 'clock', 'Needs retry') : pill('sm nt', null, 'Not connected'))
+      : state === 'needs_login' ? pill('sm bad', 'alert', 'Needs a new login')
+        : state === 'subscription' ? pill('sm bad', 'alert', 'Subscription needed')
+          : state === 'quota' ? pill('sm bad', 'alert', 'Budget used up')
+            : pill('sm', 'check', 'Connected');
+    const sub = connected ? `${plural(sf.banks || 0, 'bank')} · ${plural(sf.accounts || 0, 'account')}`
+      : sf.needs_confirm ? 'The setup token is in; confirm the account types'
+        : sf.needs_retry ? 'The access link is saved, but the first fetch failed'
+          : 'A second, read-only bank connection';
+    const actions = connected
+      ? [h('button', {class: 'btn sm ghost', type: 'button', onclick: () => HF.simplefin.openToken()}, 'Replace'),
+        h('button', {class: 'btn sm danger', type: 'button', onclick: () => HF.simplefin.remove()}, 'Remove')]
+      : sf.needs_confirm ? [h('button', {class: 'btn sm', type: 'button', onclick: () => HF.simplefin.resume()}, 'Finish setup')]
+        : sf.needs_retry ? [h('button', {class: 'btn sm', type: 'button', onclick: () => HF.simplefin.tryAgain()}, 'Try again')]
+          : [h('button', {class: 'btn sm', type: 'button', onclick: () => HF.simplefin.openToken()}, 'Connect')];
+    const broken = state === 'needs_login' || state === 'subscription'
+      ? h('p', {class: 'nc warn'}, `SimpleFIN stopped accepting this access link, so it was revoked or expired. Balances `
+        + `stay as of ${sf.as_of ? fmtDate(sf.as_of) : 'the last sync'}. Paste a new setup token to resume.`)
+      : state === 'quota'
+        ? h('p', {class: 'nc warn'}, 'SimpleFIN\'s 24 requests a day are used up. The last balances stay; the daily sync tries again tomorrow.')
+        : state === 'needs_retry'
+          ? h('p', {class: 'nc warn'}, 'The access link is saved, but SimpleFIN\'s first answer never arrived, so no accounts were added. Try again uses the same link; no new token is needed.')
+          : null;
+    const pending = sf.last_result && sf.last_result.ambiguous
+      ? h('p', {class: 'nc warn'}, `${plural(sf.last_result.ambiguous, 'pending charge')} could not be matched one-to-one. `
+        + 'Both rows are kept for review in Transactions.') : null;
+    const dupes = (sf.duplicates || []).length
+      ? h('div', {class: 'srow'}, h('span', {class: 'grow'}, h('b', {}, 'Accounts on both Plaid and SimpleFIN'),
+        h('span', {}, 'Choose which copy counts. Totals stay Plaid-only until you pick.')),
+      h('button', {class: 'btn sm', type: 'button', onclick: () => HF.simplefin.openDuplicates(sf.duplicates)}, 'Review'))
+      : null;
+    return [
+      h('div', {class: 'srow'}, HF.ia('SimpleFIN', '', null, 'ins_hf_simplefin'),
+        h('span', {class: 'grow'}, h('b', {}, 'SimpleFIN'), h('span', {}, sub)), h('span', {class: 'pairc'}, status, ...actions)),
+      broken, pending, dupes,
+      h('div', {class: 'srow'}, h('span', {class: 'grow'}, h('b', {}, 'SimpleFIN requests today'),
+        h('span', {}, 'Bridge allows 24 a day · the daily sync and each Sync now count as one'),
+        meter((sf.requests_today || 0) / (sf.request_limit || 24), 'SimpleFIN requests today', sf.request_limit || 24,
+          sf.requests_today || 0)),
+      h('b', {class: 'slotn v'}, `${sf.requests_today || 0}/${sf.request_limit || 24}`)),
+    ];
+  }
+
   function connectionsCard(d) {
     const s = d.secrets, p = d.plaid;
     const keys = s.plaid.set ? pill('sm', 'check', 'Set') : pill('sm bad', 'alert', 'Missing');
@@ -186,6 +237,7 @@
       srow('Allow on-demand bank refresh', p.refresh.plan === 'paid' ? 'Plaid bills each refresh request on paid plans. Off unless you turn it on.'
         : 'Adds Refresh',
       sw(p.refresh.allowed, 'Allow on-demand bank refresh', (on) => save({'plaid.on_demand_refresh': on}, reload))),
+      simplefinRows(d.simplefin || {}),
       h('div', {class: 'srow'}, HF.ia('Alpaca', '', null, 'ins_hf_alpaca'), h('span', {class: 'grow'}, h('b', {}, 'Alpaca'),
         h('span', {}, alp.set ? 'Read-only' :'Brokerage balance and positions, read-only \u00b7 uses no Plaid slot')),
       h('span', {class: 'pairc'}, alp.set ? pill('sm', 'check', 'Live') : pill('sm nt', null, 'Not configured'),
@@ -356,7 +408,58 @@
     return saveOnLeave(h('input', {value: ai.monthly_cap.toFixed(2), 'aria-label': 'Monthly spend cap', inputmode: 'decimal'}),
       (v) => { const n = Number(String(v).replace(/[^0-9.]/g, '')); return save({'ai.monthly_cap': Number.isFinite(n) ? n : -1}); });
   }
-  function aiBody(d, mode) {
+  // The CLI brains (ai.mode "cli"): the chosen local CLI, its stored isolation check for the version found now, and
+  // the terms note. The check is the same POST Settings has always had; its answer is one item, drawn in place.
+  function aiCli(d, redraw) {
+    const cli = d.ai.cli;
+    const item = cli.items.find((i) => i.id === cli.chosen) || cli.items[0];
+    const state = !item.found ? 'missing'
+      : item.checked_version && item.checked_version === item.version ? (item.passed ? 'passed' : 'failed') : 'unchecked';
+    const strip = state === 'passed' ? pill('sm', 'check', 'Locked down')
+      : state === 'failed' ? pill('sm bad', 'alert', 'Not used')
+      : pill('sm nt', null, state === 'missing' ? 'Not found' : 'Not checked');
+    let sub;
+    if (state === 'passed') sub = item.id === 'codex'
+      ? 'Its tool calls were rejected in the check, so it can only answer. Checked again whenever the version changes.'
+      : 'Started with no tools and no MCP servers, so it can only answer. Checked again whenever the version changes.';
+    else if (state === 'failed') sub = item.reason && item.reason.length <= 160
+      ? item.reason : 'One tool stayed reachable after lockdown on this version. Ask stays off until a version passes.';
+    else if (state === 'unchecked') sub = 'Not checked on this version yet. The check sends one short request with this CLI and reads what it could reach.';
+    else sub = `${item.name} isn't installed on this computer.`;
+    if (cli.off) sub += ' The CLI brains are switched off on this computer (HERMES_CLI_BRAINS=off).';
+    const checkPill = state === 'passed' ? pill('sm', 'check', `Passed · ${item.checked_version}`)
+      : state === 'failed' ? pill('sm bad', 'x', `Failed · ${item.checked_version}`)
+      : pill('sm nt', null, state === 'missing' ? 'Not found' : 'Not checked');
+    const checkBtn = h('button', {class: 'btn sm ghost', type: 'button', disabled: cli.off,
+      onclick: async () => {
+        checkBtn.disabled = true;
+        fill(checkBtn, icon('refresh'), 'Checking…');
+        try {
+          const r = await post('/api/ai/cli/check', {cli: item.id});
+          Object.assign(item, r.item);
+          redraw();
+        } catch (e) {
+          toast(e.message, [], {error: true, timeout: 7000});
+          checkBtn.disabled = false;
+          fill(checkBtn, icon('refresh'), 'Check again');
+        }
+      }}, icon('refresh'), 'Check again');
+    const plan = item.id === 'codex' ? 'ChatGPT subscription' : 'Claude subscription';
+    return [
+      h('div', {class: 'aist'}, ibadge('terminal', RGB.purple, 's'),
+        h('span', {class: 'grow'}, h('b', {}, item.found && item.version ? `${item.name} ${item.version}` : item.name),
+          h('span', {}, item.found ? `Found at ${item.display || item.path}` : 'Not found on this computer')), strip),
+      srow('Which CLI', 'Runs on this computer with your own login',
+        select([['claude', 'Claude Code'], ['codex', 'Codex']], cli.chosen, 'Which CLI',
+          (v) => save({'ai.cli': v}, () => { cli.chosen = v; redraw(); })), 'tight'),
+      srow('Isolation check', sub, h('span', {class: 'pairc'}, checkPill, checkBtn), 'tight'),
+      srow('Changes still ask you first', 'It suggests categories and rules. Nothing is applied without your OK, same as today.',
+        pill('sm nt', 'lock', 'Always'), 'tight'),
+      h('div', {class: 'safety'}, icon('alert'),
+        h('span', {}, `This runs on your ${plan} outside its own app. Check that your plan allows it. It counts against that plan's limits, not the monthly cap here.`)),
+    ];
+  }
+  function aiBody(d, mode, redraw) {
     const ai = d.prefs.ai;
     if (mode === 'hermes') {
       return [h('div', {class: 'aist'}, ibadge('sparkles', RGB.purple, 's'), h('span', {class: 'grow'}, h('b', {}, 'Using your Hermes model'),
@@ -371,6 +474,7 @@
       return [h('div', {class: 'aist'}, ibadge('x', RGB.grey, 's'), h('span', {class: 'grow'}, h('b', {}, 'Dashboard only'),
         h('span', {}, 'No chat and no auto-classify. Rules, Plaid categories and your own choices still work.')))];
     }
+    if (mode === 'cli') return aiCli(d, redraw);
     const endpoint = saveOnLeave(h('input', {value: ai.base_url, 'aria-label': 'Endpoint', spellcheck: 'false', autocapitalize: 'off',
       placeholder: 'https://example.com/v1'}), (v) => save({'ai.base_url': v}));
     const model = saveOnLeave(h('input', {value: ai.model, 'aria-label': 'Model', spellcheck: 'false', autocapitalize: 'off',
@@ -386,13 +490,12 @@
         h('button', {class: 'btn sm ghost', type: 'button', onclick: aiKey}, d.ai.key_set ? 'Replace' : 'Add key')), 'tight'),
       srow('Monthly spend cap', `Monthly limit for Ask · ${HF.money2(d.ai.spent || 0)} used`,   // TASK-23 (review C3)
         h('span', {class: 'pairc'}, inp(cap, 'tin', HF.CUR.sym), h('span', {class: 'mut'}, '/ month')), 'tight'),
-      srow('Check it works', 'Sends one short request with this key and model',
-        h('span', {class: 'pairc'}, h('span', {class: 'soon'}, 'Coming in the next update'),
-          h('button', {class: 'btn sm ghost', type: 'button', disabled: true}, icon('refresh'), 'Test connection')), 'tight'),
     ];
   }
   function aiCard(d) {
-    const body = h('div', {class: 'aibody'}, aiBody(d, d.prefs.ai.mode));
+    const body = h('div', {class: 'aibody'});
+    const redraw = () => fill(body, aiBody(d, d.prefs.ai.mode, redraw));
+    fill(body, aiBody(d, d.prefs.ai.mode, redraw));
     const conf = h('input', {type: 'range', min: '0.5', max: '0.95', step: '0.05', value: String(d.prefs.ai.min_confidence),
       'aria-label': 'Auto-apply confidence'});
     const val = h('b', {class: 'sv v'}, d.prefs.ai.min_confidence.toFixed(2).replace(/0$/, ''));
@@ -401,10 +504,10 @@
     const help = HF.help('About the monthly limit', () => h('p', {}, 'A soft cap on Ask: it sends one request at a time and stops once this month’s spend reaches it (it can end over by that one).',
       d.prefs.ai.mode === 'hermes' ? ' Hermes reports no price, so each request is an estimate from its size.' : ''), {key: 'ai-cap'});
     return card({cls: 'sc', title: 'AI provider', icon: 'sparkles', rgb: RGB.purple, help},
-      seg([['hermes', 'Hermes'], ['api', 'API key'], ['off', 'Off']], d.prefs.ai.mode, 'AI provider', (k, draw) => save({'ai.mode': k}, () => {
+      seg([['hermes', 'Hermes'], ['api', 'API key'], ['cli', 'CLI'], ['off', 'Off']], d.prefs.ai.mode, 'AI provider', (k, draw) => save({'ai.mode': k}, () => {
         d.prefs.ai.mode = k;
         draw(k);
-        fill(body, aiBody(d, k));
+        fill(body, aiBody(d, k, redraw));
       }), 'aiseg'),
       body,
       gh('Classifier'),
@@ -591,7 +694,7 @@
     const r = d.prefs.region;
     const again = () => location.reload();  // numbers and dates are formatted once per page load
     return card({cls: 'sc', title: 'Region', icon: 'globe', rgb: RGB.ok},
-      srow('Currency', 'How amounts are written (nothing is converted)', select(d.options.currencies.map((c) => [c, `${c} · ${symbolOf(c)}`]), r.currency, 'Currency',
+      srow('Currency', 'Totals count only accounts in this currency. Nothing is converted.', select(d.options.currencies.map((c) => [c, `${c} · ${symbolOf(c)}`]), r.currency, 'Currency',
         (v) => save({'region.currency': v}, again)), 'tight'),
       srow('Number and date format', sample(r.locale, r.currency), select(d.options.locales.map((l) => [l, l]), r.locale, 'Locale',
         (v) => save({'region.locale': v}, again)), 'tight'),
@@ -621,6 +724,257 @@
         h('div', {}, h('a', {class: 'btn ghost', href: '/api/backup', download: ''}, icon('archive'), 'Download backup')),
         h('div', {}, h('button', {class: 'btn ghost', type: 'button', onclick: () => HF.openAdd('import')}, icon('upload'), 'Import'))));
   }
+
+  // ---- Categories (v23) ---------------------------------------------------------------------------------------------
+  // Settings -> Categories: above Categorization rules, collapsed to one summary line and opening in place the same way,
+  // in the rules card's look. Open: Search categories + New category, then each group's header and its rows, the first
+  // CAT_SHOWN rows then "Show all N" (a search always looks through all of them). A row: icon, name, a Yours tag on the
+  // ones you made, a Hidden tag on hidden ones (greyed, in their group), how many transactions are filed under it, and
+  // its actions, icons on a wide screen and one ⋯ on a phone: Edit (a built-in, Income and Transfers: the icon only),
+  // Hide / Show (spending categories), Delete (yours only). Delete confirms in the row, asking where its transactions
+  // go. Every action redraws this card only, then invalidates the app's category cache.
+  const CAT_SHOWN = 10;
+  let CATS = null;   // the last GET /api/categories/page
+  // the eight groups, from the payload (the Income & transfers bucket after them has no colour)
+  const groupNames = () => (CATS ? CATS.groups.filter((g) => g.rgb).map((g) => g.name) : []);
+  const groupRgb = (name) => {
+    const g = CATS && CATS.groups.find((x) => x.name === name);
+    return (g && g.rgb) || '155,162,182';
+  };
+  const groupFallbackIcon = (name) => {
+    const g = CATS && CATS.groups.find((x) => x.name === name);
+    return (g && g.categories.length && g.categories[0].icon) || 'tag';
+  };
+
+  async function loadCats() {
+    if (!CATS) CATS = await api('/api/categories/page');
+    return CATS;
+  }
+
+  function categorySheet(c, opts = {}) {
+    const built = Boolean(c && c.built_in);
+    const structural = Boolean(c && !c.spending);
+    const state = {icon: (c && c.icon) || groupFallbackIcon('Misc')};
+    const errs = {name: h('p', {class: 'ferr', role: 'alert'}), group: h('p', {class: 'ferr', role: 'alert'}),
+      icon: h('p', {class: 'ferr', role: 'alert'})};
+    const name = h('input', {type: 'text', maxlength: '60', value: c ? c.name : (opts.name || ''), disabled: built});
+    const groupOptions = structural
+      ? [h('option', {value: '', selected: true}, 'Income & transfers')]
+      : groupNames().map((g) => h('option', {value: g, selected: g === (c ? c.group : 'Misc')}, g));
+    const group = h('select', {class: 'selv', 'aria-label': 'Group', disabled: built || structural}, groupOptions);
+    const iconSlot = h('div');
+    let picked = Boolean(c && c.icon);
+    const picker = () => fill(iconSlot, HF.iconPicker({
+      rgb: groupRgb(group.value), value: state.icon, label: 'Category icon',
+      onPick: (namePicked) => { picked = true; state.icon = namePicked; }
+    }));
+    group.addEventListener('change', () => {
+      if (!picked) state.icon = groupFallbackIcon(group.value);
+      picker();
+    });
+    const err = h('div', {class: 'ferr', role: 'alert'});
+    const saveBtn = h('button', {class: 'btn', type: 'button'}, c ? 'Save' : 'Add category');
+    const field = (label, control, hint, key) => h('div', {class: 'fld', dataset: {f: key}},
+      h('label', {}, label), h('div', {class: key === 'icon' ? '' : 'inp'}, control), hint ? h('p', {class: 'hint'}, hint) : null,
+      errs[key] || null);
+    const limits = built ? (structural
+      ? 'Income and transfers stay outside the categories: their icon can change, nothing else.'
+      : 'A built-in category can change its icon or be hidden, not renamed or moved between groups.') : null;
+    const save = async () => {
+      for (const slot of Object.values(errs)) slot.textContent = '';
+      err.textContent = '';
+      let body;
+      if (c) {
+        body = {name: c.name, icon: state.icon};
+        if (!built && !structural) {
+          const wanted = name.value.trim();
+          if (wanted && wanted !== c.name) body.rename = wanted;
+          if (group.value !== c.group) body.group = group.value;
+        }
+        if (body.icon === c.icon && !body.rename && !body.group) { closeModal(); return; }
+      } else {
+        body = {name: name.value, group: group.value, icon: state.icon};
+      }
+      saveBtn.disabled = true;
+      try {
+        await post(c ? '/api/categories/update' : '/api/categories/create', body);
+      } catch (e) {
+        saveBtn.disabled = false;
+        if (e.field && errs[e.field]) errs[e.field].textContent = e.message;
+        else err.textContent = `Not saved: ${e.message}`;
+        return;
+      }
+      closeModal();
+      saved(c ? 'Category saved' : 'Category added');
+      HF.categoriesChanged();
+      await refreshCats();
+      if (opts.onDone) opts.onDone(CATS);
+    };
+    saveBtn.addEventListener('click', save);
+    picker();
+    openSheet([h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, c ? (built ? 'Category icon' : 'Edit category') : 'New category'),
+      closeBtn()),
+      h('p', {class: 'rlead'}, c ? catName(c) : 'A spending category, in one of the eight groups.'),
+      field('Name', name, built ? limits : 'Up to 60 characters; names are unique ignoring case.', 'name'),
+      field('Group', group, built ? null : 'Counts as spending and joins this group in budgets and charts.', 'group'),
+      field('Icon', iconSlot, null, 'icon'),
+      err,
+      h('div', {class: 'row'}, saveBtn, h('button', {class: 'btn ghost', type: 'button', onclick: closeModal}, 'Cancel'))],
+      {narrow: true, cls: 'catsheet'});
+  }
+
+  function catName(c) { return c.spending ? c.name : `${c.name} · structural`; }
+
+  async function actCategory(c, body, line) {
+    try {
+      await post('/api/categories/update', {name: c.name, ...body});
+    } catch (e) {
+      failed(e);
+      return;
+    }
+    saved(line);
+    HF.categoriesChanged();
+    await refreshCats();
+  }
+
+  async function refreshCats() {
+    try {
+      CATS = await api('/api/categories/page');
+    } catch (e) {
+      failed(e);
+      return;
+    }
+    catRedraw();
+  }
+
+  let catRedraw = () => {};
+  function categoriesCard(first) {
+    CATS = first;
+    const CS = {open: false, q: '', all: false, menu: null, confirm: null};   // each render starts closed, like the rules card
+    const body = h('div', {class: 'rbody catbody'});
+    body.id = 'categories-body';
+    const sumTxt = h('span', {class: 'rsumt'});
+    const sum = h('button', {class: 'rsum', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'categories-body',
+      onclick: () => { CS.open = !CS.open; draw(); }}, sumTxt, icon('chevd'));
+    const el = card({cls: 'sc cats', title: 'Categories', icon: 'grid', rgb: RGB.warn, extra: sum}, body);
+    el.dataset.categories = '';
+
+    const ibtn = (ic, label, onclick, act, cls = '') => h('button', {class: `rib ${cls}`, type: 'button', 'aria-label': label, title: label,
+      dataset: {act}, onclick}, icon(ic));
+    const ask = (c) => { CS.confirm = c.name; CS.menu = null; draw(); };
+
+    function confirmRow(c) {
+      const options = CATS.categories.filter((x) => x.spending && !x.hidden && x.name !== c.name);
+      const cancel = h('button', {class: 'btn sm ghost', type: 'button', onclick: () => { CS.confirm = null; draw(); }}, 'Cancel');
+      if (!options.length) {
+        return h('div', {class: 'rrow confirm catask', dataset: {cat: c.name}},
+          h('span', {class: 'grow'}, h('b', {}, `Delete ${c.name}? First add another visible category for its transactions.`)),
+          h('span', {class: 'pairc'}, cancel));
+      }
+      const n = c.transactions;
+      const line = n ? `Delete ${c.name}? Its ${plural(n, 'transaction')} ${n === 1 ? 'moves' : 'move'} to`
+        : `Delete ${c.name}? It has no transactions. Anything else that uses it moves to`;
+      const sel = h('select', {class: 'selv', 'aria-label': 'Move its transactions to'},
+        options.map((x) => h('option', {value: x.name}, x.name)));
+      sel.value = (options.find((x) => x.group === c.group) || options[0]).name;   // a sibling in its group first
+      const go = h('button', {class: 'btn sm danger', type: 'button'}, n ? 'Move and delete' : 'Delete');
+      go.addEventListener('click', async () => {
+        go.disabled = true;
+        try {
+          const r = await post('/api/categories/delete', {name: c.name, move_to: sel.value});
+          const moved = Object.values(r.moved || {}).reduce((a, b) => a + b, 0);
+          saved(moved ? `Deleted ${r.deleted}: moved ${plural(moved, 'row')} to ${r.name}` : `Deleted ${r.deleted}`);
+        } catch (e) {
+          go.disabled = false;
+          failed(e);
+          return;
+        }
+        CS.confirm = null;
+        HF.categoriesChanged();
+        await refreshCats();
+      });
+      return h('div', {class: 'rrow confirm catask', dataset: {cat: c.name}},
+        h('span', {class: 'grow'}, h('b', {}, line)), h('span', {class: 'pairc'}, sel, go, cancel));
+    }
+
+    function row(c) {
+      if (CS.confirm === c.name) return confirmRow(c);
+      const open = CS.menu === c.name;
+      const count = plural(c.transactions || 0, 'transaction');
+      const iconOnly = c.built_in || !c.spending;
+      const edit = () => { CS.menu = null; categorySheet(c); };
+      const hide = c.spending ? () => actCategory(c, {hidden: !c.hidden}, c.hidden ? `${c.name} is visible again` : `${c.name} is hidden`) : null;
+      const mine = !c.built_in && c.spending;
+      return h('div', {class: `rrow catrow${c.hidden ? ' off' : ''}${open ? ' rmenu-open' : ''}`, dataset: {cat: c.name}},
+        ibadge(c.icon || 'tag', c.rgb || groupRgb(c.group), 'xs'),
+        h('span', {class: 'grow'}, h('span', {class: 'rpat'}, h('b', {}, c.name), mine ? tag('Yours') : null, c.hidden ? tag('Hidden') : null),
+          h('span', {class: 'rsub'}, count)),
+        h('span', {class: 'rn v'}, count),
+        h('span', {class: 'racts'}, ibtn('pencil', iconOnly ? `Change the ${c.name} icon` : `Edit ${c.name}`, edit, 'edit'),
+          hide && !c.hidden ? ibtn('eye-off', `Hide ${c.name}`, hide, 'hide') : null,
+          hide && c.hidden ? h('button', {class: 'btn sm ghost catshow', type: 'button', 'aria-label': `Show ${c.name}`, dataset: {act: 'show'}, onclick: hide}, 'Show') : null,
+          mine ? ibtn('trash', `Delete ${c.name}`, () => ask(c), 'delete', 'rdel') : null),
+        h('button', {class: 'rmore', type: 'button', 'aria-label': `Actions for ${c.name}`, 'aria-expanded': String(open),
+          onclick: () => { CS.menu = open ? null : c.name; draw(); }}, '⋯'),
+        open ? h('span', {class: 'rmenu', role: 'group', 'aria-label': 'Category actions'},
+          h('button', {class: 'btn sm ghost', type: 'button', dataset: {act: 'edit'}, onclick: edit}, icon('pencil'), iconOnly ? 'Change icon' : 'Edit'),
+          hide ? h('button', {class: 'btn sm ghost', type: 'button', dataset: {act: c.hidden ? 'show' : 'hide'}, onclick: hide},
+            icon('eye-off'), c.hidden ? 'Show' : 'Hide') : null,
+          mine ? h('button', {class: 'btn sm danger', type: 'button', dataset: {act: 'delete'}, onclick: () => ask(c)}, icon('trash'), 'Delete') : null)
+          : null);
+    }
+
+    function listPart() {
+      const q = CS.q.trim().toLowerCase();
+      const total = CATS.categories.length;
+      let left = CS.all || q ? Infinity : CAT_SHOWN;
+      const parts = [];
+      for (const g of CATS.groups) {
+        const cats = g.categories.filter((c) => !q || c.name.toLowerCase().includes(q));
+        if (!cats.length || left <= 0) continue;
+        const shown = cats.slice(0, left);
+        left -= shown.length;
+        parts.push(gh(`${g.name} · ${cats.length}`), shown.map(row));
+      }
+      return h('div', {class: 'rlist'},
+        parts.length ? parts : h('p', {class: 'hint rnone', dataset: {empty: ''}}, 'No categories match.'),
+        !q && !CS.all && total > CAT_SHOWN ? h('button', {class: 'more rall', type: 'button', onclick: () => { CS.all = true; draw(); }},
+          `Show all ${total}`) : null);
+    }
+    const search = h('input', {class: 'search rq', type: 'search', placeholder: 'Search categories', 'aria-label': 'Search categories',
+      autocomplete: 'off', spellcheck: 'false'});
+    const listSlot = h('div');
+    search.addEventListener('input', () => { CS.q = search.value; CS.menu = null; fill(listSlot, listPart()); });
+    const addNew = h('button', {class: 'btn sm catnew', type: 'button',
+      onclick: () => categorySheet(null, {onDone: () => { CS.all = true; draw(); }})}, icon('plus'), 'New category');
+
+    const draw = () => {
+      if (!CATS) {
+        fill(sumTxt, "Couldn't load the categories");
+        body.hidden = true;
+        return;
+      }
+      const counts = CATS.counts;
+      fill(sumTxt, `${plural(counts.total, 'category', 'categories')} · ${counts.user} yours · ${counts.hidden} hidden`);
+      sum.setAttribute('aria-expanded', String(CS.open));
+      el.classList.toggle('open', CS.open);
+      body.hidden = !CS.open;
+      if (!CS.open) { fill(body); return; }
+      search.value = CS.q;
+      fill(listSlot, listPart());
+      fill(body, h('div', {class: 'rbar'}, search, addNew), listSlot);
+    };
+    catRedraw = draw;
+    draw();
+    return el;
+  }
+
+  // The + New category row inside any category picker opens this and then picks the new one (catpick.js).
+  HF.categoryNew = async (opts = {}) => {
+    if (!CATS) await loadCats().catch(() => null);
+    if (!CATS) { toast('Could not load the categories', [], {error: true, timeout: 5000}); return; }
+    categorySheet(null, opts);
+  };
 
   // ---- Categorization rules (TASK-24) -------------------------------------------------------------------------------
   // GET /api/rules (every rule newest first, its counts and the suggestions); edits through /api/rules/*. Collapsed to
@@ -818,14 +1172,15 @@
   HF.RENDER.settings = async (tk) => {
     fill(document.getElementById('page'), HF.skeleton(['s1', 's1', 's1', 's1']));
     // TASK-24 loads rules independently; an unavailable rules route does not hide the other settings.
-    const [d, , rules] = await Promise.all([api('/api/settings/page'), HF.ensureAccounts().catch(() => null), api('/api/rules').catch(() => null)]);
+    const [d, , rules, cats] = await Promise.all([api('/api/settings/page'), HF.ensureAccounts().catch(() => null),
+      api('/api/rules').catch(() => null), api('/api/categories/page').catch(() => null)]);
     if (tk !== HF.S.token) return;
     D = d;
     if (ACCESS_PENDING && d.access.mode === ACCESS_PENDING) ACCESS_PENDING = null;
     // hotfix 2026-09-29: one column, every card the same width, read top to bottom (user feedback: the packed 2-column
     // masonry left cards of different lengths side by side, hard to read on desktop). Phones were one column already.
     const grid = h('div', {class: 'sgrid'}, connectionsCard(d), accessCard(d), aiCard(d), mcpCard(d), syncCard(d), valuationsCard(d),
-      regionCard(d), lookCard(d), dataCard(d), rulesCard(rules));
+      regionCard(d), lookCard(d), dataCard(d), categoriesCard(cats), rulesCard(rules));
     fill(document.getElementById('page'), grid);
   };
 });

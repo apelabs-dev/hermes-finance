@@ -22,8 +22,8 @@ FINANCE_DATA_DIR=/tmp/hf-demo uv run finance serve --port 8799      # http://127
 
 ## Does it work outside the US?
 
-Plaid Link is opened for US institutions only (`country_codes: ["US"]`). The currency setting changes how amounts are
-written. Nothing is converted.
+Plaid Link is opened for US institutions only (`country_codes: ["US"]`). Totals count only accounts in the display
+currency (Settings → Region); accounts in another currency are listed apart. Nothing is converted.
 
 ## I pay for Plaid. Do I still get only 10 connections?
 

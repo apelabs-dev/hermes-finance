@@ -66,6 +66,7 @@ READ_CALLS = [
     ("finance_status", {}),
     ("finance_goals", {}), ("finance_transactions", {"tag": "trip"}),  # TASK-19
     ("finance_rules", {}),  # TASK-24
+    ("finance_categories", {}),  # v23
 ]
 # bad arguments: the same message everywhere (the CLI: "error: <it>" on stderr, exit 2)
 READ_ERRORS = [
@@ -121,7 +122,7 @@ def test_the_tools_defaults_and_arguments_are_the_cli_flags(capsys):
         "finance_spend": "spend", "finance_budget_status": "budget-status", "finance_transactions": "txns",
         "finance_networth": "networth", "finance_bills": "bills", "finance_loans": "loans",
         "finance_holdings": "holdings", "finance_cashflow": "cashflow", "finance_status": "status",
-        "finance_goals": "goals", "finance_rules": "rules"}
+        "finance_goals": "goals", "finance_rules": "rules", "finance_categories": "categories"}
     assert all(len(t.description) <= 260 for t in tooldefs.TOOLS.values())          # sent on every API call
 
 
@@ -186,16 +187,23 @@ def _costco(path: Path) -> str:
                       "ORDER BY date LIMIT 1")[0][0]
 
 
-def test_the_approval_hook_asks_for_exactly_the_four_writes(demo, plugin):
-    """(TASK-21: finance_track_bill is the fourth write.)"""
+def test_the_approval_hook_asks_for_exactly_the_seven_writes(demo, plugin):
+    """(TASK-21: finance_track_bill was the fourth; v23: create / update / delete category are the fifth to seventh.)"""
     [hook] = plugin.hooks["pre_tool_call"]
+    conn = db.connect(demo)
+    with conn:
+        conn.execute("INSERT INTO categories (name, is_income, is_transfer) VALUES ('Kids', 0, 0)")
+    conn.close()
     before = sha(demo)
     for name in [*tooldefs.READS, "terminal", "write_file", "memory", "execute_code", "finance_nope", ""]:
         assert hook(tool_name=name, args={"month": "2026-09"}, task_id="t") is None, name
     writes = {"finance_set_category": {"transaction_id": _costco(demo), "category": "other shopping"},
               "finance_add_rule": {"pattern": "costco", "category": "Other Shopping"},
               "finance_set_cap": {"category": "eating out", "monthly_cap": 400},
-              "finance_track_bill": {"action": "track", "merchant": "netflix", "every": "1m"}}
+              "finance_track_bill": {"action": "track", "merchant": "netflix", "every": "1m"},
+              "finance_create_category": {"name": "Camp", "icon": "tent"},
+              "finance_update_category": {"name": "Coffee", "icon": "tent"},
+              "finance_delete_category": {"name": "Kids", "move_to": "Other"}}
     assert set(writes) == set(tooldefs.WRITES)
     messages = {}
     for name, args in writes.items():
@@ -212,6 +220,9 @@ def test_the_approval_hook_asks_for_exactly_the_four_writes(demo, plugin):
     assert messages["finance_set_cap"] == "Set the monthly budget cap on Eating Out to $400 (now $250)."
     assert re.fullmatch(r"Track Netflix as a bill every month, the same amount each time \(next ~\w{3} \d{1,2}, \$15\.49\)\.",
                         messages["finance_track_bill"]), messages["finance_track_bill"]
+    assert messages["finance_create_category"] == "Add a spending category Camp in Misc with the tent icon."
+    assert messages["finance_update_category"] == "For Coffee: change its icon to tent."
+    assert messages["finance_delete_category"] == "Delete Kids. Nothing to move."
     assert hook(tool_name="finance_set_cap", args={"category": "Eating Out", "monthly_cap": None}, task_id="t") == \
         {"action": "approve", "message": "Clear the monthly budget cap on Eating Out (now $250)."}
     assert sha(demo) == before                                                        # asking changes nothing

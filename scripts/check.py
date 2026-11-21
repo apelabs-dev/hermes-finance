@@ -75,6 +75,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
+if str(TESTS) not in sys.path:   # offline_env: the one list of offline switches (also in tests/ and every safe-env script)
+    sys.path.append(str(TESTS))
+from offline_env import OFFLINE_SWITCHES  # noqa: E402
 # Never passed on to anything check.py runs: the providers' variables and anything named like a credential. The tests use
 # synthetic data and fake keys; a real key in the shell must not reach a test's child process (conftest.py's patches
 # don't cover those). Only the names are looked at.
@@ -115,8 +118,8 @@ _IMPORT = re.compile(r"^[ \t]*(?:from[ \t]+(\w+)[ \t]+import\b|import[ \t]+(\w[\
 
 def safe_env(**extra) -> dict:
     env = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k) and k not in INHERITED_SCOPE}
-    env.update(HERMES_PLAID="off", HERMES_ALPACA="off", HERMES_CHROME_DEVTOOLS="off", HF_CHROMES=str(CHROMES),
-               PYTHONDONTWRITEBYTECODE="1", **extra)
+    env.update(**OFFLINE_SWITCHES, HERMES_CLI_BRAINS="off",
+               HF_CHROMES=str(CHROMES), PYTHONDONTWRITEBYTECODE="1", **extra)
     return env
 
 

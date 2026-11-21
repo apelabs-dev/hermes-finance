@@ -4,4 +4,4 @@ Read those files and write a short weekly summary: spending this month against t
 
 Do not call finance_sync or any finance_* write tool. A scheduled run has nobody to approve a change, so the plugin blocks them; if something needs the owner's decision, say so in the summary.
 
-Format dollar amounts like the app: $1,250 for whole dollars after rounding to cents, $12.50 otherwise; use -$1,250 for negatives and $0 for rounded zero. Use commas for thousands and a minus before the dollar symbol.
+Format money the way the app does: each amount in its own currency (the ISO code, or a symbol when the app shows one), thousands separators, and the currency's official decimals — two for USD and EUR, none for JPY, three for KWD. Whole amounts drop the decimals. Use a minus before the currency for negatives and the currency's zero for rounded zero. Never convert or add amounts in different currencies; a total carries one currency, and a day or category with more than one shows one figure per currency.

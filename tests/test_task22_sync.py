@@ -350,7 +350,7 @@ def test_finance_sync_over_mcp(chase, client, fake, monkeypatch):
 
 def test_15_tools_one_hook_and_the_manifest():
     p = plugin_ctx()
-    assert len(p.tools) == 16 and len(p.hooks["pre_tool_call"]) == 1 and "finance_sync" in p.tools  # TASK-24: + finance_rules
+    assert len(p.tools) == 20 and len(p.hooks["pre_tool_call"]) == 1 and "finance_sync" in p.tools  # v23: + finance_categories, finance_create/update/delete_category
     assert tooldefs.ACTIONS == ("finance_sync",) and "finance_sync" not in tooldefs.READS + tooldefs.WRITES
     assert tooldefs.TOOLS["finance_sync"].schema() == {
         "type": "object", "additionalProperties": False,

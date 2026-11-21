@@ -73,8 +73,10 @@ def safe_env(tmp: Path) -> dict[str, str]:
         del os.environ[k]
     env_file = tmp / "demo.env"
     env_file.write_text("CARFAX_ENABLED=1\nREDFIN_ENABLED=1\nPHOTOS_ENABLED=1\n")   # the pages show them on, as the gates do
+    sys.path.insert(0, str(ROOT / "tests"))
+    from offline_env import OFFLINE_SWITCHES   # Plaid, SimpleFIN, Alpaca, DevTools: one list for tests and scripts
     os.environ.update({
-        "TZ": "UTC", "HERMES_PLAID": "off", "HERMES_ALPACA": "off", "HERMES_CHROME_DEVTOOLS": "off",
+        "TZ": "UTC", **OFFLINE_SWITCHES,
         "HERMES_ENV_FILE": str(env_file), "FINANCE_SECRETS_FILE": str(tmp / "secrets.env"),
         "FINANCE_DATA_DIR": str(tmp / "data"), "HERMES_HOME": str(tmp / "no-hermes-home"),
         "HERMES_ALPACA_KEY_FILE": str(tmp / "no-alpaca.env"), "FINANCE_HERMES_URL": "http://127.0.0.1:9/v1",
@@ -935,7 +937,7 @@ def pay_late_bills(conn: sqlite3.Connection, db_path: Path, today: date) -> int:
 def extend_history(conn: sqlite3.Connection, today: date) -> int:
     """Weekly balances back to history_start(): a bank account's balance is walked back through its own transactions
     (cash: a charge was money out, so the balance before it was higher), never below zero; a card, a loan and an
-    investment account keep its first balance (the fixture's card charges and payments don't net out). A manual
+    investment account keep their first balance (the fixture's card charges and payments don't net out). A manual
     account's first value also stands at history_start(). Every account lands on one weekly grid (the earliest first
     snapshot), so an account whose data starts later (U.S. Bank at a month boundary) doesn't add a second weekly series
     and turn the net-worth line into a 3-4 day one. Returns how many rows were added."""
@@ -1076,7 +1078,7 @@ def _apply_assets(conn: sqlite3.Connection, rename: RenameMap, today: date, fold
 # Each demo goal's look, from the goal picker's own set (goals.ICONS / COLOURS). The generator makes its goals the way an API
 # caller would, without a look, so they get the app's legacy defaults (pencil / split / handcoins), which the picker
 # doesn't offer: its edit sheet would show no icon selected. A goal not named here gets the picker's default.
-GOAL_LOOKS = {"Rainy day": ("shield-check", "#5fc6e8"), "New laptop": ("briefcase", "#8ea8ff"),
+GOAL_LOOKS = {"Rainy day": ("shield-check", "#5fc6e8"), "New laptop": ("briefcase-business", "#8ea8ff"),
               "Concert tickets": ("heart", "#ff8fb1"), "Trip to Lisbon": ("plane", "#c792ea"),
               "Monthly savings": ("sprout", "#4fd1a5")}
 PAYOFF_LOOK = ("car", "#f5b454")

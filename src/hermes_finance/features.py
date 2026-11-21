@@ -16,7 +16,7 @@ import sqlite3
 from datetime import date
 from typing import Any, Callable
 
-from . import alpaca, api, billcal, bills, goals, rollover, rulebook, txmeta
+from . import alpaca, api, billcal, bills, goals, rollover, rulebook, simplefin, simplefin_sync, txmeta
 
 ALPACA_KEY = "/api/alpaca/key"
 
@@ -32,6 +32,14 @@ def _call(fn, *args, **kw):
         raise api.ApiError(str(e), 400, "secret") from None
     except alpaca.AlpacaError as e:
         raise api.ApiError(f"Couldn't reach Alpaca: {e}", 502, "secret") from None
+    except simplefin_sync.SimpleFinRefused as e:
+        raise api.ApiError(str(e), e.status) from None
+    except simplefin.InvalidToken as e:
+        raise api.ApiError(str(e), 400, "token") from None
+    except simplefin.Disconnected as e:
+        raise api.ApiError(str(e), 409) from None
+    except simplefin.SimpleFinError as e:
+        raise api.ApiError(str(e), 502) from None
 
 
 def _id(data: dict[str, Any]) -> Any:
@@ -119,6 +127,19 @@ def alpaca_state(conn: sqlite3.Connection, params: dict[str, str], today: date) 
     return {**alpaca.key_state(), "items": alpaca.items_payload(conn), "account": alpaca.account_extra(conn) or None}
 
 
+def simplefin_status(conn: sqlite3.Connection, params: dict[str, str], today: date) -> dict[str, Any]:
+    """Connection state, freshness, requests today, manual syncs left, coverage and the duplicate review count."""
+    return simplefin_sync.status(conn, today)
+
+
+def simplefin_pending(conn: sqlite3.Connection, params: dict[str, str], today: date) -> dict[str, Any]:
+    """The confirm sheet's list after a claim, or 404 when nothing is waiting to be confirmed."""
+    got = simplefin_sync.pending(conn)
+    if got is None:
+        raise api.ApiError("Nothing to confirm: paste a SimpleFIN setup token first.", 404)
+    return got
+
+
 GET_ROUTES: dict[str, Callable[[sqlite3.Connection, dict[str, str], date], Any]] = {
     "/api/goals": goals_page,
     "/api/tags": tags,
@@ -128,6 +149,8 @@ GET_ROUTES: dict[str, Callable[[sqlite3.Connection, dict[str, str], date], Any]]
     "/api/bills/lookup": bill_lookup,      # TASK-21
     "/api/bills/preview": bill_preview,
     "/api/rules": lambda conn, p, t: rulebook.payload(conn),   # TASK-24: Settings -> Categorization rules
+    "/api/simplefin/status": simplefin_status,                 # v21: SimpleFIN Bridge
+    "/api/simplefin/confirm": simplefin_pending,
 }
 
 
@@ -138,6 +161,61 @@ def _alpaca_connect(conn: sqlite3.Connection, data: dict[str, Any], today: date)
     if unknown:
         raise api.ApiError(f"unknown field {str(unknown[0])[:40]!r}")
     return _call(alpaca.connect, conn, data.get("key_id"), data.get("secret"), today)
+
+
+def simplefin_claim(conn: sqlite3.Connection, data: dict[str, Any], today: date) -> dict[str, Any]:
+    unknown = sorted(set(data) - {"token"})
+    if unknown:
+        raise api.ApiError(f"unknown field {str(unknown[0])[:40]!r}")
+    token = data.get("token")
+    if token is None or (isinstance(token, str) and not token.strip()):
+        # no token, but a stored access link: retry the first fetch instead of asking for a token that is already spent
+        out = _call(simplefin_sync.retry, conn, today=today)
+    elif not isinstance(token, str):
+        raise api.ApiError("Paste the setup token from SimpleFIN Bridge.", field="token")
+    else:
+        out = _call(simplefin_sync.claim, conn, token, today=today)
+    return {**out, "status": simplefin_sync.status(conn, today)}
+
+
+def _simplefin_choices(value: Any) -> dict[str, dict]:
+    if isinstance(value, dict):
+        return {str(k): v for k, v in value.items() if isinstance(v, dict)}
+    if isinstance(value, list):
+        out: dict[str, dict] = {}
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("key")
+            if not key and item.get("id"):
+                key = f"{item.get('conn_id')}:{item['id']}" if item.get("conn_id") else item["id"]
+            if key:
+                out[str(key)] = {k: item[k] for k in ("type", "add") if k in item}
+        return out
+    raise api.ApiError("accounts must be an object or a list", field="accounts")
+
+
+def simplefin_confirm(conn: sqlite3.Connection, data: dict[str, Any], today: date) -> dict[str, Any]:
+    if "accounts" not in data:
+        raise api.ApiError("accounts is required: every account's type (or Don't add)", field="accounts")
+    choices = _simplefin_choices(data["accounts"])
+    if not choices:
+        raise api.ApiError("Choose what to do with every account before adding them.", field="accounts")
+    out = _call(simplefin_sync.confirm, conn, choices, today=today)
+    return {**out, "status": simplefin_sync.status(conn, today)}
+
+
+def simplefin_disconnect(conn: sqlite3.Connection, data: dict[str, Any], today: date) -> dict[str, Any]:
+    return simplefin_sync.disconnect(conn)
+
+
+def simplefin_duplicate(conn: sqlite3.Connection, data: dict[str, Any], today: date) -> dict[str, Any]:
+    sid = data.get("simplefin_account_id") or data.get("simplefin")
+    pid = data.get("plaid_account_id") or data.get("plaid")
+    choice = data.get("choice")
+    if not isinstance(sid, str) or not isinstance(pid, str) or not isinstance(choice, str):
+        raise api.ApiError("simplefin_account_id, plaid_account_id and choice are required", field="choice")
+    return _call(simplefin_sync.pick_duplicate_source, conn, sid, pid, choice)
 
 
 POST_ROUTES: dict[str, Callable[[sqlite3.Connection, dict[str, Any], date], Any]] = {
@@ -161,6 +239,15 @@ POST_ROUTES: dict[str, Callable[[sqlite3.Connection, dict[str, Any], date], Any]
     "/api/rules/restore": lambda conn, d, t: _call(rulebook.restore, conn, d.get("undo")),
     "/api/rules/suggestions/accept": lambda conn, d, t: _call(rulebook.accept, conn, d.get("key")),
     "/api/rules/suggestions/dismiss": lambda conn, d, t: _call(rulebook.dismiss, conn, d.get("key")),
+    # v23: categories (catops.py's domain layer; the Settings card and the shared sheets)
+    "/api/categories/create": lambda conn, d, t: api.create_category(conn, d),
+    "/api/categories/update": lambda conn, d, t: api.update_category(conn, d),
+    "/api/categories/delete": lambda conn, d, t: api.delete_category(conn, d),
+    # v21: SimpleFIN Bridge (the sync trigger shares web.py's POST /api/sync and syncnow)
+    "/api/simplefin/claim": simplefin_claim,
+    "/api/simplefin/confirm": simplefin_confirm,
+    "/api/simplefin/disconnect": simplefin_disconnect,
+    "/api/simplefin/duplicate": simplefin_duplicate,
 }
 
 # --- DELETE ----------------------------------------------------------------------------------------------------------

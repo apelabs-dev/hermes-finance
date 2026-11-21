@@ -1,0 +1,40 @@
+/* SimpleFIN Bridge (v21): the chooser's two cards and the confirm sheet's account rows. Everything else reuses the
+ * app's existing sheet, field, select, tag and row classes. */
+
+.ways { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-top: 16px; }
+.way { display: flex; flex-direction: column; gap: 14px; border: 1px solid var(--line2); border-radius: 16px;
+  padding: 16px; background: var(--card2); min-width: 0; }
+.way-h { display: flex; align-items: flex-start; gap: 12px; }
+.way-h .grow { min-width: 0; }
+.way-h b { display: block; font-size: 16px; }
+.way-h span span, .way-h .grow > span { display: block; font-size: 13.5px; color: var(--mut); margin-top: 2px; white-space: normal; }
+.way-pc { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.way-pro, .way-con { min-width: 0; }
+.way-pro h4, .way-con h4 { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 650; margin: 0 0 5px; }
+.way-pro h4 svg.i { color: var(--ok); width: 16px; height: 16px; }
+.way-con h4 svg.i { color: var(--warn); width: 16px; height: 16px; }
+.way-pro ul, .way-con ul { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
+.way-pro li, .way-con li { font-size: 13.5px; line-height: 1.45; color: var(--fg); }
+.way-con li { color: var(--mut); }
+.way-slot { margin-top: auto; }
+.way-slot .slotm { margin: 0; }
+.way .btn.w { margin-top: auto; }
+.way .btn.w:disabled { opacity: .55; cursor: not-allowed; }
+
+.sf-acct { align-items: flex-start; gap: 10px 14px; flex-wrap: wrap; }
+.sf-acct .grow { min-width: 190px; }
+.sf-acct .meta2 { color: var(--mut); font-size: 13px; }
+.sf-acct select.selv { margin-left: auto; max-width: 100%; }
+.sf-acct.dup { color: var(--mut); }
+.sf-acct.dup .nm { color: var(--mut); }
+.sf-second { display: inline-flex; }
+.sf-second[hidden] { display: none; }
+.tag.sf { color: var(--acc); border-color: var(--line2); background: rgba(142, 168, 255, .10); }
+
+.help-line { display: flex; align-items: center; gap: 6px; }
+.help-line .help-trigger.labelled { font-size: 13px; }
+
+@media (max-width: 1023px) {
+  .ways { grid-template-columns: minmax(0, 1fr); }
+  .way { padding: 14px; }
+}

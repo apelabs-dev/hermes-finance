@@ -45,9 +45,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from . import config, db, insights, prefs, report
+from . import config, db, insights, prefs, report, simplefin_sync
 from .money import money
-from .db import now
+from .db import display_currency, now
 from .plaid import PlaidClient, PlaidError
 from .sync import ItemSyncResult, is_transient, sync_items
 
@@ -165,7 +165,7 @@ def _log_refresh(conn: sqlite3.Connection, item_ids: list[str]) -> None:
 
 
 def _items(conn: sqlite3.Connection, item_id: str | None) -> list[sqlite3.Row]:
-    q, args = "SELECT * FROM items WHERE removed_at IS NULL", ()
+    q, args = "SELECT * FROM items WHERE removed_at IS NULL AND provider = 'plaid'", ()
     if item_id is not None:
         q, args = q + " AND item_id = ?", (item_id,)
     rows = conn.execute(q + " ORDER BY created_at", args).fetchall()
@@ -220,23 +220,24 @@ def balances(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     observable (changes() drops it), so no caller can surface one by forgetting to pass the policy."""
     policy = set(insights.excluded_accounts(conn))
     out = {}
-    for a in conn.execute("""SELECT a.account_id, a.name, a.mask, a.type, a.subtype, a.current_balance, i.item_id,
-                                    i.institution_name, i.institution_id FROM accounts a
+    for a in conn.execute("""SELECT a.account_id, a.name, a.mask, a.type, a.subtype, a.current_balance, a.iso_currency,
+                                    i.item_id, i.institution_name, i.institution_id FROM accounts a
                              JOIN items i ON i.item_id = a.item_id WHERE i.removed_at IS NULL"""):
         bank = a["institution_name"] or a["name"] or "Account"
         out[a["account_id"]] = {"label": f"{bank} ••{a['mask']}" if a["mask"] else f"{bank} {a['name'] or ''}".strip(),
                                 "balance": a["current_balance"], "item_id": a["item_id"], "bank": bank,
                                 "institution_id": a["institution_id"], "name": a["name"], "mask": a["mask"],
-                                "type": a["type"], "subtype": a["subtype"], "excluded": a["account_id"] in policy}
+                                "type": a["type"], "subtype": a["subtype"], "currency": a["iso_currency"],
+                                "excluded": a["account_id"] in policy}
     return out
 
 
-def usd(value: float | None) -> str:
-    return money(value, none="—")
+def usd(value: float | None, currency: str | None = None) -> str:
+    return money(value, none="—", currency=currency)
 
 
 def changes(before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]],
-            results: list[ItemSyncResult], excluded: Iterable[str] = ()) -> dict[str, Any]:
+            results: list[ItemSyncResult], excluded: Iterable[str] = (), display: str = "USD") -> dict[str, Any]:
     """{new, updated, removed, balances: [{account_id, label, before, after, item_id, bank, institution_id, name, mask,
     type, subtype}], text}: the balances largest move first (TASK-22f). The text is None when no bank synced
     successfully (TASK-22c: never "Nothing new" then, even when a failed Item did commit balances or holdings).
@@ -252,13 +253,18 @@ def changes(before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]],
             continue
         was = before[aid]["balance"] if aid in before else a["balance"]
         if a["balance"] != was and not (a["balance"] is not None and was is not None and abs(a["balance"] - was) < 0.005):
+            code = (a.get("currency") or "").strip().upper()
+            extra = {"currency": code} if code and code != display.upper() else {}
             moved.append({"account_id": aid, "label": a["label"], "before": was, "after": a["balance"],
-                          **{k: a[k] for k in ("item_id", "bank", "institution_id", "name", "mask", "type", "subtype")}})
+                          **{k: a[k] for k in ("item_id", "bank", "institution_id", "name", "mask", "type", "subtype")},
+                          **extra})
     moved.sort(key=lambda m: -abs((m["after"] or 0.0) - (m["before"] or 0.0)))   # (stable: DB order within a tie)
     parts = [f"{new} new transaction{'s' if new != 1 else ''}"] if new else []
     parts += [f"{updated} updated"] if updated else []
     parts += [f"{removed} removed"] if removed else []
-    parts += [f"{m['label']} {usd(m['before']) if m['before'] is not None else 'new'} → {usd(m['after'])}" for m in moved]
+    parts += [f"{m['label']} "
+              f"{usd(m['before'], m.get('currency') or display) if m['before'] is not None else 'new'} → "
+              f"{usd(m['after'], m.get('currency') or display)}" for m in moved]
     landed = any(r.ok for r in results)
     return {"new": new, "updated": updated, "removed": removed, "balances": moved,
             "text": " · ".join(parts) if parts else "Nothing new" if landed else None}
@@ -384,10 +390,11 @@ def _ask(plaid: PlaidClient, items: list[sqlite3.Row]) -> tuple[list[dict[str, A
 
 
 def begin(conn: sqlite3.Connection, client: Callable[[], PlaidClient], item_id: str | None = None,
-          refresh: bool = False) -> dict[str, Any]:
+          refresh: bool = False, scheduled: bool = False) -> dict[str, Any]:
     """The checks before a sync, with nothing called yet: raises a SyncRefused (Busy, Cooldown, RefreshRefused,
     UnknownItem), or config.ConfigError when the Plaid keys are missing. Otherwise LOCK is held until finish() and this
-    is the run: the plan, the Plaid client (made only when something is to be called) and `refresh`."""
+    is the run: the plan, the Plaid client (made only when something is to be called), `refresh` and whether this is
+    the daily (scheduled) run. A connected SimpleFIN connection runs even when every Plaid Item is in its minute."""
     if refresh:
         policy = refresh_policy(conn)
         if not policy["allowed"]:
@@ -396,9 +403,11 @@ def begin(conn: sqlite3.Connection, client: Callable[[], PlaidClient], item_id: 
         raise Busy()
     try:
         p = plan(conn, item_id, refresh)
-        if p["items"] and not p["sync"] and not p["refresh"]:
+        simplefin = simplefin_sync.connected(conn) and item_id is None
+        if p["items"] and not p["sync"] and not p["refresh"] and not simplefin:
             raise Cooldown(min([*p["sync_wait"].values(), *p["refresh_wait"].values()]))
-        p.update(plaid=client() if p["sync"] or p["refresh"] else None, refresh_run=refresh, locked=True)
+        p.update(plaid=client() if p["sync"] or p["refresh"] else None, refresh_run=refresh, locked=True,
+                 scheduled=scheduled, simplefin=simplefin)
     except BaseException:
         LOCK.release()
         raise
@@ -421,15 +430,31 @@ def finish(conn: sqlite3.Connection, p: dict[str, Any]) -> dict[str, Any]:
         previous = _last_sync(conn)   # TASK-22f: "Nothing new since 6:31 AM."
         mark, before = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM transactions").fetchone()[0], balances(conn)
         results = sync_items(conn, plaid, p["sync"]) if p["sync"] else []
-        c = changes(before, balances(conn), results, insights.excluded_accounts(conn)) | new_transactions(
+        sf = None
+        if p.get("simplefin"):
+            try:
+                sf = simplefin_sync.sync(conn, "daily" if p.get("scheduled") else "manual")
+            except Exception as e:   # SimpleFIN must never stop a Plaid sync
+                log.exception("SimpleFIN sync failed")
+                sf = {"ok": False, "connected": True, "state": "error",
+                      "message": f"SimpleFIN sync failed ({type(e).__name__}). Nothing changed."}
+        c = changes(before, balances(conn), results, insights.excluded_accounts(conn),
+                        display_currency(conn)) | new_transactions(
             conn, mark, [r.item_id for r in results if r.transactions_ok])
     finally:
         _release(p)
     fail = failure(results)   # (TASK-22c: Plaid out of reach is one line, not one error per bank)
     inst = {it["item_id"]: it["institution_id"] for it in p["items"]}
     # (TASK-22f: banks = the Plaid banks a sync covers, the panel's "All 8 banks"; previous_sync = the last one before)
-    out = {"ok": all(r.ok for r in results), "synced": sum(r.ok for r in results), "banks": len(p["items"]),
-           "message": message(c, fail) if p["items"] else "No bank is connected yet.",
+    sf_ok = sf is None or not sf.get("connected") or sf.get("ok")
+    message_text = message(c, fail) if p["items"] else ""
+    if sf and sf.get("connected") and not p["items"]:
+        message_text = sf.get("message") or ""
+    out = {"ok": all(r.ok for r in results) and sf_ok,
+           "synced": sum(r.ok for r in results) + (1 if sf and sf.get("connected") and sf.get("ok") else 0),
+           "banks": len(p["items"]) + (1 if sf and sf.get("connected") else 0),
+           "simplefin": sf,
+           "message": message_text if p["items"] or (sf and sf.get("connected")) else "No bank is connected yet.",
            "unreachable": bool(fail and fail["unreachable"]),
            "items": [] if fail and fail["unreachable"] else [_item_json(r, inst.get(r.item_id)) for r in results],
            "waiting": [{"item_id": i, "retry_after": int(s) + 1} for i, s in p["sync_wait"].items()],
@@ -455,11 +480,11 @@ def finish(conn: sqlite3.Connection, p: dict[str, Any]) -> dict[str, Any]:
 
 
 def run(conn: sqlite3.Connection, client: Callable[[], PlaidClient], item_id: str | None = None,
-        refresh: bool = False) -> dict[str, Any]:
+        refresh: bool = False, scheduled: bool = False) -> dict[str, Any]:
     """Sync now (and first ask the banks for fresh data, with refresh), in this thread: finance_sync and the CLI (the
     page's POST /api/sync runs it in the background: start()). `client` makes the Plaid client, only once something is
     to be called. Raises a SyncRefused (Busy, Cooldown, RefreshRefused, UnknownItem): nothing was called."""
-    return finish(conn, begin(conn, client, item_id, refresh))
+    return finish(conn, begin(conn, client, item_id, refresh, scheduled))
 
 
 # --- the page's syncs, in the background (HOTFIX-1) ---------------------------------------------------------------
@@ -518,9 +543,9 @@ def outcome(r: dict[str, Any] | None, error: str | None = None) -> str:
 
 
 def start(db_path: Path, conn: sqlite3.Connection, client: Callable[[], PlaidClient], item_id: str | None = None,
-          refresh: bool = False, rid: str | None = None) -> Job:
+          refresh: bool = False, rid: str | None = None, scheduled: bool = False) -> Job:
     """POST /api/sync: begin() here (a refusal raises at once, nothing called), then finish() in a thread of its own."""
-    p = begin(conn, client, item_id, refresh)
+    p = begin(conn, client, item_id, refresh, scheduled)
     try:
         job = Job(rid or uuid.uuid4().hex, refresh, len(p["items"]))
         with _JOBS_LOCK:

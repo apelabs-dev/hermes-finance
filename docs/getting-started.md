@@ -155,7 +155,7 @@ package into Hermes's environment isn't supported. Point the plugin at the check
     hermes plugins list --plain
     ```
 
-    `doctor` should report that registration passed, with 16 tools and 1 hook.
+    `doctor` should report that registration passed, with 20 tools and 1 hook.
 
 4. **Use Hermes in the Ask panel** (optional): Settings → AI provider → **Hermes**. This is the default. See
    [Ask through Hermes](ask-hermes-bridge.md).

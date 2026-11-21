@@ -5,6 +5,16 @@ plus Release Please's version/changelog commits. Never push development history 
 the distribution repository. `scripts/export_public.py` and its allowlist intentionally
 remain development-only; `scripts/sync_release.py` is standalone and also ships publicly.
 
+## Remotes
+
+- `origin`: the private development repository, which also backs up the development history off the machine. It
+  takes every branch. CI (`ci.yml`) runs on every push there. The macOS nightly runs only by manual dispatch, since
+  private macOS minutes cost ten times as much as Linux. Release Please and the weekly demo are skipped there by
+  job-level guards (`github.event.repository.private`); the nightly's scheduled run is skipped the same way.
+  Agents may push their own `ci/<name>` branches to `origin` without asking, to run the suite on GitHub.
+- `public`: the distribution repository, a release-only export target. Its push URL stays disabled; only the
+  operator's export step (below) pushes there. Agents never push to it.
+
 ## Policy and baseline
 
 The existing `v0.2.0` prerelease points at
@@ -105,8 +115,9 @@ outputs. Manifest updates are built in. New release sections use Release Please'
 normal `## [X.Y.Z](...) (date)` format; keep the original 0.2.0 section below them.
 
 The existing `ci.yml` runs on ordinary pushes and pull requests: Ubuntu no-browser
-checks and the Python 3.11 plugin compile check. The macOS full suite remains nightly.
-The release workflow does not duplicate it.
+checks and the Python 3.11 plugin compile check; it also takes a manual dispatch. On the public repository the macOS
+full suite remains nightly; on the private development repository it runs only by manual dispatch. The release workflow
+does not duplicate it.
 
 ## GitHub setup (operator only)
 

@@ -43,7 +43,7 @@ BUDGET = 3000.0             # seconds for the whole run, under Hermes's default 
 MIN_STEP = 30.0             # a step isn't started with less than this left
 ALERTS_SHOWN = 15
 DAILY_STEPS = (             # (section, `finance` arguments, lines of its output kept)
-    ("sync", ["sync"], 12),
+    ("sync", ["sync", "--scheduled"], 12),
     ("alpaca", ["alpaca-sync"], 4),
     ("loan payments", ["match-payments"], 8),
     ("card autopay suggestions", ["match-payments", "--suggest"], 8),
@@ -160,7 +160,7 @@ class Pipeline:
             self.queue()
             self.alerts(db_path)
         else:
-            self.finance_step("sync", ["sync"], WEEKLY_SYNC_TAIL)
+            self.finance_step("sync", ["sync", "--scheduled"], WEEKLY_SYNC_TAIL)
             self.snapshots(db_path)
         failed = [k for k, v in self.steps.items() if v in ("failed", "partial")]
         status = "partial" if failed else "ok"

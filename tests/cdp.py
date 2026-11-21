@@ -21,6 +21,12 @@ lock file per slot; a Chrome() over the budget waits for one, and a deadlock bet
 hanging); with HF_CHROME_LEDGER set, each start and stop is written there (scripts/check.py: the run's own record of its
 Chromes, and what its watchdog stops if the run is killed outright). Chrome.settled() and goto() wait on what the page
 has in flight (PEND) instead of fixed pauses.
+
+SINGLETON-LEAK: macOS Chrome ignores TMPDIR and makes a com.google.Chrome.XXXXXX dir in the per-user temp dir for its
+SingletonSocket/SingletonCookie, linked from <profile>/SingletonSocket; a Chrome killed at teardown never removes it, so
+every launch here left one behind (~1k an hour under test load). A stop removes the dir its own profile links to, once the
+browser's group is down and only when nothing still listens on that socket (_singleton_dir, _drop_singleton), and so does
+reap_orphans() for a run that was SIGKILLed.
 """
 
 from __future__ import annotations
@@ -210,11 +216,17 @@ READY_TIMEOUT = 15    # s: (review B1) and then one whose READY hasn't answered 
 # t_37bf3e0b: HF_CHROME_LOG=<dir> gives each Chrome its own log there (Chrome's stderr, with LOG_ARGS), and a Chrome that
 # wedges (Chrome._capture, before _recycle stops it) its process group, `sample`s and page there too; the logs of the
 # Chromes that stopped cleanly are deleted. Unset: the same Chrome as before (stderr to /dev/null), nothing written.
+# t_73b74e6f: with it, a goto() still waiting at 2/3 of NAV_TIMEOUT starts its own `sample`s while it waits
+# (<log base>.presample-<pid>.txt, Chrome._presample_now); a goto that recovers deletes them, a wedge keeps them and
+# reports their exits, and a clean stop deletes them with its log.
 LOG_ENV = "HF_CHROME_LOG"
 LOG_ARGS = ["--enable-logging=stderr", "--v=0"]
 SAMPLE_SECONDS = 2    # each `sample` of a wedged Chrome's process ...
 SAMPLE_WAIT = 30      # s: ... ends by then (symbolicating included), or is killed
 SAMPLE_MAX = 4        # processes sampled at most: the browser, the GPU process, then renderers
+PRESAMPLE_AT = 2 / 3  # t_73b74e6f: of NAV_TIMEOUT: when a goto() still waiting starts its before-the-deadline samples
+EVIDENCE_BUDGET = 3.0 # s: t_73b74e6f, the whole of a failed goto()'s evidence read (Chrome._evidence) ...
+EVIDENCE_CALL = 1.5   # s: ... and any one DevTools call in it
 
 PROFILE_PREFIX = "hf-cdp-"
 OWNER_FILE = "hf-owner"   # (TEST-SPEED) in each profile, written as soon as it's made: the pid of the process it's for
@@ -243,6 +255,17 @@ def find_chrome() -> str | None:
 
 _LIVE: set[Chrome] = set()          # started and not yet stopped
 _PREV: dict[int, object] = {}       # the SIGTERM / SIGHUP handler that was there before ours (chained to)
+# t_73b74e6f: every Chrome this process started, in start order: {"name": profile name, "launch": monotonic() at its
+# Popen, "ready": monotonic() when DevTools answered a page target (None if it never did)}. A _recycle's old Chrome
+# keeps its entry (the fresh one adds another), and entries outlive a clean stop: the CI signature had four started
+# within 38 ms in one process.
+_STARTED: list[dict] = []
+_STARTED_LOCK = threading.Lock()
+# t_73b74e6f: what the last _capture saw (why, pid, profile, presampled_at, the evidence dict, the presample files), for
+# a test to read after goto() has recycled the Chrome it failed on: _recycle replaces the object's __dict__ with the
+# fresh Chrome's, so the failed one's own flags are gone by the time the raise reaches a caller.
+LAST_WEDGE: dict = {}
+_LAST_WEDGE_LOCK = threading.Lock()
 
 
 KINFO_PROC_SIZE = 648   # macOS: sizeof(struct kinfo_proc)
@@ -378,6 +401,78 @@ def _holding():
             signal.raise_signal(_HOLD["signals"].pop(0))
 
 
+# --- the temp dir Chrome makes for its singleton socket (macOS: Chrome ignores TMPDIR) ---------------------------------
+# (2026-11-15) macOS Chrome puts SingletonSocket/SingletonCookie in a `com.google.Chrome.XXXXXX` dir in the per-user temp
+# dir (`getconf DARWIN_USER_TEMP_DIR`), whatever TMPDIR says, and links `<profile>/SingletonSocket` at it. A Chrome
+# stopped at teardown never removes that dir, so every launch of this driver left one behind: 5 launches left 5 dirs on
+# the base commit (about 980 had piled up on the Mac mini). The link names exactly the dir this launch made, so teardown
+# removes that one and no other: a `com.google.Chrome.*` dir no profile of ours links (another run's Chrome, an
+# interactive one) is never touched, and neither is one whose socket still has a listener.
+CHROME_SINGLETON = "com.google.Chrome."
+_TEMP_DIR: dict[str, str | None] = {}
+
+
+def _user_temp_dir() -> str | None:
+    """macOS's per-user temp dir (its `T`), where Chrome makes its singleton dirs, or None where it can't be told - then
+    no such dir is removed (never guessed at). Asked once, by Chrome.__init__: a stop must never spawn a process."""
+    if "dir" not in _TEMP_DIR:
+        try:
+            out = subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True, timeout=10)
+            _TEMP_DIR["dir"] = (out.stdout.strip() or None) if out.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            _TEMP_DIR["dir"] = None
+    return _TEMP_DIR["dir"]
+
+
+def _singleton_dir(profile: str | None) -> str | None:
+    """The `com.google.Chrome.*` temp dir this profile's Chrome made for its singleton socket, or None (no link: not a
+    Chrome that makes one, or the profile is gone; not in this user's temp dir; not a Chrome dir). Read it while the
+    profile still exists - the stop reads it before the browser is signalled, the sweep before the profile is deleted."""
+    if not profile:
+        return None
+    try:
+        target = os.readlink(os.path.join(profile, "SingletonSocket"))
+    except OSError:
+        return None
+    if not os.path.isabs(target):   # (Chrome writes an absolute one; a relative one is resolved from the profile)
+        target = os.path.join(profile, target)
+    made = os.path.dirname(os.path.normpath(target))
+    temp = _user_temp_dir()
+    if temp is None or os.path.dirname(os.path.realpath(made)) != os.path.realpath(temp):
+        return None
+    return made if os.path.basename(made).startswith(CHROME_SINGLETON) else None
+
+
+def _listening(socket_path: str) -> bool:
+    """True while something still accepts connections on a singleton socket: a live Chrome owns that dir. A socket that
+    can't be asked at all counts as live: a dir is only removed when it's known to be unused."""
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    except OSError:
+        return True
+    try:
+        s.settimeout(0.5)
+        s.connect(socket_path)
+    except OSError:
+        return False
+    else:
+        return True
+    finally:
+        s.close()
+
+
+def _drop_singleton(made: str | None) -> None:
+    """Remove the singleton temp dir a launch of ours made, once its browser is down and nothing listens on its socket.
+    Never raises (a stop finishes whatever this does) and never removes a dir another Chrome still uses."""
+    if not made or _listening(os.path.join(made, "SingletonSocket")):
+        return
+    for _ in range(3):   # (its Chrome may still be removing the socket: a couple of tries, then the sweep's job)
+        shutil.rmtree(made, ignore_errors=True)
+        if not os.path.exists(made):
+            return
+        time.sleep(0.1)
+
+
 def _stop(chromes: list[Chrome], grace: float = GRACE) -> None:
     """SIGTERM each Chrome's whole process group, give them `grace` seconds together, SIGKILL whatever is left, and
     finish each one whose group is gone (_finish: reap its leader, delete its profile, record it stopped). Safe to call
@@ -405,6 +500,9 @@ def _stop(chromes: list[Chrome], grace: float = GRACE) -> None:
         woken = False
         for c in chromes:
             c._stopping = True   # (TEST-SPEED) a Chrome() still in _connect() gives up on seeing this
+            # (2026-11-15) the singleton temp dir this launch's Chrome made: the link naming it is read here, while the
+            # profile is still there and before the browser is signalled (a killed Chrome never removes that dir).
+            c.__dict__.setdefault("_singleton", _singleton_dir(getattr(c, "profile", None)))
             if getattr(c, "ws", None):
                 # (TEST-SPEED) shut the DevTools socket down first: that wakes a thread blocked reading it (its call fails at
                 # once). Closing it here as well, before that thread has run again, left it polling the closed (-1)
@@ -485,10 +583,16 @@ def _finish(c: Chrome) -> str:
             c.ws.close()
         done.add("ws")
     if "profile" not in done:
+        made = c.__dict__.setdefault("_singleton", _singleton_dir(c.profile))   # (2026-11-15: _stop reads it first)
         shutil.rmtree(c.profile, ignore_errors=True)
         if c.__dict__.get("log") and not c.__dict__.get("wedged"):   # (HF_CHROME_LOG: a clean stop's log isn't kept)
             with contextlib.suppress(OSError):
                 os.unlink(c.log)
+            # (t_73b74e6f: nor the samples a goto that recovered since deleted itself; a stop mid-goto's included)
+            for sample in Path(c.log).parent.glob(Path(c.log).stem + ".presample-*.txt"):
+                with contextlib.suppress(OSError):
+                    os.unlink(sample)
+        _drop_singleton(made)   # (its group is gone - "gone" above - so its socket must be dead by now)
         done.add("profile")
     if "stop" not in done:
         _ledger("stop", c)
@@ -608,8 +712,9 @@ def reap_orphans(age: float | None = None, tmp: str | Path | None = None) -> tup
     to see). Now such a profile is kept, and so is every reaped one when that last look fails or is cut short. What
     stays open: the moment between _still's look and each signal (macOS has no pid handle; a pid reused within it is
     signalled), ps's start time is to the second, and a process that starts naming the profile between the last look
-    and the deletion. Returns (processes signalled, profile dirs deleted). `tmp`: where the profiles are (tests),
-    $TMPDIR by default."""
+    and the deletion. (2026-11-15) A deleted profile's Chrome singleton temp dir goes with it (_singleton_dir): its link
+    is read before the profile is deleted. Returns (processes signalled, profile dirs deleted). `tmp`: where the profiles
+    are (tests), $TMPDIR by default."""
     age = ORPHAN_AGE if age is None else age
     # TEST-SPEED: the leftover profiles are listed before the `ps` below, and one whose owner (OWNER_FILE) is alive is
     # never deleted. A profile made after the `ps` (another process's Chrome(), its Chrome not on the list yet) used to be
@@ -687,7 +792,9 @@ def reap_orphans(age: float | None = None, tmp: str | Path | None = None) -> tup
         except OSError:
             continue
     for d in dirs:
+        made = _singleton_dir(str(d))   # (2026-11-15) read before the profile goes: it names the dir that Chrome made
         shutil.rmtree(d, ignore_errors=True)
+        _drop_singleton(made)
     if killed or dirs:
         print(f"cdp: SIGKILLed {len(killed)} process(es) of {len(reaped)} orphaned headless Chrome(s) ({len(gone)} seen "
               f"gone, nothing naming its profile), deleted {len(dirs)} leftover {PROFILE_PREFIX}* profile(s)",
@@ -985,6 +1092,37 @@ def slots_in_use() -> int:
     return n
 
 
+def _sample_order(pgid: int, p: tuple[int, float, str]) -> tuple[int, float]:
+    """Where a process of a Chrome's group sorts for `sample`: its browser first, then its GPU process, then its
+    pages' renderers busiest first (not Chrome's own UI's or extensions')."""
+    return (0 if p[0] == pgid else 1 if "--type=gpu-process" in p[2] else
+            2 if "--type=renderer" in p[2] and "--top-chrome-webui" not in p[2]
+            and "--extension-process" not in p[2] else 3, -p[1])
+
+
+def _picked_pids(pgid: int, group: list[tuple[int, float, str]]) -> list[int]:
+    """The processes of `group` to `sample` (t_37bf3e0b: at most SAMPLE_MAX: the browser, the GPU process, then
+    renderers), in that order."""
+    return [p[0] for p in sorted(group, key=lambda p: _sample_order(pgid, p))
+            if _sample_order(pgid, p)[0] < 3][:SAMPLE_MAX]
+
+
+class _Presample:
+    """t_a4781960: one goto()'s presample state, made by the _arm_presample of that goto and handed to its timer. On the
+    Chrome it was shared, and reset at every goto: a _presample_now of goto N still in its `ps` / Popens when goto N+1
+    armed read N+1's fresh flags and stored its samplers as N+1's, which N+1's own presample then overwrote, and nothing
+    killed them. `at`: the second the samples were started, from the goto's start (None until then)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.over = False        # the goto() has ended: a timer that fires now starts nothing
+        self.abandoned = False   # the goto() recovered: samplers stored after it are the timer's own to kill
+        self.samplers: list[tuple[int, subprocess.Popen, str]] = []
+        self.done = threading.Event()   # the timer's body has stored (or killed) what it started
+        self.at: float | None = None
+        self.timer: threading.Timer | None = None
+
+
 class Chrome:
     """One headless Chrome with one page. js() evaluates an expression (awaiting promises) and returns its
     JSON value; problems() drains JS errors, console errors and CSP violations seen since the last call."""
@@ -996,6 +1134,7 @@ class Chrome:
         if os.environ.get("HF_NO_CHROME"):   # TEST-SPEED: scripts/check.py's no-browser phase (a misfiled test fails loudly)
             raise RuntimeError(f"this test starts a headless Chrome but runs in check.py's no-browser phase "
                                f"(HF_NO_CHROME): add its file to scripts/check.py BROWSER")
+        _user_temp_dir()   # (2026-11-15) cached before anything can stop a Chrome: a stop must never run getconf
         _sweep_once()
         _install_handlers()   # a no-op unless this module was first imported off the main thread
         self._stopped = False
@@ -1027,7 +1166,9 @@ class Chrome:
                             "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
                             "--disable-component-update", "--disable-sync", "--disable-extensions",
                             "--disable-default-apps", "--hide-scrollbars", "--force-color-profile=srgb", "--mute-audio",
-                            "--password-store=basic", "--use-mock-keychain", "about:blank"]
+                            "--password-store=basic", "--use-mock-keychain",
+                            "--disable-features=MacAppCodeSignClone",   # (no code_sign_clone bundle copy per launch: a killed Chrome leaks it)
+                            "about:blank"]
                     err, self.log = subprocess.DEVNULL, None
                     if os.environ.get(LOG_ENV):   # (t_37bf3e0b) its own log, kept only if it wedges
                         os.makedirs(os.environ[LOG_ENV], exist_ok=True)
@@ -1037,8 +1178,12 @@ class Chrome:
                     if masked:
                         signal.pthread_sigmask(signal.SIG_SETMASK, was)
                     try:
+                        self._launch_at = time.monotonic()
                         self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True,
                                                      pass_fds=(self.slot,))
+                        self._started_entry = {"name": Path(self.profile).name, "launch": self._launch_at, "ready": None}
+                        with _STARTED_LOCK:
+                            _STARTED.append(self._started_entry)   # (t_73b74e6f: in start order, past any recycle)
                     finally:
                         if err is not subprocess.DEVNULL:
                             err.close()   # (Chrome has its own copy)
@@ -1093,6 +1238,13 @@ class Chrome:
         if page is None or getattr(self, "_stopping", False):   # (review N3: stopped just as DevTools answered, too)
             raise RuntimeError("Chrome did not start" + (" (stopped while starting)" if getattr(self, "_stopping", False) else
                                                          " (it exited)" if _exited(self.proc) else ""))
+        # t_73b74e6f: this Chrome's launch -> DevTools seconds, for the evidence of a goto() that wedges later. (t_a4781960:
+        # both set by __init__ only; the start tests' stand-in, made without it, connects with neither: it raised here)
+        if (launch := self.__dict__.get("_launch_at")) is not None:
+            self._devtools_secs = time.monotonic() - launch
+        if (entry := self.__dict__.get("_started_entry")) is not None:
+            with _STARTED_LOCK:
+                entry["ready"] = time.monotonic()
         self.ws = WebSocket(page["webSocketDebuggerUrl"])
         if getattr(self, "_stopping", False):
             self.ws.close()
@@ -1182,6 +1334,8 @@ class Chrome:
             # (a Chrome started here; tests of goto()'s own deadlines drive a stand-in made without __init__)
             if "the navigation failed:" not in str(e) and "_sticky" in self.__dict__:
                 self._recycle(str(e))
+            else:   # (no wedge is written here: presamples are not one, and they are killed, not waited for)
+                self._reap_presamples(delete=True)
             raise
 
     def _recycle(self, why: str) -> None:
@@ -1208,7 +1362,11 @@ class Chrome:
         """HF_CHROME_LOG only (t_37bf3e0b): what this Chrome was doing when it stopped answering, written next to its
         log, which is then kept: <log>.wedge.txt (why, the test, its pages as the browser's own /json lists them, and
         its process group from ps) and <log>.sample-<pid>.txt (macOS `sample`, SAMPLE_SECONDS each, SAMPLE_WAIT at
-        most: the browser, its GPU process, its renderers). Every step is bounded, and none raises."""
+        most: the browser, its GPU process, its renderers). Every step is bounded, and none raises.
+        t_73b74e6f: the same file gets the evidence a failed goto() read at its deadline (<log>.wedge.txt's evidence
+        section), the exits of the presamples a goto() still waiting at 2/3 of NAV_TIMEOUT started, and every Chrome
+        this process started (launch -> DevTools ready). When presamples exist it takes no second, post-failure
+        round of samples: the post-failure state is what the CI samples showed to be idle."""
         log = self.__dict__.get("log")
         if not log or self.__dict__.get("_stopped", True):
             return
@@ -1236,30 +1394,50 @@ class Chrome:
                     group.append((int(f[0]), float(f[4]), f[7]))
         except Exception as e:
             out.append(f"ps: failed ({e!r})")
-        # the browser, its GPU process, then the pages' renderers busiest first (not Chrome's own UI's or extensions')
-        order = lambda p: (0 if p[0] == self.pgid else 1 if "--type=gpu-process" in p[2] else
-                           2 if "--type=renderer" in p[2] and "--top-chrome-webui" not in p[2]
-                           and "--extension-process" not in p[2] else 3, -p[1])
-        picked = [p for p in sorted(group, key=order) if order(p)[0] < 3][:SAMPLE_MAX] if shutil.which("sample") else []
-        samplers = []
-        for pid, *_ in picked:
-            try:
-                samplers.append((pid, subprocess.Popen(["sample", str(pid), str(SAMPLE_SECONDS), "-file",
-                                                        f"{base}.sample-{pid}.txt"], stdin=subprocess.DEVNULL,
-                                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                                       start_new_session=True)))
-            except OSError as e:
-                out.append(f"sample {pid}: not started ({e!r})")
-        end = time.monotonic() + SAMPLE_WAIT
-        for pid, s in samplers:
-            try:
-                _, err = s.communicate(timeout=max(0.1, end - time.monotonic()))
-                out.append(f"sample {pid}: exit {s.returncode} {err.decode(errors='replace').strip()[-300:]}")
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(s.pid, signal.SIGKILL)
-                s.communicate()
-                out.append(f"sample {pid}: killed after {SAMPLE_WAIT} s")
+        if not self.__dict__.get("evidence"):   # (t_73b74e6f: the deadline's read, before anything below waits)
+            self._evidence(EVIDENCE_BUDGET)
+        presamples = self._settle_presamples()
+        if not presamples:   # (no presample: today's behaviour, exactly. One that ran is the round to report.)
+            picked = _picked_pids(self.pgid, group) if shutil.which("sample") else []
+            samplers = []
+            for pid in picked:
+                try:
+                    samplers.append((pid, subprocess.Popen(["sample", str(pid), str(SAMPLE_SECONDS), "-file",
+                                                            f"{base}.sample-{pid}.txt"], stdin=subprocess.DEVNULL,
+                                                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                                           start_new_session=True)))
+                except OSError as e:
+                    out.append(f"sample {pid}: not started ({e!r})")
+            end = time.monotonic() + SAMPLE_WAIT
+            for pid, s in samplers:
+                try:
+                    _, err = s.communicate(timeout=max(0.1, end - time.monotonic()))
+                    out.append(f"sample {pid}: exit {s.returncode} {err.decode(errors='replace').strip()[-300:]}")
+                except subprocess.TimeoutExpired:
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(s.pid, signal.SIGKILL)
+                    s.communicate()
+                    out.append(f"sample {pid}: killed after {SAMPLE_WAIT} s")
+        evidence = self.__dict__.get("evidence")
+        if evidence:
+            out.append("evidence (read at the deadline, before the stop):")
+            out += [f"  {k}: {v}" for k, v in evidence.items()]
+        if presamples:
+            out.append(f"presamples (started {self._presample.at:.1f} s into the goto, 2/3 of NAV_TIMEOUT):")
+            for _pid, path, code in presamples:
+                out.append(f"  {Path(path).name} (exit {code})" if code is not None else
+                           f"  {Path(path).name} (killed after {SAMPLE_WAIT} s)")
+        with _STARTED_LOCK:
+            started = [dict(e) for e in _STARTED]
+        out.append("chromes started in this process (launch -> DevTools ready, start order):")
+        out += [f"  {e['name']} {e['ready'] - e['launch']:.2f} s" if e.get("ready") is not None else f"  {e['name']} ?"
+                for e in started]
+        with _LAST_WEDGE_LOCK:   # (t_73b74e6f: a test reads these after goto() has recycled this Chrome)
+            LAST_WEDGE.clear()
+            LAST_WEDGE.update({"why": why, "pid": self.proc.pid, "profile": self.profile,
+                               "presampled_at": self.__dict__.get("presampled_at"),
+                               "evidence": dict(evidence) if evidence else None,
+                               "presamples": [path for _pid, path, _code in presamples]})
         try:
             Path(f"{base}.wedge.txt").write_text("\n".join(out) + "\n")
         except OSError:
@@ -1276,49 +1454,310 @@ class Chrome:
         DevTools message waited for counts against it (call()), and READY has READY_TIMEOUT more (it waits 8 s at
         most in the page, then two frames: a page whose frames never come no longer holds goto() up). So a goto()
         ends within NAV_TIMEOUT + READY_TIMEOUT, plus the CPU time of the frame or message in hand then (call()). The
-        other calls (js(), settled(), screenshot()) have no deadline: only the socket's 60 s per read."""
+        other calls (js(), settled(), screenshot()) have no deadline: only the socket's 60 s per read.
+        t_73b74e6f: a "not loaded" raise carries the page's and this process's evidence, read at the deadline
+        (_evidence); with HF_CHROME_LOG, a goto() still waiting at 2/3 of NAV_TIMEOUT starts its presamples
+        (_arm_presample), which a goto() that recovers kills and deletes without waiting for them, so it still
+        returns as soon as its page has loaded."""
         deadline = time.monotonic() + NAV_TIMEOUT
+        start = time.monotonic()
+        self.evidence = None
+        self._nav = None
+        self._navstats = None
+        stats: dict = {"false": 0, "raised": 0, "last": None, "first": None}
+        self._arm_presample(start)
+        loaded = False
         try:
-            old = self.js("window.__pend ? [window.__pend.doc, window.__pend.hash, location.hash] : null", deadline)
-        except RuntimeError:   # the page is still navigating from an earlier call
-            old = None
-        nav = self.call("Page.navigate", deadline, url=url)
-        if nav.get("errorText"):
-            raise RuntimeError(f"goto {url}: the navigation failed: {nav['errorText']}")
-        if nav.get("loaderId") or not old:   # a new document (a same-document navigation has no loader)
-            # on the old page this never answers: the evaluation fails when the page goes away, and runs again on the new
-            # one (2 s at most: a navigation that never commits)
-            done = self._until(lambda ms: "(window.__pend && window.__pend.doc !== %s) ? (document.readyState === 'complete' || "
-                               "new Promise((r) => { const t = setTimeout(() => r(false), %d); addEventListener('load', () => "
-                               "{ clearTimeout(t); r(true); }, {once: true}); })) : new Promise((r) => setTimeout(() => r(false), %d))"
-                               % (json.dumps(old[0] if old else None), ms, min(ms, 2000)), deadline)
-        elif ("#" + url.partition("#")[2] if "#" in url else "") != old[2]:   # same document, another hash: handled
-            # (a listener added now runs after the page's own)
-            done = self._until(lambda ms: f"window.__pend.hash !== {old[1]} || new Promise((r) => {{ const t = setTimeout(() => "
-                               f"r(false), {ms}); addEventListener('hashchange', () => {{ clearTimeout(t); r(true); }}, "
-                               "{once: true}); })", deadline)
-        else:
-            done = True
-        if not done:
-            raise RuntimeError(f"goto {url}: not loaded in {NAV_TIMEOUT} s (the navigation never committed, or its load / "
-                               f"hashchange never came)")
-        if ready:
             try:
-                self.js(READY, time.monotonic() + READY_TIMEOUT)
-            except RuntimeError as e:
-                raise RuntimeError(f"goto {url}: loaded, but not drawn (READY) in {READY_TIMEOUT} s: {e}") from None
+                old = self.js("window.__pend ? [window.__pend.doc, window.__pend.hash, location.hash] : null", deadline)
+            except RuntimeError:   # the page is still navigating from an earlier call
+                old = None
+            nav = self.call("Page.navigate", deadline, url=url)
+            if nav.get("errorText"):
+                raise RuntimeError(f"goto {url}: the navigation failed: {nav['errorText']}")
+            self._nav, self._navstats = nav, stats
+            if nav.get("loaderId") or not old:   # a new document (a same-document navigation has no loader)
+                # on the old page this never answers: the evaluation fails when the page goes away, and runs again on the new
+                # one (2 s at most: a navigation that never commits)
+                done = self._until(lambda ms: "(window.__pend && window.__pend.doc !== %s) ? (document.readyState === 'complete' || "
+                                   "new Promise((r) => { const t = setTimeout(() => r(false), %d); addEventListener('load', () => "
+                                   "{ clearTimeout(t); r(true); }, {once: true}); })) : new Promise((r) => setTimeout(() => r(false), %d))"
+                                   % (json.dumps(old[0] if old else None), ms, min(ms, 2000)), deadline, stats)
+            elif ("#" + url.partition("#")[2] if "#" in url else "") != old[2]:   # same document, another hash: handled
+                # (a listener added now runs after the page's own)
+                done = self._until(lambda ms: f"window.__pend.hash !== {old[1]} || new Promise((r) => {{ const t = setTimeout(() => "
+                                   f"r(false), {ms}); addEventListener('hashchange', () => {{ clearTimeout(t); r(true); }}, "
+                                   "{once: true}); })", deadline, stats)
+            else:
+                done = True
+            if not done:
+                evidence = self._evidence(EVIDENCE_BUDGET)
+                raise RuntimeError(f"goto {url}: not loaded in {NAV_TIMEOUT} s (the navigation never committed, or its load / "
+                                   f"hashchange never came); {self._evidence_line(evidence)}")
+            if ready:
+                try:
+                    self.js(READY, time.monotonic() + READY_TIMEOUT)
+                except RuntimeError as e:
+                    raise RuntimeError(f"goto {url}: not drawn in {READY_TIMEOUT} s (the page loaded, but READY never answered: {e})") from None
+            loaded = True
+        finally:
+            self._disarm_presample()
+            if loaded:   # (a failure's presamples are _capture's: it waits for them and reports them)
+                self._reap_presamples(delete=True)
 
-    def _until(self, cond, deadline: float) -> bool:
+    def _until(self, cond, deadline: float, stats: dict | None = None) -> bool:
         """Evaluate cond(ms) (an expression that waits in the page ms at most) until it's true; False once `deadline`
         (time.monotonic()) has passed. An evaluation that lands on a page going away fails at once and is tried again;
-        one that doesn't answer by the deadline fails too."""
+        one that doesn't answer by the deadline fails too. `stats`, when given, counts what the wait swallowed (the
+        t_73b74e6f evidence asks it): "false" (answers that were falsy), "raised" (evaluations that raised
+        RuntimeError), "last" (the last of those exceptions' text, "" for none) and "first" (the first of them, so an
+        informative one is not lost under the final poll's own). No change to the wait itself."""
+        if stats is not None:
+            stats.setdefault("false", 0)
+            stats.setdefault("raised", 0)
+            stats.setdefault("last", "")
+            stats.setdefault("first", None)
         while (left := deadline - time.monotonic()) > 0:
             try:
                 if self.js(cond(max(1, int(left * 1000))), deadline):
                     return True
-            except RuntimeError:
+                if stats is not None:
+                    stats["false"] += 1
+            except RuntimeError as e:
+                if stats is not None:
+                    stats["raised"] += 1
+                    if stats.get("first") is None:
+                        stats["first"] = str(e)[:200]
+                    stats["last"] = str(e)[:200]
                 time.sleep(0.002)   # between two documents (no page to evaluate on yet), or out of time
         return False
+
+    # --- t_73b74e6f: why a goto() ended in "not loaded" -----------------------------------------------------------
+
+    def _evidence(self, budget: float = EVIDENCE_BUDGET) -> dict[str, str]:
+        """The page's and this process's state at a failed goto()'s deadline, as ordered fields (pend, readyState, href,
+        loadEventEnd, evals, loaders, devtools, chromes); whatever can't be read is "?" (never an exception, never a
+        guess). One shared budget (EVIDENCE_BUDGET at most, each DevTools call EVIDENCE_CALL at most): a renderer that
+        doesn't answer costs its one call and no more, and the fields it would have filled stay "?". Page.getFrameTree
+        is asked first as the cheaper single call, but the renderer answers it too: a busy main thread leaves
+        `frame ?`, and the page's own JS is skipped (all page fields "?"). Sets Chrome.evidence to the result, and
+        returns it."""
+        end = time.monotonic() + budget
+        out: dict[str, str] = {k: "?" for k in ("pend", "readyState", "href", "loadEventEnd", "evals", "loaders",
+                                                "devtools", "chromes")}
+        nav, stats = self.__dict__.get("_nav"), self.__dict__.get("_navstats")
+
+        def left() -> float:
+            return min(end - time.monotonic(), EVIDENCE_CALL)
+
+        frame, frame_read, muted = "?", False, False
+        try:   # (answered by the renderer too: no answer means its main thread is busy, so the JS read is skipped)
+            if left() > 0:
+                tree = self.call("Page.getFrameTree", time.monotonic() + left())
+                ident = ((tree.get("frameTree") or {}).get("frame") or {}).get("loaderId")
+                if isinstance(ident, str) and ident:
+                    frame, frame_read = ident, True
+            else:
+                muted = True
+        except Exception:
+            muted = True   # (the connection didn't answer: the page's own JS won't either, and would only cost its call)
+        try:
+            nav_id = nav.get("loaderId") if isinstance(nav, dict) else None
+            nav_s = f"nav {nav_id}" if isinstance(nav_id, str) and nav_id else "nav=(none)" if isinstance(nav, dict) else "nav ?"
+            out["loaders"] = f"{nav_s} frame {frame if frame_read else '?'}"
+        except Exception:
+            out["loaders"] = "?"
+        page: dict = {}
+        if not muted and left() > 0:
+            try:
+                value = self.js("(() => { const p = window.__pend;"
+                                " const n = performance.getEntriesByType('navigation')[0];"
+                                " return {pend: typeof p, doc: p ? String(p.doc) : null, hash: p ? String(p.hash) : null,"
+                                " href: String(location.href), loc_hash: String(location.hash),"
+                                " ready: String(document.readyState),"
+                                " lee: n ? Number(n.loadEventEnd) : null, now: Number(performance.now())}; })()",
+                                time.monotonic() + left())
+                if isinstance(value, dict):
+                    page = value
+            except Exception:
+                page = {}
+        try:
+            kind = page.get("pend")
+            if kind == "undefined":
+                out["pend"] = "undefined"
+            elif kind == "object":
+                out["pend"] = (f"object doc={page.get('doc') if page.get('doc') is not None else '?'}"
+                               f" hash={page.get('hash') if page.get('hash') is not None else '?'}"
+                               f" location.hash={page.get('loc_hash') if page.get('loc_hash') is not None else '?'}")
+            elif isinstance(kind, str):
+                out["pend"] = kind
+        except Exception:
+            out["pend"] = "?"
+        try:
+            out["readyState"] = page["ready"] if isinstance(page.get("ready"), str) else "?"
+        except Exception:
+            out["readyState"] = "?"
+        try:
+            out["href"] = page["href"] if isinstance(page.get("href"), str) else "?"
+        except Exception:
+            out["href"] = "?"
+        try:
+            lee, now = page.get("lee"), page.get("now")
+            out["loadEventEnd"] = (f"{float(lee):.1f} now={float(now):.1f}" if isinstance(lee, (int, float))
+                                   and isinstance(now, (int, float)) else "?")
+        except Exception:
+            out["loadEventEnd"] = "?"
+        try:
+            if not isinstance(stats, dict):
+                out["evals"] = "?"
+            else:
+                last = " ".join(str(stats.get("last")).split())[:200].replace('"', "'") if stats.get("last") else ""
+                first = " ".join(str(stats.get("first")).split())[:200].replace('"', "'") if stats.get("first") else ""
+                quoted = f'"{last}"' if last else "(none)"
+                extra = f' first="{first}"' if first and first != last else ""
+                out["evals"] = (f"false {int(stats.get('false') or 0)}, raised {int(stats.get('raised') or 0)}, "
+                                f"last={quoted}{extra}")
+        except Exception:
+            out["evals"] = "?"
+        try:
+            secs = self.__dict__.get("_devtools_secs")
+            out["devtools"] = f"{secs:.2f}s" if isinstance(secs, (int, float)) else "?"
+        except Exception:
+            out["devtools"] = "?"
+        try:
+            with _STARTED_LOCK:
+                started = [dict(e) for e in _STARTED]
+            shown = [f"{e['ready'] - e['launch']:.2f}" if e.get("ready") is not None else "?" for e in started]
+            out["chromes"] = f"{len(started)} [{' '.join(shown)}]s"
+        except Exception:
+            out["chromes"] = "?"
+        self.evidence = out
+        return out
+
+    @staticmethod
+    def _evidence_line(evidence: dict[str, str]) -> str:
+        """`_evidence`'s fields as the one line a "not loaded" raise appends: `evidence: pend=..., readyState=...`."""
+        return "evidence: " + ", ".join(f"{k}={v}" for k, v in evidence.items()) if evidence else "evidence: ?"
+
+    def _arm_presample(self, start: float) -> None:
+        """t_73b74e6f: start this goto()'s presample timer (2/3 of NAV_TIMEOUT), with HF_CHROME_LOG and `sample` only.
+        Chrome.presampled_at is the second the samples were started, measured from the goto's start (None otherwise);
+        _disarm_presample() stops a timer that hasn't fired, and Chrome._presample_now checks it under the lock, so a
+        goto() that ends first starts nothing. t_a4781960: the state is this goto's own (_Presample, Chrome._presample
+        while it runs), and its timer is handed that object, so a timer of an earlier goto never touches this one's."""
+        self.presampled_at = None
+        self._presample = ps = _Presample()
+        log = self.__dict__.get("log")
+        if not log or not shutil.which("sample"):
+            return
+        timer = threading.Timer(NAV_TIMEOUT * PRESAMPLE_AT, self._presample_now, args=(ps, start, log))
+        timer.daemon = True
+        ps.timer = timer
+        timer.start()
+
+    def _presample_now(self, ps: _Presample, start: float, log: str) -> None:
+        """The presample timer's body: a goto() still waiting starts the same `sample`s the wedge would take (the same
+        process selection), into <log base>.presample-<pid>.txt, and goes back to waiting. Once per goto() (`ps`, the
+        goto that armed it)."""
+        with ps.lock:
+            if ps.over or self.__dict__.get("_stopped"):
+                return
+            # (its goto is still running, so no later one has armed: Chrome.presampled_at is still that goto's)
+            self.presampled_at = ps.at = time.monotonic() - start
+        samplers: list[tuple[int, subprocess.Popen, str]] = []
+        try:
+            base = log[:-len(".log")]
+            for pid in self._sample_pids():
+                path = f"{base}.presample-{pid}.txt"
+                try:
+                    samplers.append((pid, subprocess.Popen(["sample", str(pid), str(SAMPLE_SECONDS), "-file", path],
+                                                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                                           stderr=subprocess.PIPE, start_new_session=True), path))
+                except OSError:
+                    continue
+        except Exception:
+            pass
+        finally:
+            with ps.lock:
+                abandoned = ps.abandoned
+                if not abandoned:
+                    ps.samplers = samplers
+                ps.done.set()
+            if abandoned:   # (a goto() that recovered meanwhile: its _reap_presamples found no samplers to kill)
+                self._kill_presamples(samplers)
+
+    def _sample_pids(self) -> list[int]:
+        """This Chrome's group, from one `ps`, as _picked_pids picks it ([] when ps fails)."""
+        try:
+            ps = subprocess.run(["ps", PS_ALL, "-o", "pid=,ppid=,pgid=,stat=,%cpu=,rss=,etime=,command="],
+                                capture_output=True, text=True, timeout=PS_WAIT).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        group: list[tuple[int, float, str]] = []
+        for ln in ps.splitlines():
+            f = ln.split(None, 7)
+            if len(f) == 8 and f[2] == str(self.pgid):
+                try:
+                    group.append((int(f[0]), float(f[4]), f[7]))
+                except ValueError:
+                    continue
+        return _picked_pids(self.pgid, group)
+
+    def _disarm_presample(self) -> None:
+        """This goto() is over: a presample timer that hasn't fired never starts anything."""
+        ps = self.__dict__.get("_presample")
+        if ps is None:
+            return
+        with ps.lock:
+            ps.over = True
+        if ps.timer is not None:
+            ps.timer.cancel()
+
+    def _settle_presamples(self) -> list[tuple[int, str, int | None]]:
+        """Wait for this goto()'s presamplers (bounded by SAMPLE_WAIT: they run SAMPLE_SECONDS) and return
+        (pid, path, exit code) for each; [] when the timer never fired or no sample could be started."""
+        ps = self.__dict__.get("_presample")
+        if ps is None or ps.at is None:
+            return []
+        ps.done.wait(SAMPLE_WAIT)
+        with ps.lock:
+            samplers, ps.samplers = list(ps.samplers), []
+        results: list[tuple[int, str, int | None]] = []
+        end = time.monotonic() + SAMPLE_WAIT
+        for pid, proc, path in samplers:
+            try:
+                proc.communicate(timeout=max(0.1, end - time.monotonic()))
+                results.append((pid, path, proc.returncode))
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.communicate()
+                results.append((pid, path, None))
+        return results
+
+    @staticmethod
+    def _kill_presamples(samplers: list[tuple[int, subprocess.Popen, str]], delete: bool = True) -> None:
+        """A goto() that recovered: SIGKILL these samplers (each leads its own process group) and (delete) their files,
+        then reap each on a daemon thread, so nothing in the goto() path waits for it and no zombie is left."""
+        for _pid, proc, path in samplers:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            if delete:
+                with contextlib.suppress(OSError):
+                    os.unlink(path)
+            threading.Thread(target=proc.communicate, daemon=True).start()
+
+    def _reap_presamples(self, delete: bool) -> None:
+        """A goto() that recovered: kill its presamplers now and (delete) their files, which are not a wedge, instead
+        of waiting SAMPLE_SECONDS for them (the wedge path, _settle_presamples, still waits for and reports their
+        exits). A _presample_now still starting its Popens sees its goto's `abandoned` and kills those itself."""
+        ps = self.__dict__.get("_presample")
+        if ps is None:
+            return
+        with ps.lock:
+            ps.abandoned = True   # (a _presample_now in flight has not stored its samplers yet)
+            samplers, ps.samplers = ps.samplers, []
+        self._kill_presamples(samplers, delete)
 
     def until(self, expr: str, timeout: float = 8.0):
         """expr's value once it's truthy, polled in the page every 50 ms for up to `timeout` s, else its last value (so

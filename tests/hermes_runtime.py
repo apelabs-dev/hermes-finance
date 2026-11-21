@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from offline_env import OFFLINE_SWITCHES
+
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_SRC = ROOT / "hermes_plugin"
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -174,8 +176,8 @@ class Profile:
             "LANG": "en_US.UTF-8", "TERM": "dumb", "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1",
             "TZ": self.host_tz, "TMPDIR": str(self.root / "tmp"), "UV_OFFLINE": "1",
             "HERMES_DISABLE_LAZY_INSTALLS": "1",
-            # the finance app's own switches, as tests/conftest.py sets them: no Plaid, no Alpaca, no real key files
-            "HERMES_PLAID": "off", "HERMES_ALPACA": "off", "HERMES_CHROME_DEVTOOLS": "off",
+            # the finance app's own switches, as tests/conftest.py sets them: no Plaid or SimpleFIN, no Alpaca, no real key files
+            **OFFLINE_SWITCHES,
             "HERMES_ENV_FILE": str(self.root / "no-such.env"),
             "FINANCE_SECRETS_FILE": str(self.root / "no-such-secrets.env"),
             "HERMES_ALPACA_KEY_FILE": str(self.root / "no-such-alpaca.env"),
@@ -235,7 +237,7 @@ class Profile:
             self._plugin_data = Path(self.py_json(
                 "import json\nfrom hermes_cli.plugins import PluginState, discover_plugins, get_plugin_manager\n"
                 "discover_plugins()\nm = get_plugin_manager()._plugins['hermes-finance'].manifest\n"
-                "print(json.dumps(str(PluginState(m.key or m.name, m.skill_namespace).data_dir)))"))
+                "print(json.dumps(str(PluginState(m.key or m.name, getattr(m, 'data_namespace', getattr(m, 'skill_namespace', ''))).data_dir)))"))
         return self._plugin_data
 
     def state_path(self) -> Path:
@@ -364,6 +366,10 @@ try:
     importlib.import_module('hermes_cli.plugins')
     if sys.argv[1] == 'scheduler_delivery':
         scheduler = importlib.import_module('cron.scheduler')
+        try:  # v0.23 moved the delivery helpers to cron.scheduler_delivery
+            scheduler = importlib.import_module('cron.scheduler_delivery')
+        except ModuleNotFoundError:
+            pass
         if not callable(getattr(scheduler, '_is_known_delivery_platform', None)) and getattr(scheduler, '_KNOWN_DELIVERY_PLATFORMS', None) is None:
             reason = 'installed Hermes runtime lacks cron.scheduler delivery-platform discovery; cron planning is unavailable and cannot produce plan_id'
 except ModuleNotFoundError as exc:

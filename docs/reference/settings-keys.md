@@ -15,6 +15,7 @@ Every setting the app stores, one JSON value per key in the database's `settings
 | `alerts.broken_connection` | `true` | shown |
 | `alerts.destination` | `"Hermes chat"` | shown |
 | `ai.mode` | `"hermes"` | shown |
+| `ai.cli` | `"claude"` | shown |
 | `ai.preset` | `"openrouter"` | shown |
 | `ai.base_url` | `"https://openrouter.ai/api/v1"` | shown |
 | `ai.model` | `""` | shown |

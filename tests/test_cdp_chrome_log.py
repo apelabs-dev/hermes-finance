@@ -15,7 +15,7 @@ from test_cdp_recycle import site  # noqa: F401  (the fixture: ok.html and a pag
 OK_LAUNCH = ["--headless=new", "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check",
              "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions",
              "--disable-default-apps", "--hide-scrollbars", "--force-color-profile=srgb", "--mute-audio",
-             "--password-store=basic", "--use-mock-keychain", "about:blank"]
+             "--password-store=basic", "--use-mock-keychain", "--disable-features=MacAppCodeSignClone", "about:blank"]
 
 
 @pytest.fixture
@@ -71,5 +71,26 @@ def test_a_wedged_chrome_is_looked_at_before_it_is_replaced_and_its_log_is_kept(
     assert "why: goto " in wedge and "test_a_wedged_chrome" in wedge, wedge
     assert "/stuck.html" in wedge and f"\n  {old_pid} " in wedge and "--type=renderer" in wedge, wedge
     if cdp.shutil.which("sample"):   # (macOS) the browser's and the renderer's stacks
-        samples = [n for n in names if ".sample-" in n]
-        assert f"{os.path.basename(base)}.sample-{old_pid}.txt" in samples and len(samples) >= 2, (names, wedge)
+        # (t_73b74e6f: a wedge that was still waiting at 2/3 of NAV_TIMEOUT has the samples taken then, before the
+        # deadline, .presample-<pid>.txt; one that failed earlier (a READY wedge) has the post-failure ones)
+        samples = [n for n in names if ".sample-" in n or ".presample-" in n]
+        assert (f"{os.path.basename(base)}.presample-{old_pid}.txt" in samples or
+                f"{os.path.basename(base)}.sample-{old_pid}.txt" in samples), (names, wedge)
+        assert len(samples) >= 2, (names, wedge)
+
+
+def test_a_page_that_loads_but_never_draws_says_it_did_not_draw(monkeypatch, tmp_path, site):
+    """The other half of the wedge contract: a page that loads and then stops answering is reported as
+    'not drawn', with the same 'goto <url>: not ...' shape as the 'not loaded' case (Nightly 43721612422
+    matched only one of the two and failed on the one Chrome 157 produced). The kept log pins it too."""
+    logs = tmp_path / "logs"
+    monkeypatch.setenv(cdp.LOG_ENV, str(logs))              # the recycle writes, as the wedge test above does
+    monkeypatch.setattr(cdp, "READY", "new Promise(() => {})")   # the page answers the load, never a frame
+    monkeypatch.setattr(cdp, "READY_TIMEOUT", 1)
+    with Chrome() as b:
+        old_log = b.log
+        with pytest.raises(RuntimeError, match=r"ok\.html: not drawn in 1 s \(the page loaded, but READY never answered: "):
+            b.goto(site + "/ok.html")
+    base = old_log[:-len(".log")]
+    wedge = open(f"{base}.wedge.txt").read()
+    assert "why: goto " in wedge and "/ok.html: not drawn in 1 s" in wedge, wedge
