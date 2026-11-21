@@ -187,8 +187,8 @@ def test_plaid_ids_are_untouched_and_simplefin_ids_never_collide(conn):
 
 def test_rules_apply_but_no_fake_plaid_category_is_filed(conn):
     from hermes_finance import classify
-    bridge = Bridge(account_set([card(txs=[tx("T1", date(2026, 11, 2), "25.00", "Synthetic Grocer"),
-                                          tx("T2", date(2026, 11, 3), "9.00", "Synthetic Coffee")])]))
+    bridge = Bridge(account_set([card(txs=[tx("T1", date(2026, 11, 2), "-25.00", "Synthetic Grocer"),
+                                          tx("T2", date(2026, 11, 3), "-9.00", "Synthetic Coffee")])]))
     confirmed(conn, bridge)
     rows = {r["transaction_id"]: (r["category"], r["category_source"]) for r in conn.execute(
         "SELECT transaction_id, category, category_source FROM v_transactions ORDER BY transaction_id")}
@@ -1012,3 +1012,62 @@ def test_the_status_surfaces_the_last_ambiguous_count(conn):
     simplefin_sync.sync(conn, "daily", transport=bridge, resolve=PUBLIC, today=TODAY, sleep=lambda s: None, jitter=0)
     st = simplefin_sync.status(conn)
     assert st["last_result"]["ambiguous"] >= 2
+
+
+# --- a run counts each transaction once, however many windows return it -----------------------------------
+
+def _overlapping_bridge():
+    """Every window's answer carries the same three transactions, as an overlapping or re-returned window would."""
+    return Bridge(account_set([card(txs=[tx(f"T{n}", TODAY - timedelta(days=n), "-5.00", f"Shop {n}")
+                                         for n in (1, 2, 3)])]))
+
+
+def _last_result(conn):
+    return simplefin_sync._get(conn, simplefin_sync.LAST_RESULT_KEY)
+
+
+def test_a_first_connect_counts_each_returned_transaction_once_across_its_windows(conn):
+    bridge = _overlapping_bridge()
+    confirmed(conn, bridge)
+    assert len(bridge.windows()) == 5                        # the claim's window and four older ones all returned them
+    rows = conn.execute("SELECT COUNT(*) FROM transactions WHERE source = 'simplefin'").fetchone()[0]
+    assert rows == 3
+    last = _last_result(conn)
+    assert (last["added"], last["modified"]) == (3, 0)       # new in this run: one count each, never "modified" again
+
+
+def test_a_reconnect_over_overlapping_windows_modifies_each_row_once(conn):
+    bridge = _overlapping_bridge()
+    confirmed(conn, bridge)
+    simplefin_sync.disconnect(conn)
+    confirmed(conn, bridge)                                  # the owner's rows are still there: all three are touched
+    rows = conn.execute("SELECT COUNT(*) FROM transactions WHERE source = 'simplefin'").fetchone()[0]
+    last = _last_result(conn)
+    assert rows == 3
+    assert (last["added"], last["modified"]) == (0, rows)    # not 3 per window
+    assert last["added"] + last["modified"] == 3             # the distinct ids the Bridge returned
+
+
+def test_a_sync_over_several_windows_counts_each_transaction_once(conn):
+    bridge = _overlapping_bridge()
+    confirmed(conn, bridge)
+    simplefin_sync._del(conn, simplefin_sync.LAST_SUCCESS_KEY)   # no success on record: the sync asks for the whole year
+    before = len(bridge.windows())
+    out = simplefin_sync.sync(conn, "daily", transport=bridge, resolve=PUBLIC, today=TODAY, sleep=lambda s: None,
+                              jitter=0)
+    assert len(bridge.windows()) - before > 1
+    assert (out["added"], out["modified"]) == (0, 3)
+    assert (_last_result(conn)["added"], _last_result(conn)["modified"]) == (0, 3)
+    assert simplefin_sync.summary_text(out).startswith("SimpleFIN: +0 ~3 -0")
+
+
+def test_a_new_row_in_a_later_window_is_added_once_and_an_old_row_modified_once(conn):
+    bridge = _overlapping_bridge()
+    confirmed(conn, bridge)
+    simplefin_sync._del(conn, simplefin_sync.LAST_SUCCESS_KEY)
+    bridge.payload = account_set([card(txs=[tx(f"T{n}", TODAY - timedelta(days=n), "-5.00", f"Shop {n}")
+                                            for n in (1, 2, 3, 4)])])    # T4 is new, and every window returns it
+    out = simplefin_sync.sync(conn, "daily", transport=bridge, resolve=PUBLIC, today=TODAY, sleep=lambda s: None,
+                              jitter=0)
+    assert (out["added"], out["modified"]) == (1, 3)
+    assert conn.execute("SELECT COUNT(*) FROM transactions WHERE source = 'simplefin'").fetchone()[0] == 4

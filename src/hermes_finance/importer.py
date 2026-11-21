@@ -50,8 +50,8 @@ OFX_INCOME_HINTS = {
 # Not CREDIT: OFX uses it for any money in, so a card payment or a refund would count as income. A CREDIT row stays
 # unhinted: Other (Needs review), or what a rule says. The exception is a card statement's own payment line
 # (_pfc_hint): it is a transfer, not spending or income.
-CARD_PAYMENT_HINT = ("LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT")
-_CARD_PAYMENT_WORDS = re.compile(r"\b(?:PAYMENT|PAYMT|PMT)\b", re.IGNORECASE)
+CARD_PAYMENT_HINT = classify.CARD_PAYMENT_HINT   # classify holds the three hints: simplefin_sync can't import this module
+_CARD_PAYMENT_WORDS = classify.CARD_PAYMENT_WORDS  # (importfile needs ofxtools, which Hermes's own Python doesn't have)
 
 
 class ImportRefused(ValueError):

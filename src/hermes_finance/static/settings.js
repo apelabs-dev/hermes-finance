@@ -490,9 +490,6 @@
         h('button', {class: 'btn sm ghost', type: 'button', onclick: aiKey}, d.ai.key_set ? 'Replace' : 'Add key')), 'tight'),
       srow('Monthly spend cap', `Monthly limit for Ask · ${HF.money2(d.ai.spent || 0)} used`,   // TASK-23 (review C3)
         h('span', {class: 'pairc'}, inp(cap, 'tin', HF.CUR.sym), h('span', {class: 'mut'}, '/ month')), 'tight'),
-      srow('Check it works', 'Sends one short request with this key and model',
-        h('span', {class: 'pairc'}, h('span', {class: 'soon'}, 'Coming in the next update'),
-          h('button', {class: 'btn sm ghost', type: 'button', disabled: true}, icon('refresh'), 'Test connection')), 'tight'),
     ];
   }
   function aiCard(d) {

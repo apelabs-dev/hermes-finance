@@ -37,7 +37,8 @@ from .db import now
 # --- the clock ----------------------------------------------------------------------------------------
 # One seam for "today" and "now". A public entry point that takes `today` runs inside `_follows_today`, which sets
 # `_CLOCK` for the call, so every helper under it (the budget, the stored timestamps) follows that day and never reads
-# the real clock. Called without `today`, `_today()` / `_now()` are exactly `date.today()` / `db.now()`.
+# the real clock. Called without `today`, `_today()` / `_now()` are exactly `date.today()` / `db.now()`. A `today` that
+# is the real current day (the web server's default) also stamps real time; only another day is stamped at a fixed noon.
 _CLOCK: contextvars.ContextVar[date | None] = contextvars.ContextVar("simplefin_clock", default=None)
 
 
@@ -46,10 +47,11 @@ def _today() -> date:
 
 
 def _now() -> str:
-    """`db.now()`'s format. Under a given `today` the date is that day, at a fixed 12:00:00Z (so a run's timestamps
-    never go backwards)."""
+    """`db.now()`'s format. Under a given `today` that is not the real current day, the date is that day at a fixed
+    12:00:00Z (so a pinned run's timestamps are repeatable and never go backwards). When the given day is the real
+    current day, which is what the web server passes, it is the real wall-clock time."""
     day = _CLOCK.get()
-    return now() if day is None else f"{day.isoformat()}T12:00:00Z"
+    return now() if day is None or day == date.today() else f"{day.isoformat()}T12:00:00Z"
 
 
 def _follows_today(fn: Callable) -> Callable:
@@ -578,8 +580,9 @@ def confirm(conn: sqlite3.Connection, choices: dict[str, dict], transport: simpl
     _save_pairs(conn, pairs)
     _del(conn, PENDING_KEY)
     _set(conn, DISCONNECTED_KEY, None)
+    seen: set[str] = set()                                # one run: its windows count each transaction once
     result = import_window(conn, payload, state.get("window") or _window(_today() - timedelta(days=CHUNK_DAYS),
-                                                                       _today()), today or _today())
+                                                                       _today()), today or _today(), seen)
     # older windows, up to the one-year backfill and the provider's request budget
     older = _backfill_windows(state.get("window"), today or _today(), keep=4)
     for start, end in older:
@@ -601,7 +604,7 @@ def confirm(conn: sqlite3.Connection, choices: dict[str, dict], transport: simpl
             log.warning("SimpleFIN backfill failed: %s", type(e).__name__)
             continue
         finish_request(conn, request_id, "ok")
-        result = _merge(result, import_window(conn, got, _window(start, end), today or _today()))
+        result = _merge(result, import_window(conn, got, _window(start, end), today or _today(), seen))
     _after_sync(conn, result)
     return status(conn, today=today) | {"added": added}
 
@@ -637,9 +640,12 @@ def _merge(a: dict, b: dict) -> dict:
 
 @_follows_today
 def import_window(conn: sqlite3.Connection, payload: simplefin.Payload, window: dict | None = None,
-                  today: date | None = None) -> dict:
+                  today: date | None = None, seen: set[str] | None = None) -> dict:
     """Upsert the payload's accounts and transactions (source 'simplefin'), then reconcile pending rows. Idempotent: the
-    ids are deterministic, an existing row is updated in place. A matched pending row is soft-removed, never deleted."""
+    ids are derived from the Bridge's, an existing row is updated in place. A matched pending row is soft-removed, never deleted.
+    `seen`: the transaction ids already counted in this run. A run's windows share one set, so `added` and `modified`
+    count each transaction once (its first sight in the run decides which); the rows written are the same either way."""
+    seen = set() if seen is None else seen
     ts = _now()
     accounts = {r["account_id"]: r for r in _accounts(conn)}
     added = modified = 0
@@ -656,7 +662,7 @@ def import_window(conn: sqlite3.Connection, payload: simplefin.Payload, window: 
                 earliest = t.date
             tid = txn_of(account.conn_id, t.id)
             row = conn.execute("SELECT pending, removed FROM transactions WHERE transaction_id = ?", (tid,)).fetchone()
-            # a row the Bridge returns again counts again, except a pending merged into a live posted twin: recounting
+            # a row the Bridge returns again in a later run counts again (once per run), except a pending merged into a live posted twin: recounting
             # it would double the charge. A row returned posted under its own id is a second real charge instead: it
             # counts, and the twin drops the link so the pair is never re-matched. Rows of a removed item never reach
             # this loop.
@@ -666,26 +672,32 @@ def import_window(conn: sqlite3.Connection, payload: simplefin.Payload, window: 
                     "SELECT transaction_id FROM transactions WHERE pending_transaction_id = ? AND removed = 0 LIMIT 1",
                     (tid,)).fetchone()
             keep_removed = bool(twin is not None and t.pending)
+            amount = simplefin.units(t.amount_cents)
             with conn:
                 conn.execute(
                     """INSERT INTO transactions (transaction_id, account_id, item_id, date, authorized_date, name,
                            merchant_name, amount, iso_currency, pending, pending_transaction_id, payment_channel,
                            pfc_primary, pfc_detailed, pfc_confidence, logo_url, website, location_json,
                            counterparties_json, raw_json, removed, first_seen_at, updated_at, source)
-                       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, NULL,
                            ?, 0, ?, ?, 'simplefin')
                        ON CONFLICT(transaction_id) DO UPDATE SET account_id=excluded.account_id,
                            item_id=excluded.item_id, date=excluded.date, name=excluded.name,
                            merchant_name=excluded.merchant_name, amount=excluded.amount,
                            iso_currency=excluded.iso_currency, pending=excluded.pending,
+                           pfc_primary=excluded.pfc_primary, pfc_detailed=excluded.pfc_detailed,
                            raw_json=excluded.raw_json, removed=?, updated_at=excluded.updated_at""",
                     (tid, aid, stored["item_id"], t.date, t.description,
-                     (t.raw.get("payee") or t.description or None), simplefin.units(t.amount_cents),
-                     _iso(account.currency), int(t.pending), json.dumps(t.raw, sort_keys=True), ts, ts,
+                     (t.raw.get("payee") or t.description or None), amount,
+                     _iso(account.currency), int(t.pending), *classify.inflow_hint(t.description, typ, amount),
+                     json.dumps(t.raw, sort_keys=True), ts, ts,
                      1 if keep_removed else 0))
                 if twin is not None and not t.pending:
                     conn.execute("UPDATE transactions SET pending_transaction_id = NULL, updated_at = ? "
                                  "WHERE transaction_id = ?", (ts, twin["transaction_id"]))
+            if tid in seen:
+                continue
+            seen.add(tid)
             if row is None:
                 added += 1
             else:
@@ -935,7 +947,28 @@ def _after_sync(conn: sqlite3.Connection, result: dict) -> None:
         with conn:
             conn.execute("UPDATE items SET last_sync_at = ?, status = 'active', error_code = NULL, error_message = NULL "
                          "WHERE provider = ? AND removed_at IS NULL", (_now(), PROVIDER))
+    refresh_hints(conn)
     classify.apply(conn)
+
+
+def refresh_hints(conn: sqlite3.Connection) -> int:
+    """Give every live SimpleFIN row the hint classify.inflow_hint() says (money in: income, a transfer or a card
+    payment; money out: none), from its stored amount, description and account type. import_window writes the hint on
+    each row the Bridge returns; this reaches the older rows a sync doesn't return, such as the ones imported before
+    the hint existed. Only a hint that differs is written, so a repeat is a no-op. Returns the rows changed."""
+    rows = conn.execute(
+        """SELECT t.transaction_id, t.name, t.amount, t.pfc_primary, t.pfc_detailed, a.type
+           FROM transactions t LEFT JOIN accounts a ON a.account_id = t.account_id
+           WHERE t.source = 'simplefin' AND t.removed = 0""").fetchall()
+    changed = 0
+    with conn:
+        for r in rows:
+            want = classify.inflow_hint(r["name"], r["type"], r["amount"])
+            if (r["pfc_primary"], r["pfc_detailed"]) != want:
+                conn.execute("UPDATE transactions SET pfc_primary = ?, pfc_detailed = ? WHERE transaction_id = ?",
+                             (*want, r["transaction_id"]))
+                changed += 1
+    return changed
 
 
 @dataclass
@@ -1023,6 +1056,7 @@ def sync(conn: sqlite3.Connection, trigger: str = "manual", transport: simplefin
     result = SyncResult(coverage_start=coverage if isinstance(coverage, str) else None)
     client = simplefin.Client(url, transport=transport, resolve=resolve)
     answered = False                       # a transport failure must not count as a fresh sync
+    seen: set[str] = set()                 # one run: its windows count each transaction once
     first_trigger = "manual" if trigger == "manual" else "daily"
     for index, (win_start, win_end) in enumerate(windows):
         kind = first_trigger if index == 0 else "backfill"
@@ -1053,7 +1087,7 @@ def sync(conn: sqlite3.Connection, trigger: str = "manual", transport: simplefin
         finish_request(conn, request_id, "ok")
         answered = True
         result.requests += 1
-        got = import_window(conn, payload, _window(win_start, win_end), today)
+        got = import_window(conn, payload, _window(win_start, win_end), today, seen)
         result.added += got["added"]
         result.modified += got["modified"]
         result.matched += got["matched"]

@@ -48,7 +48,10 @@ def test_settings_shows_every_card_and_saves_as_it_changes(browser, full):
     text = browser.js("document.getElementById('page').textContent")
     assert "Behind your proxy login" in text and "ow•••@example.com" in text and "owner@example.com" not in text
     assert "Needs Chrome with remote debugging on port 9222" in text and "free public pages, not official APIs" not in text
-    assert "hfm_" in text and "Coming in the next update" in text
+    assert "hfm_" in text
+    # the AI key's "Check it works" stub is hidden until the feature exists: no row, no disabled button, no gap
+    assert "Check it works" not in text and "Test connection" not in text and "Coming in the next update" not in text
+    assert not browser.js("document.querySelector('#page .soon')")
     # a switch saves on the spot
     browser.js("[...document.querySelectorAll('#page .srow')].find((r) => r.textContent.startsWith('A budget reaches 80%'))"
                ".querySelector('.tgl').click()")

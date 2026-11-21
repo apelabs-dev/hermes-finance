@@ -21,6 +21,7 @@
   const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]', '::1'];
   const brandRow = () => h('div', {class: 'brand wb'}, h('img', {src: '/static/icons/icon.svg', alt: '', width: '30', height: '30'}), 'Hermes Finances');
   const STEPS = 6;
+  const PLAID_SETUP_MSG = "Plaid isn't set up yet: add your Plaid keys in Settings \u2192 Connections \u2192 Replace keys";   // = web.PLAID_SETUP_MSG
   const stepper = (k, n = STEPS) => h('div', {class: 'steps', role: 'img', 'aria-label': `Step ${k} of ${n}`},
     Array.from({length: n}, (_, i) => h('i', {class: i < k ? 'on' : ''})), h('span', {'aria-hidden': 'true'}, `Step ${k} of ${n}`));
   const errBox = () => h('p', {class: 'formerr', role: 'alert'});
@@ -194,15 +195,20 @@
   function stepConnect(st) {
     const left = st.slot_limit - st.slots_used;
     const connect = h('button', {class: 'btn w', type: 'button', disabled: !st.plaid.set || left <= 0, onclick: () => HF.connectBank()}, icon('link'), 'Connect a bank');
+    const noKeys = !st.plaid.set;
     wiz(5, h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, 'Connect your first bank')),
-      h('p', {}, 'Plaid opens in a secure window. Your bank login never touches Hermes.'),
+      // without Plaid keys the button is off, so say why (the words the link routes answer with: web.PLAID_SETUP_MSG)
+      // and offer SimpleFIN, which needs no keys
+      noKeys ? h('p', {class: 'nc warn', id: 'su-nokeys', role: 'status'}, PLAID_SETUP_MSG)
+        : h('p', {}, 'Plaid opens in a secure window. Your bank login never touches Hermes.'),
       h('div', {class: 'prev'}, ring(st.slots_used / st.slot_limit, ACC, 62, 7, h('b', {class: 'v', style: {'font-size': '15px'}}, String(st.slots_used))),
         h('div', {}, h('b', {}, `${left} of ${st.slot_limit} connections left`),
           h('div', {class: 'mut', style: {'font-size': '14px'}}, "Each bank you link uses one. Removing a bank doesn't free its spot."))),
       st.demo ? h('div', {class: 'matchbox none'}, HF.ibadge('info', RGB.acc, 'xs'), h('span', {}, 'Demo: pick any bank. Sign in as ', h('span', {class: 'mono'}, 'user_good'),
         ', password ', h('span', {class: 'mono'}, 'pass_good'), '.')) : null,
       st.banks ? h('p', {class: 'nc'}, `${plural(st.banks, 'bank')} connected.`) : null,
-      row(connect, btn('Add one by hand', () => HF.openAdd('manual'), 'btn ghost')),
+      row(connect, noKeys ? btn('Use SimpleFIN instead', () => HF.openAdd('choose'), 'btn ghost', {'aria-describedby': 'su-nokeys'}) : null,
+        btn('Add one by hand', () => HF.openAdd('manual'), 'btn ghost')),
       h('div', {class: 'row'}, btn(st.banks ? 'Continue' : 'Skip for now', () => go(6), 'btn ghost w')));
   }
 

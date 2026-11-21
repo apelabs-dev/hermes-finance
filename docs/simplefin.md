@@ -16,8 +16,9 @@ and net worth.
 The token works once. The app trades it for a private access link (an `https://user:password@host/path` URL) and
 keeps that in the secrets file, `~/.config/hermes-finance/secrets.env` (0600, `FINANCE_SECRETS_FILE` moves it), next
 to your Plaid keys. The access link is never written to the database, never sent to the browser, and never printed or
-logged: it is registered with the redactor the moment it is read. A token already used or revoked gets the message
-*This token was already used. Create a new one at SimpleFIN Bridge.*
+logged: it is registered with the redactor the moment it is read. A token Bridge refuses (mistyped, or
+already used) gets the message *SimpleFIN Bridge didn't accept this token. It may be mistyped or already used: create a
+new one at SimpleFIN Bridge.*
 
 ## Confirm the account types
 
@@ -40,6 +41,9 @@ source (see [Duplicates](#duplicates-and-picking-a-source)).
   balance-only in this version.
 - **No Plaid category.** A SimpleFIN row has no Plaid personal-finance category, so the app applies your rules and
   then leaves it for the AI categorizer; until it is filed, the page shows *Uncategorized*.
+  Money coming in on a bank account is filed as Income, or as a transfer when the description says so; a card's own
+  payment line is a transfer. A refund is never Income: on a card or loan, and on any line that says refund, return,
+  reversal or credit voucher, money in stays unfiled and nets against spending.
 
 ## The request budget
 

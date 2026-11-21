@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import json
 import socket
+from datetime import datetime, timezone
 
 import pytest
 
@@ -124,14 +125,77 @@ def test_confirm_creates_the_rows_and_status_reports_the_shape(app, bridge):
         conn.close()
 
 
-def test_claim_403_returns_the_already_used_wording_under_the_token_field(app, monkeypatch):
+@pytest.fixture
+def real_clock_app(conn):
+    """The app as `finance serve` builds it: its `today` is the real one, nothing pinned."""
+    client = PlaidClient(Settings(FAKE_CLIENT_ID, FAKE_SECRET, "production"), transport=lambda *a: (500, b"{}"))
+    return App(config.db_path(), lambda: client, "127.0.0.1", 8765)
+
+
+def _utc(stamp):
+    return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def test_claim_and_confirm_through_the_server_stamp_the_real_time(real_clock_app, bridge):
+    before = datetime.now(timezone.utc).replace(microsecond=0)
+    claimed(real_clock_app)
+    st, body, _ = call(real_clock_app, "POST", "/api/simplefin/confirm",
+                       {"accounts": [{"key": "CON-1:ACT-1", "type": "checking"}]})
+    assert st == 200, body
+    after = datetime.now(timezone.utc)
+    conn = db.connect(config.db_path())
+    try:
+        stamps = [r["at"] for r in conn.execute("SELECT at FROM simplefin_requests ORDER BY id")]
+        last_success = simplefin_sync._get(conn, simplefin_sync.LAST_SUCCESS_KEY)
+        last_result_at = simplefin_sync._get(conn, simplefin_sync.LAST_RESULT_KEY)["at"]
+    finally:
+        conn.close()
+    assert len(stamps) == 5                                  # the claim, then confirm's four backfill windows
+    for stamp in [*stamps, last_success, last_result_at]:    # the time of day it happened, not a fixed noon
+        assert not stamp.endswith("T12:00:00Z"), stamp
+        assert before <= _utc(stamp) <= after, (stamp, before, after)
+    assert stamps == sorted(stamps)                          # the request log never runs backwards
+
+
+def test_a_pinned_day_that_is_not_today_still_stamps_its_fixed_noon(app, bridge):
+    claimed(app)                                             # the app's given day is 2026-11-15, not the real one
+    st, body, _ = call(app, "POST", "/api/simplefin/confirm", {"accounts": [{"key": "CON-1:ACT-1", "type": "checking"}]})
+    assert st == 200, body
+    conn = db.connect(config.db_path())
+    try:
+        assert {r["at"] for r in conn.execute("SELECT at FROM simplefin_requests")} == {"2026-11-15T12:00:00Z"}
+        assert simplefin_sync._get(conn, simplefin_sync.LAST_SUCCESS_KEY) == "2026-11-15T12:00:00Z"
+    finally:
+        conn.close()
+
+
+def test_the_sidebar_counts_equal_the_transactions_page_before_and_after_a_remove(app, bridge):
+    claimed(app)
+    st, body, _ = call(app, "POST", "/api/simplefin/confirm", {"accounts": [{"key": "CON-1:ACT-1", "type": "checking"}]})
+    assert st == 200, body
+
+    def both():
+        _, badge, _ = call(app, "GET", "/api/counts?month=2026-11")
+        _, page, _ = call(app, "GET", "/api/transactions?month=2026-11")
+        return (badge["transactions"], badge["review"]), (page["counts"]["all"], page["counts"]["review"])
+
+    shown, listed = both()
+    assert shown == listed == (1, 1)                    # one uncategorised row, counted the same by both
+    st, body, _ = call(app, "POST", "/api/simplefin/disconnect", {})
+    assert st == 200, body
+    shown, listed = both()
+    assert shown == listed == (0, 0)                    # the removed connection's rows are out of both, not just the page
+
+
+def test_claim_403_returns_the_not_accepted_wording_under_the_token_field(app, monkeypatch):
     b = Bridge(claim_status=403)
     monkeypatch.setattr(simplefin, "urllib_transport", b)
     monkeypatch.setattr(simplefin.socket, "getaddrinfo", PUBLIC)
     st, body, raw = call(app, "POST", "/api/simplefin/claim", {"token": TOKEN})
     assert st == 400
     assert body["field"] == "token"
-    assert "already used" in body["error"] and "SimpleFIN Bridge" in body["error"]
+    assert body["error"] == ("SimpleFIN Bridge didn't accept this token. It may be mistyped or already used: create a "
+                             "new one at SimpleFIN Bridge.")
     assert "bridge-pass" not in raw
     assert secretstore.simplefin_url() is None
 

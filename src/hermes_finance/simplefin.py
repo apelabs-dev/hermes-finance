@@ -47,7 +47,9 @@ USER_AGENT = "hermes-finance/0.1 (SimpleFIN; one request at a time)"
 TOKEN_RE = re.compile(r"[A-Za-z0-9+/_-]+={0,2}\Z")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 URL_RE = re.compile(r"(?:https?|ftp)://\S+|www\.\S+", re.IGNORECASE)
-CLAIM_403 = "This token was already used. Create a new one at SimpleFIN Bridge."
+# Bridge answers 403 for a token it never issued and for one already claimed, so the copy has to be true for both.
+CLAIM_403 = ("SimpleFIN Bridge didn't accept this token. It may be mistyped or already used: create a new one at "
+             "SimpleFIN Bridge.")
 REVOKED = ("SimpleFIN stopped accepting this access link, so it was revoked or expired. Balances stay as of the last "
            "sync. Paste a new setup token to resume.")
 SUBSCRIPTION = "SimpleFIN needs an active subscription. Balances stay as of the last sync."
@@ -325,7 +327,7 @@ def urllib_transport(method: str, url: str, headers: dict, body: bytes | None, t
 
 def claim(token: Any, transport: Transport | None = None, timeout: float = DEFAULT_TIMEOUT,
           resolve: Resolver | None = None) -> str:
-    """Trade a one-time setup token for the access URL. 403 means it was already used or revoked."""
+    """Trade a one-time setup token for the access URL. 403 means Bridge does not know it or it was already used."""
     text = _validate_token(token)
     redact.register(text)
     url = _claim_url(text, resolve)

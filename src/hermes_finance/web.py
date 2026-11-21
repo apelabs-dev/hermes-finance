@@ -104,6 +104,8 @@ MANUAL_PATH = re.compile(r"/api/manual/([1-9][0-9]{0,8})(/archive|/refresh|/use-
 DETAIL_PATH = re.compile(r"/api/manual/([1-9][0-9]{0,8})/detail")
 # The car / property pictures (photos.py fetched them once; served from data/images/, never hotlinked).
 IMAGE_PATH = re.compile(r"/api/images/([0-9a-f]{16}\.(?:png|jpg))")
+LINK_ROUTES = ("/api/link_token", "/api/link_token/update", "/api/exchange", "/api/reconnected")
+PLAID_SETUP_MSG = "Plaid isn't set up yet: add your Plaid keys in Settings \u2192 Connections \u2192 Replace keys"
 RID = re.compile(r"[A-Za-z0-9_-]{1,64}")   # HOTFIX-1: the page's id for one of its syncs
 # Bank and holding logos, served from the DB (logos.py fetched them once; the page never hotlinks an image).
 LOGO_PATH = re.compile(r"/api/(institutions|securities)/([^/]{1,64})/logo")
@@ -461,20 +463,26 @@ class App:
                 if action:
                     return self._json(200, action(conn, int(m[1]), self.today()))
                 return self._json(200, self._with_photo(conn, api.manual_edit(conn, int(m[1]), data, self.today())))
-            if path == "/api/link_token":
-                return self._json(200, link.new_link_token(conn, self.client))
-            if path == "/api/link_token/update":
-                return self._json(200, link.update_link_token(conn, self.client, str(data.get("item_id", ""))))
-            if path == "/api/exchange":
-                return self._json(200, link.exchange(conn, self.client, data.get("public_token", ""),
-                                                     data.get("metadata")))
-            if path == "/api/reconnected":
-                return self._json(200, link.reconnected(conn, self.client, str(data.get("item_id", ""))))
+            if path in LINK_ROUTES:
+                try:
+                    return self._link(conn, path, data)
+                except config.ConfigError as e:   # no Plaid keys: a plain answer, not a logged traceback
+                    return self._json(400, {"error": PLAID_SETUP_MSG if not config.hermes_credentials()
+                                            else f"Plaid isn't set up yet: {e}"})
             if path == "/api/sync":
                 return self._sync(conn, data)
             if path == "/api/simplefin/sync":   # v21: the SimpleFIN row's Update, the same run as Sync now
                 return self._sync(conn, data)
         return self._json(404, {"error": "not found"})
+
+    def _link(self, conn, path: str, data: dict[str, Any]) -> tuple[int, str, bytes]:
+        if path == "/api/link_token":
+            return self._json(200, link.new_link_token(conn, self.client))
+        if path == "/api/link_token/update":
+            return self._json(200, link.update_link_token(conn, self.client, str(data.get("item_id", ""))))
+        if path == "/api/exchange":
+            return self._json(200, link.exchange(conn, self.client, data.get("public_token", ""), data.get("metadata")))
+        return self._json(200, link.reconnected(conn, self.client, str(data.get("item_id", ""))))
 
     def _sync(self, conn, data: dict[str, Any]) -> tuple[int, str, bytes]:
         """TASK-22: Sync now {item_id?, refresh?, rid?}: 409 while one runs, 429 in an Item's cooldown, 403 when asking

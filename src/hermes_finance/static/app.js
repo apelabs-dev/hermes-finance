@@ -928,6 +928,7 @@
   let modalReturn = null;
   function openSheet(kids, opts = {}) {
     closeHelp();
+    clearLinkError();
     const sheet = $('sheet');
     const stale = sheetRelease;
     sheetRelease = opts.release || null;
@@ -947,6 +948,7 @@
   let sheetRelease = null;  // an open sheet's clean-up (listeners, inline styles): run when it closes or another replaces it
   function closeModal() {
     $('modal').classList.remove('on');
+    clearLinkError();
     const release = sheetRelease;
     sheetRelease = null;
     if (release) release();
@@ -2188,12 +2190,31 @@
   }
 
   // ---------- Plaid Link: connect + update-mode reconnect --------------------------------------
+  // The message goes where the user is looking: #msg is hidden while the set-up wizard or a sheet is open.
+  // It lives in the sheet or wizard that was open, and nowhere else: a page banner would stay pinned to the Accounts page
+  // after the sheet closed and show through under every later sheet (SimpleFIN's included). Only with nothing open does
+  // it go to #msg, and clearLinkError() takes it back at the next sheet, when one closes, and on a connect that works.
+  let linkMsg = '';
+  function clearLinkError() {
+    if (linkMsg && $('msg').textContent === linkMsg) show('', '');
+    linkMsg = '';
+    document.querySelectorAll('.linkerr').forEach((n) => n.remove());
+  }
+  function linkFail(text) {
+    clearLinkError();
+    const box = $('modal').classList.contains('on') ? $('sheet') : document.querySelector('#page .sheet');
+    if (!box) { show(text, 'error'); linkMsg = text; return; }
+    box.appendChild(h('p', {class: 'nc warn linkerr', role: 'alert'}, text));
+  }
+
   async function connectBank() {
     let blocked = null;
     try {
       await loadAccounts();  // fresh connected-institution list for the duplicate guard
       if (typeof Plaid === 'undefined') throw new Error('Plaid Link has not loaded yet (or was blocked). Try again in a moment.');
       const {link_token} = await post('/api/link_token');
+      clearLinkError();                                         // a connect that gets this far leaves no failure note behind
+      if ($('modal').classList.contains('on')) closeModal();   // the Link sheet stays up until there is a token
       const handler = Plaid.create({
         token: link_token,
         onEvent: (name, meta) => {
@@ -2218,7 +2239,7 @@
         },
       });
       handler.open();
-    } catch (e) { show(e.message, 'error'); }
+    } catch (e) { linkFail(e.message); }
   }
 
   async function reconnect(itemId) {
@@ -2368,7 +2389,7 @@
             'aria-label': `Update ${instShort(name)} accounts`}, 'Update'));
       };
       const go = h('button', {class: 'btn w', type: 'button', disabled: full,
-        onclick: () => { closeModal(); connectBank(); }}, conns.length ? 'Connect a different bank' : 'Continue to Plaid');
+        onclick: () => connectBank()}, conns.length ? 'Connect a different bank' : 'Continue to Plaid');
       openSheet([h('div', {class: 'shd'}, backBtn(() => openAdd('home')), h('h2', {id: 'sheet-title'}, 'Link a bank or card'), closeBtn()),
         h('div', {class: 'prev'}, ring(used / limit, ACC, 62, 7, h('b', {class: 'v', style: {'font-size': '15px'}}, String(used))),
           h('div', {}, h('b', {}, `${limit - used} of ${limit} connections left`),

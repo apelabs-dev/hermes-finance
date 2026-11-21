@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -99,3 +100,22 @@ def test_the_off_switch_stops_the_cli_everywhere(app, monkeypatch):
 def test_an_unknown_cli_id_is_refused(app):
     s, d, _ = call(app, "POST", "/api/ai/cli/check", {"cli": "gpt"})
     assert s == 400 and d["field"] == "cli" and "claude" in d["error"]
+
+
+def test_a_codex_that_can_still_run_tools_fails_with_a_reason_that_names_the_problem_and_the_next_step(app, stub):
+    """The stream has a real tool item: the check fails (Ask stays refused) and Settings shows plain copy, not
+    "it has a tool". Checks saved with the old wording read the new way too."""
+    events = [json.loads(line) for line in (Path(__file__).parent / "fixtures" / "cli_streams"
+                                            / "codex-command-execution.jsonl").read_text().splitlines() if line.strip()]
+    stub.codex.script(cs.codex(*events))
+    s, d, _ = call(app, "POST", "/api/ai/cli/check", {"cli": "codex"})
+    assert s == 200 and d["item"]["passed"] is False
+    reason = d["item"]["reason"]
+    assert reason == clibrain.TOOL_REASON == ("Codex can still run tools in this mode, so it isn't safe to use here. "
+                                              "Update Codex, or use Claude Code.")
+    assert "it has a tool" not in reason and len(reason) <= 160   # settings.js shows a reason up to 160 characters
+    with db.connect(config.db_path()) as conn:
+        assert clibrain.ready(conn, "codex")[1] == "failed_check"   # the 503 refusal on /api/chat keys on this code
+        clibrain.save_check(conn, "codex", clibrain.version(stub.codex.path), False, "it has a tool", {})
+    s, d, _ = call(app, "GET", "/api/settings/page")
+    assert next(i for i in d["ai"]["cli"]["items"] if i["id"] == "codex")["reason"] == clibrain.TOOL_REASON

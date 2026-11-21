@@ -3,8 +3,9 @@
  * never sends back. Account types are guesses the owner confirms (every one) before the first sync. */
 (window.HF_EXT = window.HF_EXT || []).push((X) => {
   'use strict';
-  const {h, plural, tag, post, api, HOOKS, openSheet, closeModal, closeBtn, backBtn, toast, modal, openAdd, refresh,
-    help} = X;
+  const {h, plural, tag, post, api, HOOKS, openSheet, closeModal, closeBtn, backBtn, toast, modal, openAdd, help} = X;
+  // After a write the sidebar badges change too (a removed or newly added account moves the Transactions count).
+  const refresh = () => { X.loadCounts(); X.refresh(); };
   const TYPES = [['checking', 'Checking'], ['savings', 'Savings'], ['credit', 'Credit card'], ['loan', 'Loan'],
     ['investment', 'Investment']];
   const LABEL = Object.fromEntries(TYPES);
@@ -106,8 +107,10 @@
         guessKey(guess), `Type for ${a.name || 'this account'}`);
       const dupKind = select([['skip', 'Skip'], ['second', 'Add as a second account']], 'skip',
         `What to do with ${a.name || 'this account'}`);
-      const second = h('span', {class: 'sf-second'}, kind);
-      second.hidden = true;
+      // A Plaid twin starts skipped and reveals the type only for "Add as a second account"; every other account
+      // shows its type select on the row, preselected to the guess, so the owner can fix it or choose Don't add.
+      const second = dup ? h('span', {class: 'sf-second'}, kind) : null;
+      if (second) second.hidden = true;
       const choice = () => {
         if (dup && dupKind.value !== 'second') return {add: false};
         return {key: a.key, type: kind.value === 'skip' ? undefined : kind.value, add: kind.value !== 'skip'};
@@ -123,7 +126,7 @@
         h('span', {class: 'grow'}, h('b', {class: 'nmrow'}, h('span', {class: 'nm'}, a.name || 'Account'), tags),
           h('span', {class: 'meta2'}, h('span', {class: 'chip2'}, a.mask ? `••${a.mask}` : bank),
             dup ? ` · already synced through Plaid${amount}` : ` · looks like ${LABEL[guessKey(guess)].toLowerCase()}${amount}`)),
-        dup ? dupKind : null, second);
+        dup ? dupKind : kind, second);
       rows.push({account: a, choice});
       groups.get(bank).push(row);
     }

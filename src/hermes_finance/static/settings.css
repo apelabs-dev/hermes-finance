@@ -53,7 +53,6 @@ a.btn { text-decoration: none; }
 button.lnk { background: none; border: 0; padding: 0; color: var(--acc); font-weight: 600; font-size: 14px; display: inline-flex;
   align-items: center; gap: 6px; cursor: pointer; }
 button.lnk svg.i { width: 16px; height: 16px; }
-.soon { font-size: 13px; color: var(--dim); }
 /* AI provider */
 .aiseg { display: flex; width: 100%; margin: 0 0 4px; }
 .aiseg button { flex: 1 1 0; text-align: center; }

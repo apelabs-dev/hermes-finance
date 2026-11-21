@@ -642,7 +642,7 @@ def test_the_unlocked_capture_fails_because_it_has_a_tool(tmp_path):
     what must fail it."""
     got = clibrain._judge_codex(fixture("codex-unlocked-positive-control.jsonl"), 0, CANARY, tmp_path,
                                 fixture("codex-unlocked-positive-control.stderr.txt"))
-    assert got["passed"] is False and "it has a tool" in got["reason"]
+    assert got["passed"] is False and got["reason"] == clibrain.TOOL_REASON
     assert got["evidence"]["tool_items"] == 6
     assert got["evidence"]["rejections"] == 0
     assert got["evidence"]["canary"] is True
@@ -669,7 +669,7 @@ def test_the_earlier_adversarial_report_is_inconclusive(tmp_path):
 
 def test_a_tool_item_in_the_real_stream_fails(tmp_path):
     got = clibrain._judge_codex(fixture("codex-command-execution.jsonl"), 0, CANARY, tmp_path)
-    assert got["passed"] is False and "it has a tool" in got["reason"]
+    assert got["passed"] is False and got["reason"] == clibrain.TOOL_REASON
     assert got["evidence"]["tool_items"] == 1
 
 

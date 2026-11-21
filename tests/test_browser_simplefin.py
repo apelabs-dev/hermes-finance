@@ -37,15 +37,23 @@ def payload():
                           "transactions": []}]}
 
 
+def payload_without_a_plaid_twin():
+    """The same two accounts, but the second one matches nothing the Plaid side already has."""
+    data = payload()
+    data["accounts"][1].update(name="Rainy Day 7777", balance="310.00", **{"available-balance": "310.00"})
+    return data
+
+
 class Bridge:
-    def __init__(self, claim_status=403):
+    def __init__(self, claim_status=403, data=None):
         self.claim_status = claim_status
+        self.data = data
 
     def __call__(self, method, url, headers, body, timeout):
         if method == "POST":
             return simplefin.Response(self.claim_status, ACCESS.encode() if self.claim_status == 200
                                       else b"Forbidden (was it already claimed?)")
-        return simplefin.Response(200, json.dumps(payload()).encode())
+        return simplefin.Response(200, json.dumps(self.data or payload()).encode())
 
 
 @pytest.fixture(scope="module")
@@ -158,7 +166,7 @@ def test_the_chooser_at_both_widths_and_both_themes(chrome, site, theme, width):
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
-def test_the_already_used_token_error(chrome, site, theme, monkeypatch):
+def test_the_token_the_bridge_refuses_error(chrome, site, theme, monkeypatch):
     monkeypatch.setattr(simplefin, "urllib_transport", Bridge(403))
     monkeypatch.setattr(simplefin.socket, "getaddrinfo", PUBLIC)
     go(chrome, site, 390, theme)
@@ -176,7 +184,7 @@ def test_the_already_used_token_error(chrome, site, theme, monkeypatch):
       const e = document.querySelector('#sheet .formerr'); if (e && e.textContent.trim()) res(1);
       else if (Date.now() - t0 > 8000) rej(new Error('no error')); else setTimeout(tick, 50); }; tick(); })""")
     assert chrome.js("document.querySelector('#sheet .formerr').textContent.trim()") == \
-        "This token was already used. Create a new one at SimpleFIN Bridge."
+        "SimpleFIN Bridge didn't accept this token. It may be mistyped or already used: create a new one at SimpleFIN Bridge."
     assert chrome.js("document.querySelector('#sheet h2').textContent") == "Connect with SimpleFIN"
     assert "bridge-pass" not in chrome.js("document.body.innerHTML")
     path = shot(chrome, f"simplefin-token-error-390-{theme}.png")
@@ -229,6 +237,87 @@ def test_the_confirm_sheet(chrome, site, width, monkeypatch):
     assert path.exists()
 
 
+def connect_to_the_confirm_sheet(b) -> None:
+    """From the Add account chooser: Continue with SimpleFIN, paste the token, Connect, wait for the account rows."""
+    open_chooser(b)
+    b.js("""(() => { const e = [...document.querySelectorAll('#sheet .btn.w')]
+      .find((x) => x.textContent.includes('Continue with SimpleFIN')); e.click(); return 1; })()""")
+    b.js("""new Promise((res, rej) => { const t0 = Date.now(); const tick = () => {
+      const i = document.querySelector('#sheet input'); if (i) res(1); else if (Date.now() - t0 > 5000)
+      rej(new Error('no token field')); else setTimeout(tick, 50); }; tick(); })""")
+    b.js("""(() => { const i = document.querySelector('#sheet input'); i.value = %s;
+      i.dispatchEvent(new Event('input', {bubbles: true}));
+      [...document.querySelectorAll('#sheet .btn.w')].find((b) => b.textContent.trim() === 'Connect').click(); return 1; })()"""
+         % json.dumps(TOKEN))
+    b.js("""new Promise((res, rej) => { const t0 = Date.now(); const tick = () => {
+      const e = document.querySelector('#sheet .sf-acct'); if (e) res(1); else if (Date.now() - t0 > 8000)
+      rej(new Error('no confirm sheet')); else setTimeout(tick, 50); }; tick(); })""")
+
+
+CONFIRM_STATE = """(() => { const T = (e) => (e ? e.textContent.replace(/\\s+/g, ' ').trim() : null);
+  const s = document.getElementById('sheet');
+  return {add: {text: T(s.querySelector('.btn.w')), disabled: s.querySelector('.btn.w').disabled},
+    rows: [...s.querySelectorAll('.sf-acct')].map((r) => { const sel = r.querySelector('select[aria-label^="Type for"]');
+      const box = sel ? sel.getBoundingClientRect() : null;
+      return {name: T(r.querySelector('.nm')), tags: [...r.querySelectorAll('.tag')].map(T),
+        visible: Boolean(sel && box.width > 0 && box.height > 0 && !sel.closest('[hidden]')),
+        value: sel ? sel.value : null, options: sel ? [...sel.options].map((o) => o.value) : null,
+        small: sel ? parseFloat(getComputedStyle(sel).fontSize) : null,
+        fits: Boolean(sel && box.left >= 0 && box.right <= innerWidth)}; })}; })()"""
+
+
+def pick_type(b, name: str, value: str) -> None:
+    b.js("""(() => { const sel = document.querySelector('#sheet select[aria-label="Type for %s"]');
+      sel.value = %s; sel.dispatchEvent(new Event('change', {bubbles: true})); return 1; })()""" % (name, json.dumps(value)))
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_the_confirm_sheet_shows_every_type_so_a_wrong_guess_can_be_fixed_or_skipped(chrome, site, width, monkeypatch):
+    monkeypatch.setattr(simplefin, "urllib_transport", Bridge(200, payload_without_a_plaid_twin()))
+    monkeypatch.setattr(simplefin.socket, "getaddrinfo", PUBLIC)
+    go(chrome, site, width, "dark")
+    connect_to_the_confirm_sheet(chrome)
+    got = chrome.js(CONFIRM_STATE)
+    assert [r["name"] for r in got["rows"]] == ["Ally Savings 8841", "Rainy Day 7777"]
+    for row in got["rows"]:                       # no Plaid twin here: the type select is on the row, not behind a toggle
+        assert row["visible"], row
+        assert row["fits"], row
+        assert row["small"] >= 13, row
+        assert row["options"] == ["checking", "savings", "credit", "loan", "investment", "skip"]
+    assert [r["value"] for r in got["rows"]] == ["savings", "checking"]      # preselected to the guess
+    assert got["add"] == {"text": "Add 2 accounts", "disabled": False}
+    shot(chrome, f"simplefin-confirm-types-{width}-dark.png")
+    # the first guess is corrected, the second is skipped: the button follows, and so does the request body
+    pick_type(chrome, "Ally Savings 8841", "investment")
+    pick_type(chrome, "Rainy Day 7777", "skip")
+    assert chrome.js(CONFIRM_STATE)["add"] == {"text": "Add 1 account", "disabled": False}
+    chrome.js("""(() => { window.__posted = []; const f = window.fetch;
+      window.fetch = (u, o) => { if (String(u).includes('/api/simplefin/confirm') && o && o.method === 'POST')
+        window.__posted.push(JSON.parse(o.body)); return f(u, o); }; return 1; })()""")
+    chrome.js("[...document.querySelectorAll('#sheet .btn.w')].find((b) => b.textContent.startsWith('Add ')).click()")
+    chrome.js("""new Promise((res, rej) => { const t0 = Date.now(); const tick = () => {
+      if (window.__posted.length) res(1); else if (Date.now() - t0 > 8000) rej(new Error('no confirm request'));
+      else setTimeout(tick, 50); }; tick(); })""")
+    posted = chrome.js("window.__posted")
+    assert len(posted) == 1
+    by_key = {a["key"]: a for a in posted[0]["accounts"]}
+    assert by_key["CON-1:ACT-1"] == {"key": "CON-1:ACT-1", "type": "investment", "add": True}
+    assert by_key["CON-1:ACT-2"]["add"] is False and by_key["CON-1:ACT-2"].get("type") is None
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_the_confirm_sheet_with_nothing_to_add_disables_the_button(chrome, site, width, monkeypatch):
+    monkeypatch.setattr(simplefin, "urllib_transport", Bridge(200, payload_without_a_plaid_twin()))
+    monkeypatch.setattr(simplefin.socket, "getaddrinfo", PUBLIC)
+    go(chrome, site, width, "dark")
+    connect_to_the_confirm_sheet(chrome)
+    pick_type(chrome, "Ally Savings 8841", "skip")
+    pick_type(chrome, "Rainy Day 7777", "skip")
+    assert chrome.js(CONFIRM_STATE)["add"] == {"text": "Add 0 accounts", "disabled": True}
+    pick_type(chrome, "Rainy Day 7777", "credit")
+    assert chrome.js(CONFIRM_STATE)["add"] == {"text": "Add 1 account", "disabled": False}
+
+
 @pytest.mark.parametrize("theme", ["dark", "light"])
 def test_the_settings_row_and_the_bank_connections_tag(chrome, site, theme):
     seed_connected(site.path)
@@ -252,6 +341,39 @@ def test_the_settings_row_and_the_bank_connections_tag(chrome, site, theme):
     assert tag and tag["tag"] and tag["update"] and "Synced" in tag["text"]
     assert chrome.js("document.querySelector('#page').scrollWidth <= innerWidth + 1")
     shot(chrome, f"simplefin-connections-1280-{theme}.png")
+
+
+def test_removing_simplefin_redraws_the_sidebar_badge_with_the_page(chrome, site):
+    seed_connected(site.path)
+    conn = db.connect(site.path)
+    try:
+        with conn:      # an undecided SimpleFIN row this month: one more row on the Transactions badge
+            conn.execute("UPDATE transactions SET date = ? WHERE transaction_id = 'simplefin:CON-1:T1'", (TODAY.isoformat(),))
+    finally:
+        conn.close()
+    month = TODAY.isoformat()[:7]
+    with_it = site.api("/api/counts", month=month)["review"]
+    badge = "(document.querySelector('[data-count=\"transactions\"]') || {textContent: ''}).textContent.trim()"
+    go(chrome, site, 1280, "dark", page="settings")
+    chrome.js("""new Promise((res, rej) => { const t0 = Date.now(); const tick = () => {
+      if (%s === %s) res(1); else if (Date.now() - t0 > 5000) rej(new Error('no badge before the removal'));
+      else setTimeout(tick, 50); }; tick(); })""" % (badge, json.dumps(str(with_it))))
+    chrome.js("""(() => { const row = [...document.querySelectorAll('#page .srow')].find((r) => r.querySelector('.grow b')
+      && r.querySelector('.grow b').textContent.trim() === 'SimpleFIN');
+      [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Remove').click(); return 1; })()""")
+    chrome.js("""new Promise((res, rej) => { const t0 = Date.now(); const tick = () => {
+      const b = [...document.querySelectorAll('.modal .btn, #modal .btn, [role=dialog] .btn')]
+        .find((x) => x.textContent.trim() === 'Remove'); if (b) { b.click(); res(1); }
+      else if (Date.now() - t0 > 5000) rej(new Error('no Remove confirmation')); else setTimeout(tick, 50); }; tick(); })""")
+    deadline = time.time() + 5
+    while site.api("/api/counts", month=month)["review"] == with_it and time.time() < deadline:
+        time.sleep(0.05)
+    without_it = site.api("/api/counts", month=month)["review"]       # the server hides the removed rows
+    assert without_it == with_it - 1
+    chrome.js("""new Promise((res, rej) => { const t0 = Date.now(); const tick = () => {
+      const ok = %s === %s; if (ok) res(1); else if (Date.now() - t0 > 5000)
+      rej(new Error('the badge still reads ' + %s + ', the page counts %s')); else setTimeout(tick, 50); }; tick(); })"""
+             % (badge, json.dumps(str(without_it) if without_it else ""), badge, without_it))
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])

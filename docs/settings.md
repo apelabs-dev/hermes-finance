@@ -58,7 +58,6 @@ Choose who can open the app: **This computer only**, **Behind your proxy login**
   below waits in *Needs review*.
 - Every change the model suggests still arrives as an approval card, in CLI mode too: nothing is applied without your
   OK.
-- *Test connection* is shown but disabled ("Coming in the next update"): it isn't built yet.
 
 ## Connect other agents (MCP)
 

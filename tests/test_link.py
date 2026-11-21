@@ -248,3 +248,28 @@ def test_failed_exchange_is_recorded_and_stores_nothing(conn, client, fake):
     assert status == 502 and "INVALID_PUBLIC_TOKEN" in body["error"]
     assert db.slots_used(conn) == 0
     assert conn.execute("SELECT outcome, error FROM link_attempts").fetchone()[:] == ("error", "INVALID_PUBLIC_TOKEN")
+
+
+def no_keys():
+    raise config.ConfigError("missing PLAID_CLIENT_ID, PLAID_SECRET in secrets.env")
+
+
+@pytest.mark.parametrize("path, payload", [("/api/link_token", {}), ("/api/link_token/update", {"item_id": "item_1"})])
+def test_link_token_without_plaid_keys_is_a_plain_400_and_logs_no_traceback(conn, caplog, path, payload):
+    """No Plaid keys: a 4xx that says what to do (not "internal error (ConfigError)"), and nothing logged."""
+    app = App(config.db_path(), no_keys, "127.0.0.1", 8765)
+    with caplog.at_level("DEBUG"):
+        status, body = post(app, path, payload)
+    assert status == 400
+    assert body["error"].startswith("Plaid isn't set up yet") and "Replace keys" in body["error"]
+    assert "internal error" not in body["error"]
+    assert not [r for r in caplog.records if r.exc_info or r.levelname in ("ERROR", "CRITICAL")]
+    assert "Traceback" not in caplog.text
+
+
+def test_the_wizard_says_the_same_words_as_the_link_routes_when_plaid_has_no_keys():
+    """static/setup.js (step 5, with the Connect button off) carries web.PLAID_SETUP_MSG word for word."""
+    from pathlib import Path
+    from hermes_finance import web
+    js = (Path(web.__file__).parent / "static" / "setup.js").read_text()
+    assert web.PLAID_SETUP_MSG.replace("\u2192", "\\u2192") in js

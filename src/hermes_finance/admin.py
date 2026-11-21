@@ -327,7 +327,7 @@ def _cli_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         check = stored.get(cli_id) or {}
         out.append({**got, "display": _display(got["path"]), "checked_version": check.get("version"),
                     "passed": check.get("passed") is True, "checked_at": check.get("at"),
-                    "reason": check.get("reason") or ""})
+                    "reason": clibrain.display_reason(check.get("reason") or "")})
     return out
 
 

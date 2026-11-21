@@ -139,8 +139,7 @@ too.
   leaves it.
 
 **Trade-off:** the app is the harness, so its limits are yours (6 rounds, 60 seconds, each answer arrives whole).
-Your provider key sits in the app's secrets file on disk. *Test connection* in Settings is not built yet: the button is
-disabled.
+Your provider key sits in the app's secrets file on disk.
 
 ## CLI: a locally installed agent
 

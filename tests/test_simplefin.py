@@ -66,12 +66,13 @@ def test_claim_happy_path_posts_the_decoded_url_and_returns_the_access_link():
     assert "bridge-pass" not in called
 
 
-def test_claim_403_says_the_token_was_already_used_or_revoked():
+def test_claim_403_says_the_bridge_did_not_accept_the_token():
     fake = Fake(403, "Forbidden (was it already claimed?)")
     with pytest.raises(simplefin.InvalidToken) as e:
         simplefin.claim(TOKEN, transport=fake, resolve=public)
     text = str(e.value)
-    assert "already used" in text and "SimpleFIN Bridge" in text
+    assert text == ("SimpleFIN Bridge didn't accept this token. It may be mistyped or already used: create a new one at "
+                    "SimpleFIN Bridge.")
     assert TOKEN not in text and ACCESS not in text
 
 
