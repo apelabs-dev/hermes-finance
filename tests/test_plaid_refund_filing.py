@@ -130,3 +130,34 @@ def test_default_filing_names_the_same_words_as_the_simplefin_hint():
         assert classify.REFUND_WORDS.search(text), text
     for text in ("Returns", "Refunded", "voucher credit", "Credit"):
         assert not classify.REFUND_WORDS.search(text), text
+
+
+# --- a tax refund stays Income (owner decision) ----------------------------------------------------------------
+
+TAX = ("INCOME", "INCOME_TAX_REFUND")
+
+
+def test_a_plaid_tax_refund_with_its_own_code_stays_income_and_spending_is_unchanged(accounts, capsys):
+    add(accounts, "buy", 60.0, "HARDWARE STORE", MERCH, account="acc_chk")
+    classify.apply(accounts)
+    before = spend_total(capsys)
+    add(accounts, "tax", -1840.0, "NYS DTF PIT TAX REFUND", TAX, account="acc_chk")
+    classify.apply(accounts)
+    assert cat(accounts, "tax") == ("Income", "plaid")
+    assert spend_total(capsys) == before == 60.0
+
+
+def test_a_tax_refund_named_only_in_words_with_a_plain_income_code_stays_income(accounts):
+    add(accounts, "irs", -900.0, "IRS TREAS 310 TAX REF", ("INCOME", None), account="acc_chk")
+    add(accounts, "irs2", -900.0, "IRS TREAS 310 TAX REFUND", INCOME_OTHER, account="acc_chk")
+    classify.apply(accounts)
+    assert cat(accounts, "irs") == ("Income", "plaid")
+    assert cat(accounts, "irs2") == ("Income", "plaid")
+
+
+def test_a_tax_refund_on_a_card_is_still_not_income_and_an_amazon_refund_on_checking_is_not_income(accounts):
+    add(accounts, "card", -20.0, "TAX REFUND CREDIT", TAX)
+    add(accounts, "amz", -20.0, "AMAZON REFUND", INCOME_OTHER, account="acc_chk")
+    classify.apply(accounts)
+    assert cat(accounts, "card") == ("Other", "plaid")
+    assert cat(accounts, "amz") == ("Other", "plaid")

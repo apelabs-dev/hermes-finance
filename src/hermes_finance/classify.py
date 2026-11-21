@@ -130,10 +130,12 @@ def default_filing(conn: sqlite3.Connection, t: sqlite3.Row) -> int:
     that a refund is never Income (owner decision). When the default lands in an income category and the row is money
     in (amount < 0) on a credit or loan account, or one whose name says REFUND, RETURN, REVERSAL or CREDIT VOUCHER, the
     row is filed Other and nets against spending. A merchant category (Plaid's own refund under General merchandise)
-    is kept, and so is a bank deposit that is simply income. `t` is a _candidates() row."""
+    is kept, and so is a bank deposit that is simply income. A tax refund on a bank account stays Income (owner
+    decision): Plaid's INCOME_TAX_REFUND code, or a name that says so (TAX_REFUND_WORDS). `t` is a _candidates() row."""
     cat = plaid_default(conn, t["pfc_detailed"], t["pfc_primary"])
     if (t["amount"] is not None and t["amount"] < 0
-            and (t["account_type"] in ("credit", "loan") or REFUND_WORDS.search(t["name"] or ""))
+            and (t["account_type"] in ("credit", "loan")
+                 or (REFUND_WORDS.search(t["name"] or "") and not is_tax_refund(t["name"], t["pfc_detailed"])))
             and conn.execute("SELECT is_income FROM categories WHERE id = ?", (cat,)).fetchone()[0]):
         return category_id(conn, "Other")
     return cat
@@ -190,6 +192,14 @@ CARD_PAYMENT_HINT = ("LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT")
 CARD_PAYMENT_WORDS = re.compile(r"\b(?:PAYMENT|PAYMT|PMT)\b", re.IGNORECASE)
 _TRANSFER_WORDS = re.compile(r"\b(?:TRANSFER|XFER)\b", re.IGNORECASE)
 REFUND_WORDS = re.compile(r"\b(?:REFUND|RETURN|REVERSAL|CREDIT\s+VOUCHER)\b", re.IGNORECASE)   # whole words: not RETURNS
+# A tax refund stays Income on both sides (owner decision): Plaid's INCOME_TAX_REFUND code, or a description that names
+# one. Whole words, so the Plaid default and the SimpleFIN hint agree.
+TAX_REFUND_WORDS = re.compile(r"\b(?:TAX\s*REF(?:UND)?|TAX\s*RFD|IRS\s+TREAS)\b", re.IGNORECASE)
+INCOME_TAX_REFUND_HINT = ("INCOME", "INCOME_TAX_REFUND")
+
+
+def is_tax_refund(description: str | None, pfc_detailed: str | None = None) -> bool:
+    return pfc_detailed == "INCOME_TAX_REFUND" or bool(TAX_REFUND_WORDS.search(description or ""))
 
 
 def inflow_hint(description: str | None, account_type: str | None, amount: float) -> tuple[str | None, str | None]:
@@ -197,11 +207,13 @@ def inflow_hint(description: str | None, account_type: str | None, amount: float
     < 0) can get one, money out gets none. In this order:
       1. on a credit card or loan, a line whose description names a payment is that account's own payment
          (CARD_PAYMENT_HINT: a transfer);
-      2. a description with the whole word REFUND, RETURN or REVERSAL, or the phrase CREDIT VOUCHER, gets none: a
+      2. on a bank account, a description that names a tax refund (TAX_REFUND_WORDS) is INCOME_TAX_REFUND: it stays
+         Income, ahead of the refund rule below;
+      3. a description with the whole word REFUND, RETURN or REVERSAL, or the phrase CREDIT VOUCHER, gets none: a
          refund is never Income, so it stays undecided and nets against spending;
-      3. every other inflow on a credit card or loan gets none either (a merchant credit is a refund);
-      4. a description that says TRANSFER or XFER is a transfer in (TRANSFER_IN_HINT);
-      5. any other inflow on a bank account (or an account of unknown type) is income (INCOME_HINT).
+      4. every other inflow on a credit card or loan gets none either (a merchant credit is a refund);
+      5. a description that says TRANSFER or XFER is a transfer in (TRANSFER_IN_HINT);
+      6. any other inflow on a bank account (or an account of unknown type) is income (INCOME_HINT).
     A rule or the user's own filing still wins over all of these: apply() checks rules first and never touches a
     user's choice."""
     if amount >= 0:
@@ -210,6 +222,8 @@ def inflow_hint(description: str | None, account_type: str | None, amount: float
     on_credit = account_type in ("credit", "loan")
     if on_credit and CARD_PAYMENT_WORDS.search(text):
         return CARD_PAYMENT_HINT
+    if not on_credit and TAX_REFUND_WORDS.search(text):
+        return INCOME_TAX_REFUND_HINT
     if REFUND_WORDS.search(text) or on_credit:
         return None, None
     if _TRANSFER_WORDS.search(text):

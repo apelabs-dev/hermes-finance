@@ -263,3 +263,35 @@ def test_plaid_numbers_are_unchanged(conn, capsys, monkeypatch):
     assert hashlib.sha256(blob.encode()).hexdigest() == PLAID_DIGEST
     # nothing here is SimpleFIN, so nothing was hinted or refiled
     assert conn.execute("SELECT COUNT(*) FROM transactions WHERE source = 'simplefin'").fetchone()[0] == 0
+
+
+# --- a tax refund stays Income on this side too (owner decision) -----------------------------------------------
+
+TAX_HINT = ("INCOME", "INCOME_TAX_REFUND")
+
+def test_a_checking_tax_refund_is_income_and_does_not_net_against_spending(conn, capsys):
+    connect(conn, [*OUT, ("R1", date(2026, 11, 9), "1840.00", "IRS TREAS 310 TAX REFUND"),
+                   ("R2", date(2026, 11, 10), "100.00", "IRS TREAS 310 TAX REF")])
+    for name in ("IRS TREAS 310 TAX REFUND", "IRS TREAS 310 TAX REF"):
+        assert category(conn, name) == "Income"
+    row = conn.execute("SELECT pfc_primary, pfc_detailed FROM transactions WHERE name = 'IRS TREAS 310 TAX REFUND'").fetchone()
+    assert tuple(row) == TAX_HINT
+    assert cli_json(capsys, "spend", "--month", MONTH)["total"] == OUTFLOWS
+
+
+@pytest.mark.parametrize("description, kind, want", [
+    ("IRS TREAS 310 TAX REF", "checking", TAX_HINT),
+    ("State TAX REFUND", "checking", TAX_HINT),
+    ("TAXRFD 2025", "checking", TAX_HINT),
+    ("TAX RFD", "checking", TAX_HINT),
+    ("AMAZON REFUND", "checking", (None, None)),
+    ("TAX REFUND", "credit", (None, None)),
+    ("TAX REFUND", "loan", (None, None)),
+])
+def test_tax_refund_hint(description, kind, want):
+    assert classify.inflow_hint(description, kind, -10.0) == want
+
+
+def test_a_checking_amazon_refund_is_still_not_income(conn):
+    connect(conn, [*OUT, ("R1", date(2026, 11, 9), "30.00", "AMAZON REFUND")])
+    assert category(conn, "AMAZON REFUND") == "Other"

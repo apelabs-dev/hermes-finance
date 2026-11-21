@@ -43,7 +43,8 @@ source (see [Duplicates](#duplicates-and-picking-a-source)).
   then leaves it for the AI categorizer; until it is filed, the page shows *Uncategorized*.
   Money coming in on a bank account is filed as Income, or as a transfer when the description says so; a card's own
   payment line is a transfer. A refund is never Income: on a card or loan, and on any line that says refund, return,
-  reversal or credit voucher, money in stays unfiled and nets against spending.
+  reversal or credit voucher, money in stays unfiled and nets against spending. The exception is a tax refund on a bank
+  account (a description with TAX REFUND, TAX REF, TAXRFD, TAX RFD or IRS TREAS): it is Income.
 
 ## The request budget
 

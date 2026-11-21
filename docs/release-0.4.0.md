@@ -82,10 +82,14 @@ database and refuses an old one with a clear message.
 3. **Display currency.** It defaults to USD, so nothing changes for an all-USD household. If you set Settings →
    Region to another currency, accounts that are still in USD become "other currency" accounts: listed apart, in their
    own currency, and out of the net-worth and budget totals. Nothing is converted, by design.
-4. **SimpleFIN and the CLI brain are opt-in.** Neither runs until you set it up. The SimpleFIN access link is kept in
+4. **Refunds are never Income, except tax refunds.** At the first sync after updating, money in on a card or loan, and
+   any line that says refund, return, reversal or credit voucher, moves from Income to Other when Plaid's category put
+   it there, and nets against spending. Tax refunds stay Income. Your own filings, your rules and AI filings are kept.
+   Money in on a SimpleFIN bank account is Income.
+5. **SimpleFIN and the CLI brain are opt-in.** Neither runs until you set it up. The SimpleFIN access link is kept in
    the secrets file (`~/.config/hermes-finance/secrets.env`, or where `FINANCE_SECRETS_FILE` points), never in the
    database.
-5. **Restart the app after updating** so the server and its generated reference pages (`docs/reference/*`) match the
+6. **Restart the app after updating** so the server and its generated reference pages (`docs/reference/*`) match the
    code. Updating the plugin or the catalog entry is a separate step.
 
 ## Verification at the release head
