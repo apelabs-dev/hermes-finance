@@ -960,8 +960,20 @@ def test_the_daily_sync_runs_without_an_injected_jitter(conn):
     before = conn.execute("SELECT COUNT(*) FROM simplefin_requests").fetchone()[0]
     out = simplefin_sync.sync(conn, "daily", transport=bridge, resolve=PUBLIC, today=TODAY, sleep=sleeps.append)
     assert out["ok"] is True and out["added"] == 1 and out["requests"] == 1
-    assert len(sleeps) == 1 and 0 <= sleeps[0] <= 59
+    assert len(sleeps) <= 1 and all(1 <= s <= 59 for s in sleeps)   # a zero draw means no sleep at all
     assert conn.execute("SELECT COUNT(*) FROM simplefin_requests").fetchone()[0] == before + 1
+
+
+@pytest.mark.parametrize("draw, expected", [(0, []), (17, [17])])
+def test_the_daily_sync_sleeps_the_drawn_minutes(conn, draw, expected):
+    bridge = Bridge(account_set([card()]))
+    confirmed(conn, bridge)
+    bridge.payload = account_set([card(txs=[tx("T1", TODAY, "-5.00", "Coffee shop")])])
+    sleeps = []
+    out = simplefin_sync.sync(conn, "daily", transport=bridge, resolve=PUBLIC, today=TODAY, sleep=sleeps.append,
+                              rng=lambda n: draw)
+    assert out["ok"] is True and out["added"] == 1
+    assert sleeps == expected
 
 
 def test_the_scheduled_cli_path_runs_the_daily_sync(conn, data_dir, monkeypatch, capsys):

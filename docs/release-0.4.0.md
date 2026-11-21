@@ -94,8 +94,9 @@ database and refuses an old one with a clear message.
 
 ## Verification at the release head
 
-The figures below come from one run of the manual Nightly workflow on this release's head commit (macOS runner,
-four headless Chromes), and a checkout of that commit reproduces them with:
+The figures below come from GitHub Actions run 44868442415 of the manual Nightly workflow (macOS runner, four
+headless Chromes), which ran on commit `c49b7fa`; only this page changed after that commit, so a checkout of
+`c49b7fa` reproduces them with:
 
 ```
 uv run python scripts/check.py full --part 1   # every test but the gates; the browser files run with it

@@ -25,26 +25,47 @@ FIND = """(key) => { const t = {spent: 'Spent in', left: 'Left to spend', networ
   const c = [...document.querySelectorAll('#page .card')].find((c) => ((c.querySelector('h3 .ttl') || {}).textContent || '').startsWith(t));
   return c && c.querySelector('.big'); }"""
 
-# Samples the three heroes on every frame for `ms` after `act` ran; also the layout shifts seen from the first sample on.
+# Samples the three heroes for `ms` after `act` ran; also the layout shifts seen from the first sample on.
+# Two observers, because a page that is starved (a loaded CI runner: frames 200+ ms apart, timers running late) can run
+# the whole 400 ms count-up between two frames (Nightly 44803010495: "the count-up never ran"):
+#  - a requestAnimationFrame sampler: `out` / `rects` / `busy_at`, one entry per frame the page drew (the layout checks);
+#  - a MutationObserver on the page: `mut` (the hero's text after every DOM change, so a fill that happened between two
+#    frames is still recorded) and `busy_seen` (a change that left role / min-width on the hero: the count-up engaged).
+# MutationObserver callbacks run as microtasks right after the task that changed the DOM, so they cannot be starved of
+# frames. `count`: the act is a month switch, so wait on STATE, not on a window: until every hero has been seen counting
+# (`started`, 8 s at most) and then until none is still counting (`ended`, 8 s at most). Without it the window is MS.
 SAMPLE = """(async () => {
-  const find = FIND_FN; const out = {spent: [], left: [], networth: []}, rects = {spent: [], left: [], networth: []}, busy_at = {spent: 0, left: 0, networth: 0};
-  let shift = 0, t0 = null;
+  const find = FIND_FN; const keys = ['spent', 'left', 'networth'];
+  const out = {spent: [], left: [], networth: []}, rects = {spent: [], left: [], networth: []}, busy_at = {spent: 0, left: 0, networth: 0};
+  const mut = {spent: [], left: [], networth: []}, busy_seen = {spent: 0, left: 0, networth: 0};
+  const text = (el) => el.textContent.replace(/\\s+/g, ' ').trim();
+  const isBusy = (el) => !!(el && (el.getAttribute('role') || el.style.minWidth));
+  const anyBusy = () => keys.some((k) => isBusy(find(k)));
+  let shift = 0, t0 = null, started = false, ended = false;
   const po = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (t0 !== null && e.startTime >= t0) shift += e.value; });
   po.observe({type: 'layout-shift', buffered: false});
+  const mo = new MutationObserver(() => { for (const k of keys) { const el = find(k); if (!el) continue;
+    if (t0 === null) t0 = performance.now();
+    const t = text(el); if (mut[k][mut[k].length - 1] !== t) mut[k].push(t);
+    if (isBusy(el)) busy_seen[k] += 1; } });
+  mo.observe(document.body, {subtree: true, childList: true, attributes: true, characterData: true});
   ACT
-  const end = performance.now() + MS;
+  const begun = performance.now(), end = begun + MS;
   await new Promise((res) => { const tick = () => {
-    for (const k of Object.keys(out)) { const el = find(k); if (!el) continue; if (t0 === null) t0 = performance.now();
-      out[k].push(el.textContent.replace(/\\s+/g, ' ').trim());
-      if (el.getAttribute('role') || el.style.minWidth) busy_at[k] += 1;   // a frame while its count-up ran
+    const now = performance.now();
+    for (const k of keys) { const el = find(k); if (!el) continue; if (t0 === null) t0 = now;
+      out[k].push(text(el));
+      if (isBusy(el)) { busy_at[k] += 1; busy_seen[k] += 1; }   // a frame while its count-up ran
       const r = el.getBoundingClientRect(); rects[k].push([Math.round(r.width * 10) / 10, Math.round(r.height * 10) / 10]); }
-    // past the window, sampled on until no count-up is still running (its role/label/min-width set), 5 s at most: on a
-    // slow machine it can outlast MS, and "ends on the exact value, state cleared" is about its end (t_d2b88168)
-    const busy = () => Object.keys(out).some((k) => { const el = find(k); return el && (el.getAttribute('role') || el.style.minWidth); });
-    if (performance.now() < end || (busy() && performance.now() < end + 5000)) requestAnimationFrame(tick); else res(); }; tick(); });
-  po.disconnect();
-  const aria = {}; for (const k of Object.keys(out)) { const el = find(k); aria[k] = el ? [el.getAttribute('role'), el.getAttribute('aria-label'), el.style.minWidth] : null; }
-  return {out, rects, shift, aria, busy_at, final: Object.fromEntries(Object.keys(out).map((k) => [k, find(k) && find(k).textContent.replace(/\\s+/g, ' ').trim()]))};
+    if (!started && keys.every((k) => busy_seen[k] > 0)) started = true;
+    if (started && !anyBusy()) ended = true;
+    // in state mode: until every hero was seen counting and none still is (each wait capped at 8 s: a count-up that never starts
+    // or never ends must fail the test's assertions, not hang it). Otherwise just the window.
+    const waiting = COUNT ? !(started && ended) && now < begun + 8000 + (started ? 8000 : 0) : now < end;
+    if (now < end || waiting) requestAnimationFrame(tick); else res(); }; tick(); });
+  po.disconnect(); mo.disconnect();
+  const aria = {}; for (const k of keys) { const el = find(k); aria[k] = el ? [el.getAttribute('role'), el.getAttribute('aria-label'), el.style.minWidth] : null; }
+  return {out, rects, shift, aria, busy_at, busy_seen, mut, started, ended, final: Object.fromEntries(keys.map((k) => [k, find(k) && text(find(k))]))};
 })()""".replace("FIND_FN", FIND)
 
 PREV = "document.getElementById('mprev').click();"
@@ -78,24 +99,32 @@ def load(b, site, width=1280, reduced=False):
     assert b.still() is True, "the bars' first fill / page fade never finished"
 
 
-def sample(b, act, ms=900):
-    return b.js(SAMPLE.replace("ACT", act).replace("MS", str(ms)))
+def sample(b, act, ms=900, count=False):
+    return b.js(SAMPLE.replace("ACT", act).replace("MS", str(ms)).replace("COUNT", "true" if count else "false"))
 
 
 def test_count_up_on_month_switch_ends_on_exact_value(browser, site):
     load(browser, site)
-    r = sample(browser, PREV)
+    r = sample(browser, PREV, count=True)
+    # waited on state, not a window: every hero was seen counting, then none was (a count-up that never starts, or never
+    # clears its role / label / min-width, fails here rather than passing on a lucky sampling window)
+    assert r["started"], ("the count-up never started", r["busy_seen"], r["mut"])
+    assert r["ended"], ("the count-up never ended", r["aria"])
     for key in ("spent", "left", "networth"):
         seen = r["out"][key]
         assert seen, key
         final = r["final"][key]
         assert seen[-1] == final
-        # it did count: a value neither the start nor the end was on screen, once the page drew 2+ frames while it ran
-        # (not len(set(seen)) > 2: net worth can start and end on the same value). A starved page (frames 200+ ms apart,
-        # slow-mode run 5) can draw the whole 400 ms count-up in one frame: then there was no in-between frame to show
-        assert r["busy_at"][key] >= 1, (key, "the count-up never ran", seen)
-        if r["busy_at"][key] >= 2:
-            assert set(seen) - {seen[0], final}, (key, seen, r["busy_at"][key])
+        # it did count: the hero was marked as counting (role / min-width) in at least one change or frame. Seen by a
+        # MutationObserver as well as by frames: a starved page can run the whole 400 ms count-up between two frames
+        assert r["busy_seen"][key] >= 1, (key, "the count-up never ran", seen, r["mut"][key])
+        # and it counted THROUGH values: the page drew 3+ frames while it was marked (frame 1 sets the min-width, frame 2
+        # is the first tick's frame, so the hero still being marked on frame 3 means that tick filled an in-between value
+        # instead of finishing) -> a value neither the start nor the end was on screen, in a frame or between two
+        # (not len(set(seen)) > 2: net worth can start and end on the same value). A starved page (frames 200+ ms apart)
+        # draws fewer marked frames and can go straight to the end value: then there is no in-between value to show
+        if r["busy_at"][key] >= 3:
+            assert (set(seen) | set(r["mut"][key])) - {seen[0], final}, (key, seen, r["mut"][key], r["busy_at"][key])
         assert r["aria"][key] == [None, None, ""], r["aria"][key]   # interruption state cleared: no stale label or min-width
     # the exact final values are the ones a plain load of that month shows (no count-up on a fresh load)
     month = browser.js("location.hash")
@@ -106,17 +135,27 @@ def test_count_up_on_month_switch_ends_on_exact_value(browser, site):
     assert browser.problems() == []
 
 
+# Both tests below follow the count-up by STATE, with a MutationObserver as well as frames (see SAMPLE): started when the
+# hero first carries a role, ended when it no longer does (8 s at most for each wait: a count-up that never starts or never
+# ends fails the assertions instead of hanging).
+OBSERVE = "mo.observe(document.body, {subtree: true, childList: true, attributes: true, characterData: true});"
+
+
 def test_aria_label_is_the_final_value_while_counting(browser, site):
     load(browser, site)
     got = browser.js("""(async () => {
-      document.getElementById('mprev').click();
       const find = %s; const seen = [];
-      await new Promise((res) => { const end = performance.now() + 500; const tick = () => { const el = find('spent');
-        if (el && el.getAttribute('role')) seen.push([el.getAttribute('role'), el.getAttribute('aria-label'), el.textContent.replace(/\\s+/g, ' ').trim()]);
-        performance.now() < end ? requestAnimationFrame(tick) : res(); }; tick(); });
-      await new Promise((res) => setTimeout(res, 1500));   // the count-up can outlast the 500 ms sample: read the settled value
-      return {seen, final: find('spent').textContent.replace(/\\s+/g, ' ').trim()};
-    })()""" % FIND)
+      const snap = () => { const el = find('spent'); const busy = !!(el && el.getAttribute('role'));
+        if (busy) seen.push([el.getAttribute('role'), el.getAttribute('aria-label'), el.textContent.replace(/\\s+/g, ' ').trim()]);
+        return busy; };
+      const mo = new MutationObserver(snap); %s
+      document.getElementById('mprev').click();
+      const begun = performance.now(); let started = false;
+      await new Promise((res) => { const tick = () => { const busy = snap(); if (busy) started = true;
+        (started && !busy) || performance.now() > begun + (started ? 16000 : 8000) ? res() : requestAnimationFrame(tick); }; tick(); });
+      mo.disconnect();
+      return {seen, started, final: find('spent').textContent.replace(/\\s+/g, ' ').trim()};   // read once the count-up ended
+    })()""" % (FIND, OBSERVE))
     assert got["seen"], "the count-up never marked the hero"
     assert all(s[0] == "img" for s in got["seen"])
     final = got["final"].replace("\u00a0", " ")
@@ -125,13 +164,18 @@ def test_aria_label_is_the_final_value_while_counting(browser, site):
 
 def test_count_up_takes_at_most_400ms(browser, site):
     load(browser, site)
-    t = browser.js("""(async () => { const find = %s; document.getElementById('mprev').click();
-      const t0 = performance.now(); let last = t0, first = null, prev = t0, gap = 0;
-      await new Promise((res) => { const end = t0 + 1500; const tick = () => { const el = find('spent'), now = performance.now();
-        gap = Math.max(gap, now - prev); prev = now;
-        if (el && el.getAttribute('role')) { if (first === null) first = now; last = now; }
-        now < end ? requestAnimationFrame(tick) : res(); }; tick(); });
-      return first === null ? null : [last - first, gap]; })()""" % FIND)
+    t = browser.js("""(async () => { const find = %s;
+      let first = null, last = null, ended = false, gap = 0, prev = null;
+      const note = () => { const el = find('spent'), now = performance.now(); const busy = !!(el && el.getAttribute('role'));
+        if (busy) { if (first === null) first = now; last = now; } else if (first !== null) ended = true;
+        return busy; };
+      const mo = new MutationObserver(note); %s
+      document.getElementById('mprev').click();
+      const begun = performance.now(); prev = begun;
+      await new Promise((res) => { const tick = () => { const now = performance.now(); gap = Math.max(gap, now - prev); prev = now; note();
+        ended || now > begun + 8000 ? res() : requestAnimationFrame(tick); }; tick(); });
+      mo.disconnect();
+      return first === null ? null : [last - first, gap]; })()""" % (FIND, OBSERVE))
     assert t is not None, "no count-up"
     # app.js stops it with its own 400 ms timer. A busy page runs that timer late by up to its longest frame gap (the
     # Nightly runner measured 441.5 ms); that is the page's lag, not a longer count-up, so the bound takes it into account
@@ -161,7 +205,7 @@ def test_reduced_motion_has_no_count_up(browser, site):
 
 def test_no_layout_shift_while_counting(browser, site):
     load(browser, site)
-    r = sample(browser, PREV)
+    r = sample(browser, PREV, count=True)
     assert r["shift"] < 0.01, r["shift"]
     for key in ("spent", "left", "networth"):
         sizes = r["rects"][key]
