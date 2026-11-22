@@ -604,7 +604,8 @@ def confirm(conn: sqlite3.Connection, choices: dict[str, dict], transport: simpl
             log.warning("SimpleFIN backfill failed: %s", type(e).__name__)
             continue
         finish_request(conn, request_id, "ok")
-        result = _merge(result, import_window(conn, got, _window(start, end), today or _today(), seen))
+        result = _merge(result, import_window(conn, got, _window(start, end), today or _today(), seen,
+                                                balances=False))
     _after_sync(conn, result)
     return status(conn, today=today) | {"added": added}
 
@@ -640,11 +641,13 @@ def _merge(a: dict, b: dict) -> dict:
 
 @_follows_today
 def import_window(conn: sqlite3.Connection, payload: simplefin.Payload, window: dict | None = None,
-                  today: date | None = None, seen: set[str] | None = None) -> dict:
+                  today: date | None = None, seen: set[str] | None = None, balances: bool = True) -> dict:
     """Upsert the payload's accounts and transactions (source 'simplefin'), then reconcile pending rows. Idempotent: the
     ids are derived from the Bridge's, an existing row is updated in place. A matched pending row is soft-removed, never deleted.
     `seen`: the transaction ids already counted in this run. A run's windows share one set, so `added` and `modified`
-    count each transaction once (its first sight in the run decides which); the rows written are the same either way."""
+    count each transaction once (its first sight in the run decides which); the rows written are the same either way.
+    `balances`: write the account's balance and today's snapshot from this payload. A run passes True for its newest
+    window only: an older window's balance is as of its own end-date, so it adds transactions and nothing else."""
     seen = set() if seen is None else seen
     ts = _now()
     accounts = {r["account_id"]: r for r in _accounts(conn)}
@@ -656,7 +659,8 @@ def import_window(conn: sqlite3.Connection, payload: simplefin.Payload, window: 
         if stored is None or stored["item_removed"]:
             continue                                      # never import an account the owner didn't confirm
         typ = stored["type"] or "other"
-        _upsert_account(conn, stored["item_id"], account, typ, stored["subtype"])
+        if balances:
+            _upsert_account(conn, stored["item_id"], account, typ, stored["subtype"])
         for t in account.transactions:
             if earliest is None or t.date < earliest:
                 earliest = t.date
@@ -702,6 +706,8 @@ def import_window(conn: sqlite3.Connection, payload: simplefin.Payload, window: 
                 added += 1
             else:
                 modified += 1
+        if not balances:
+            continue
         try:
             bank_sync.snapshot_balances(conn, stored["item_id"])
         except sqlite3.Error:
@@ -1076,7 +1082,7 @@ def sync(conn: sqlite3.Connection, trigger: str = "manual", transport: simplefin
             break
         except simplefin.TransportError as e:
             finish_request(conn, request_id, "error", type(e).__name__)
-            result.ok, result.message = False, "Couldn't reach SimpleFIN. Nothing changed; try again in a minute."
+            result.ok, result.message = False, simplefin.UNREACHABLE
             log.warning("SimpleFIN fetch failed: %s", type(e).__name__)
             break
         except Exception as e:
@@ -1087,7 +1093,7 @@ def sync(conn: sqlite3.Connection, trigger: str = "manual", transport: simplefin
         finish_request(conn, request_id, "ok")
         answered = True
         result.requests += 1
-        got = import_window(conn, payload, _window(win_start, win_end), today, seen)
+        got = import_window(conn, payload, _window(win_start, win_end), today, seen, balances=index == 0)
         result.added += got["added"]
         result.modified += got["modified"]
         result.matched += got["matched"]

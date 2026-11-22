@@ -9,6 +9,10 @@ Categories and Goals open; nothing else carries a copy of these names.
 
 from __future__ import annotations
 
+# The eight swatches: a goal's colour (the goal picker) and a category's optional icon colour (categories.colour; NULL
+# follows the group). One tuple; goals.COLOURS and catops.COLOURS are this object.
+COLOURS = ("#4fd1a5", "#8ea8ff", "#5fc6e8", "#c792ea", "#f5b454", "#ff8fb1", "#ff7b7b", "#9ba2b6")
+
 GROUPS = [
     ("Money", ["piggy-bank", "wallet", "banknote", "coins", "credit-card", "landmark", "trending-up", "hand-coins",
                "handshake", "receipt-text", "ticket-percent", "bitcoin"]),

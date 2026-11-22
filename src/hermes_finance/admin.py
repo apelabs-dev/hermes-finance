@@ -321,13 +321,18 @@ def _display(path: str | None) -> str | None:
 def _cli_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Both CLIs as Settings shows them: installed (a --version probe, no model call) plus the stored isolation check."""
     stored = clibrain.check_state(conn)
+    searched = [_display(str(d)) for d in clibrain.search_dirs()]
     out = []
     for cli_id in clibrain.CLIS:
-        got = clibrain.installed(cli_id)
+        got = clibrain.installed(cli_id, conn)
         check = stored.get(cli_id) or {}
+        signin, signin_at = clibrain.signin_state(check, got["version"] if got["found"] else None)
         out.append({**got, "display": _display(got["path"]), "checked_version": check.get("version"),
                     "passed": check.get("passed") is True, "checked_at": check.get("at"),
-                    "reason": clibrain.display_reason(check.get("reason") or "")})
+                    "reason": clibrain.display_reason(check.get("reason") or ""),
+                    "signin": signin, "signin_at": signin_at,
+                    "login_command": clibrain.LOGIN_COMMANDS[cli_id], "searched": searched,
+                    "saved_path": _display(clibrain.saved_path(conn, cli_id)) or ""})
     return out
 
 
@@ -351,13 +356,15 @@ def ai_cli_check(app, conn, req):
     if not clibrain.LOCKS.acquire(blocking=False):
         return _json(409, {"busy": True})
     try:
-        exe = clibrain.executable(cli_id)
+        exe = clibrain.executable(cli_id, conn)
         if exe is None:
             raise api.ApiError(clibrain.line("missing", name=clibrain.CLIS[cli_id]["name"]),
                                clibrain.ERRORS["missing"][1], field="cli")
         try:
             result = clibrain.selftest(cli_id, exe, time.monotonic() + clibrain.CHECK_TIMEOUT)
         except clibrain.CliError as e:
+            if e.code == "auth":          # the login is gone: remember it, so Settings still says so after a reload
+                clibrain.save_check(conn, cli_id, clibrain.version(exe), False, str(e), {}, signed_out=True)
             raise api.ApiError(str(e), e.status, field="cli") from None
         clibrain.save_check(conn, cli_id, clibrain.version(exe), result["passed"], result["reason"],
                             result["evidence"])

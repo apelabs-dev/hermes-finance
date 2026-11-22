@@ -708,6 +708,7 @@
     capEditorExtra: () => null, acctRow: () => null, investRow: () => null, bankRow: () => null, addOptions: [], addSteps: {},
     billSheet: () => {},    // TASK-21 (bills.js): a Recurring row opens its bill sheet
     // polish P0 (catpick.js: the grouped picker): a transaction's category control; onPick() once `.value` is the new one
+    catRgb: (c) => c.rgb,   // (catcolour.js): the "r,g,b" a category's tile is drawn in, an override of its group's if it has one
     catPick: ({value, names, cls = '', label, title}, onPick) => {
       const sel = h('select', {class: `cat${cls}`, 'aria-label': label, title: title || null},
         names.map((n) => h('option', {value: n, selected: n === value}, n)));
@@ -738,7 +739,7 @@
     const button = h('button', {type: 'button', class: `help-trigger${text ? ' labelled' : ''}`,
       'aria-label': label, 'aria-expanded': 'false', 'aria-haspopup': long ? 'dialog' : null,
       dataset: key ? {help: key} : null}, text || icon('info'));
-    let panel = null, pinned = false, timer = null, returning = false;
+    let panel = null, pinned = false, timer = null, returning = false, stopWatch = null;
     const position = () => {
       if (!panel) return;
       const r = button.getBoundingClientRect();
@@ -757,12 +758,11 @@
       button.removeAttribute('aria-controls');
       button.removeAttribute('aria-describedby');
       old.remove();
-      window.removeEventListener('resize', position);
-      window.removeEventListener('scroll', position, true);
+      if (stopWatch) { stopWatch(); stopWatch = null; }
       if (activeHelp && activeHelp.button === button) activeHelp = null;
       if ((restore || inside) && button.isConnected) {
         returning = true;
-        button.focus({preventScroll: true});
+        HFPopClose.focus(button);
         returning = false;
       }
     };
@@ -786,8 +786,8 @@
       panel.addEventListener('pointerleave', () => { if (!pinned && document.activeElement !== button) timer = setTimeout(close, 150); });
       panel.showPopover();
       position();
-      window.addEventListener('resize', position);
-      window.addEventListener('scroll', position, true);
+      // the panel is placed once: when the page scrolls or resizes under it, it closes (popclose.js) instead of drifting
+      stopWatch = HFPopClose.watch({root: panel, trigger: button, close: (restore) => close(restore && long)});
       if (long) panel.querySelector('button').focus({preventScroll: true});
     };
     button.addEventListener('click', (e) => { e.stopPropagation(); if (panel && pinned) close(); else open(true); });
@@ -2072,7 +2072,7 @@
 
   async function ensureCategories() {
     if (!S.categories) S.categories = await api('/api/categories');
-    for (const c of S.categories) CATMETA.set(c.name, {icon: c.icon, rgb: c.rgb, group: c.group});
+    for (const c of S.categories) CATMETA.set(c.name, {icon: c.icon, rgb: HOOKS.catRgb(c), group: c.group});
     return S.categories;
   }
   // v23: after a category write, drop the cached list and tell the pickers' own caches to refetch on their next open.
@@ -2351,31 +2351,30 @@
           opt('pencil', RGB.warn, 'Add manually', "Loans, cards and accounts Plaid can't reach", () => openAdd('manual')),
           HOOKS.addOptions.map((f) => f()))]);
     } else if (step === 'choose') {
-      // Approved D1: the chooser. The Plaid slot meter lives in the Plaid card now, so a full Plaid install can still
-      // pick SimpleFIN.
-      const list = (title, iconName, items) => h('div', {class: `way-${iconName}`}, h('h4', {}, icon(iconName === 'pro' ? 'check' : 'alert'), title),
+      // Both cards are the same four rows (head, strengths, drawbacks, button), so a grid with subgrid lines the
+      // sections up. The Plaid slot meter is not here: it lives in Settings -> Connections. Only when no Plaid
+      // connection is left, one line above the cards says so and the Plaid button is off; SimpleFIN stays open.
+      const list = (kind, title, iconName, items) => h('div', {class: `way-${kind}`}, h('h4', {}, icon(iconName), title),
         h('ul', {}, items.map((t) => h('li', {}, t))));
-      const way = (title, text, strengths, drawbacks, footer, onContinue) => h('div', {class: 'way'},
+      const way = (title, text, strengths, drawbacks, onContinue, off) => h('div', {class: 'way'},
         h('div', {class: 'way-h'}, title.kind === 'plaid' ? ia('Plaid', 'l', null, 'ins_hf_plaid') : ia('SimpleFIN', 'l', null, 'ins_hf_simplefin'),
           h('span', {class: 'grow'}, h('b', {}, title.name), h('span', {}, text))),
-        h('div', {class: 'way-pc'}, list('Strengths', 'pro', strengths), list('Drawbacks', 'con', drawbacks)),
-        footer, h('button', {class: 'btn w', type: 'button', onclick: onContinue}, `Continue with ${title.name}`));
-      const plaidFooter = h('div', {class: 'way-slot'}, h('div', {class: 'slotm'}, `${used} of ${limit} used`,
-        h('span', {class: 'meter'}, h('i', {style: {width: pct(used / limit)}}))));
+        list('pro', 'Strengths', 'check', strengths), list('con', 'Drawbacks', 'alert', drawbacks),
+        h('button', {class: 'btn w', type: 'button', onclick: onContinue, disabled: off || null,
+          'aria-describedby': off ? 'way-full-note' : null}, `Continue with ${title.name}`));
       openSheet([
         h('div', {class: 'shd'}, backBtn(() => openAdd('home')), h('h2', {id: 'sheet-title'}, 'Link a bank or card'), closeBtn()),
-        h('p', {}, 'Both end in the same place: your accounts, balances and transactions. Pick how this bank connects. '
-          + 'You can use both side by side.'),
-        h('div', {class: 'ways'}, way({kind: 'plaid', name: 'Plaid'}, 'Sign in at your bank in a secure Plaid window.',
-          ['Covers most US banks, cards and brokerages', 'Balances and transactions sync every day, plus Refresh on demand',
-            'Your bank password never touches this app'],
-          [`Your install has a limit of ${limit} Plaid connections`, "Removing a bank doesn't free its slot",
-            'Needs your Plaid keys in secrets.env'], plaidFooter, () => openAdd('plaid')),
-          way({kind: 'simplefin', name: 'SimpleFIN'}, 'Create a setup token at SimpleFIN Bridge and paste it here.',
-            ['Uses no Plaid slot and needs no Plaid keys', 'Works through your own Bridge account, read-only',
-              'An account you already sync through Plaid is skipped, not doubled'],
-            ['Bridge is a paid service with its own sign-up', 'Bridge allows 24 requests a day, shared by the daily sync and Sync now',
-              'You confirm each account type once, because Bridge only guesses it'], null, () => openAdd('simplefin')))], {cls: 'wide'});
+        h('p', {}, 'Pick how this bank connects. You can use both.'),
+        full ? h('div', {class: 'way-full', id: 'way-full-note', role: 'status'}, icon('alert'),
+          h('span', {}, "Plaid is full. SimpleFIN doesn't use a Plaid connection.")) : null,
+        h('div', {class: 'ways'}, way({kind: 'plaid', name: 'Plaid'}, 'Sign in at your bank in a Plaid window',
+          ['Most US banks, cards and brokerages', 'Syncs daily, plus Refresh on demand', 'Your bank password stays with Plaid'],
+          ['Limited connections per install', "Removing a bank doesn't free one", 'Needs your Plaid keys'],
+          () => openAdd('plaid'), full),
+          way({kind: 'simplefin', name: 'SimpleFIN'}, 'Paste a setup token from SimpleFIN Bridge',
+            ['No Plaid connection or keys needed', 'Read-only, through your Bridge account', 'Accounts already on Plaid are skipped'],
+            ['Bridge is a paid service', '24 requests a day, shared with Sync now', 'You confirm each account type once'],
+            () => openAdd('simplefin')))], {cls: 'wide'});
     } else if (step === 'plaid') {
       // Duplicate guard that actually saves the slot: Plaid creates the Item the moment its login finishes, and Link's
       // SELECT_INSTITUTION event only reaches us at the end of the flow, so nothing inside Link can stop it in time.
@@ -3400,10 +3399,11 @@
   let windowPicker = null;
   function closeTxWindow() {
     if (!windowPicker) return;
-    const {root, scrim} = windowPicker;
+    const {root, scrim, stop} = windowPicker;
+    stop();
     root.remove(); scrim.remove(); windowPicker = null;
     $('monl').setAttribute('aria-expanded', 'false');
-    $('monl').focus();
+    HFPopClose.focus($('monl'));   // (without moving the page)
   }
   function renderTxWindowControl() {
     const tx = S.page === 'transactions';
@@ -3488,7 +3488,8 @@
     root.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeTxWindow(); } else trapFocus(e, root); });
     const scrim = h('div', {class: 'rgscrim', onclick: closeTxWindow});
     document.body.append(scrim, root);
-    windowPicker = {root, scrim};
+    // placed once under the button: the page scrolling or resizing under it closes it (popclose.js)
+    windowPicker = {root, scrim, stop: HFPopClose.watch({root, trigger: () => $('monl'), close: closeTxWindow})};
     $('monl').setAttribute('aria-expanded', 'true');
     drawMonths(); root.focus();
   }

@@ -58,10 +58,17 @@ def test_the_env_override_wins_when_it_is_an_absolute_executable_file(stub):
     assert clibrain.executable("codex") == stub.codex.path
 
 
+def no_install_anywhere(monkeypatch, tmp_path):
+    """Neither PATH nor the well-known folders (an empty home, no system dirs) hold a CLI: this machine's own don't leak in."""
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    monkeypatch.setattr(clibrain, "SYSTEM_DIRS", ())
+
+
 def test_a_relative_or_non_executable_override_is_ignored(stub, tmp_path, monkeypatch):
     empty = tmp_path / "empty-path"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
+    no_install_anywhere(monkeypatch, tmp_path)
     monkeypatch.setenv("FINANCE_CLAUDE_BIN", "claude")                       # relative
     assert clibrain.executable("claude") is None
     plain = tmp_path / "not-exec"
@@ -137,7 +144,7 @@ def test_the_claude_turn_is_the_exact_lockdown_and_the_prompt_goes_on_stdin(stub
     assert {"HOME", "PATH"} <= names
     assert not {n for n in names if n.startswith(("ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_"))}
     assert not {n for n in names if "PROXY" in n.upper()}
-    assert run["environ"]["PATH"] == clibrain.PATH
+    assert run["environ"]["PATH"] == f"{stub.claude.path.parent}:{clibrain.PATH}"   # its own folder first, nothing else
     assert run["environ"]["TERM"] == "dumb" and run["environ"]["NO_COLOR"] == "1"
 
 
@@ -454,7 +461,7 @@ def test_a_signal_to_the_server_kills_the_child_group_and_removes_its_dir(stub, 
 
 # --- the stored isolation check --------------------------------------------------------------------------------------
 
-def test_ready_reports_the_one_code_a_turn_must_raise(stub, conn, monkeypatch):
+def test_ready_reports_the_one_code_a_turn_must_raise(stub, conn, monkeypatch, tmp_path):
     exe, why = clibrain.ready(conn, "claude")
     assert (exe, why) == (stub.claude.path, "not_checked") and stub.claude.records("probe") == []
     clibrain.save_check(conn, "claude", "2.1.286", False, "it used a tool")
@@ -468,6 +475,7 @@ def test_ready_reports_the_one_code_a_turn_must_raise(stub, conn, monkeypatch):
     monkeypatch.delenv(clibrain.OFF_ENV)
     monkeypatch.setenv("PATH", str(stub.root / "nowhere"))
     monkeypatch.delenv("FINANCE_CLAUDE_BIN")
+    no_install_anywhere(monkeypatch, tmp_path)
     assert clibrain.ready(conn, "claude") == (None, "missing")
 
 

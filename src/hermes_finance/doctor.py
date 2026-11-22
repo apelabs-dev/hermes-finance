@@ -147,7 +147,7 @@ def ai(conn: sqlite3.Connection, values: dict[str, str]) -> Check:
     if b["mode"] == "cli":
         cli_id, name = b["cli"], clibrain.CLIS[b["cli"]]["name"]
         env = clibrain.CLIS[cli_id]["env"]
-        if clibrain.executable(cli_id) is None:
+        if clibrain.executable(cli_id, conn) is None:
             return Check("ai", "missing", f"ai.mode is cli but {name} wasn't found ({env}, else its command on PATH)",
                          keys, [env])
         _exe, why = clibrain.ready(conn, cli_id)

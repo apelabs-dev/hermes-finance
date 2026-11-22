@@ -36,8 +36,11 @@ NAME_MAX = 60
 CHART_SETTING = "chart_excluded_categories"
 HIDE_ADDED_SETTING = "categories.hide_added_chart"   # the chart exclusions hiding added (unhide removes only these)
 
-CATEGORY_ROWS = ("SELECT c.id, c.name, c.is_income, c.is_transfer, c.monthly_cap, c.icon, c.is_builtin, c.is_hidden, "
-                 "g.name AS grp, g.rgb FROM categories c LEFT JOIN category_groups g ON g.id = c.group_id")
+COLOURS = caticons.COLOURS                          # the eight swatches the goal picker uses (categories.colour)
+UNSET = object()                                    # update(): "colour" not given, as against None (clear it)
+
+CATEGORY_ROWS = ("SELECT c.id, c.name, c.is_income, c.is_transfer, c.monthly_cap, c.icon, c.colour, c.is_builtin, "
+                 "c.is_hidden, g.name AS grp, g.rgb FROM categories c LEFT JOIN category_groups g ON g.id = c.group_id")
 
 
 class CategoryError(RuntimeError):
@@ -81,6 +84,29 @@ def _icon(value: Any) -> str:
     return value
 
 
+def _colour(value: Any) -> str | None:
+    """None (follow the group) or one of the eight swatches, matched case-insensitively and kept as the swatch."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        for swatch in COLOURS:
+            if swatch == value.casefold():
+                return swatch
+    raise CategoryError("Pick a colour from the list.", field="colour")
+
+
+def effective_colour(colour: str | None, rgb: str | None) -> str | None:
+    """What the icon is drawn in: the override, else its group's colour as #rrggbb; None for Income and Transfers
+    (no group) with no override."""
+    if colour:
+        return colour
+    try:
+        r, g, b = (int(part) for part in (rgb or "").split(","))
+    except ValueError:
+        return None
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def _row(conn: sqlite3.Connection, name: Any) -> sqlite3.Row:
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > NAME_MAX:
         raise CategoryError("category is required", field="name")
@@ -94,7 +120,8 @@ def _json(r: sqlite3.Row) -> dict[str, Any]:
     return {"name": r["name"], "is_income": bool(r["is_income"]), "is_transfer": bool(r["is_transfer"]),
             "spending": not (r["is_income"] or r["is_transfer"]), "monthly_cap": r["monthly_cap"],
             "group": r["grp"], "icon": r["icon"], "rgb": r["rgb"], "built_in": bool(r["is_builtin"]),
-            "hidden": bool(r["is_hidden"])}
+            "hidden": bool(r["is_hidden"]), "colour": r["colour"],
+            "effective_colour": effective_colour(r["colour"], r["rgb"])}
 
 
 def _builtin(row: sqlite3.Row, verb: str) -> None:
@@ -112,15 +139,16 @@ def _unique(conn: sqlite3.Connection, name: str, exclude_id: int | None = None) 
 
 # --- writes (the *_locked helpers run inside their caller's transaction) ----------------------------------------------
 
-def _create_locked(conn: sqlite3.Connection, name: Any, group: Any, icon: Any) -> sqlite3.Row:
+def _create_locked(conn: sqlite3.Connection, name: Any, group: Any, icon: Any, colour: Any = None) -> sqlite3.Row:
     clean = _name(name)
     group = _group(group, "Misc")
     icon = _icon(icon) if icon is not None else GROUP_ICON[group]
+    colour = _colour(colour)
     _unique(conn, clean)
     try:
-        cur = conn.execute("INSERT INTO categories (name, is_income, is_transfer, group_id, icon, sort) "
-                           "VALUES (?, 0, 0, (SELECT id FROM category_groups WHERE name = ?), ?, NULL)",
-                           (clean, group, icon))
+        cur = conn.execute("INSERT INTO categories (name, is_income, is_transfer, group_id, icon, colour, sort) "
+                           "VALUES (?, 0, 0, (SELECT id FROM category_groups WHERE name = ?), ?, ?, NULL)",
+                           (clean, group, icon, colour))
     except sqlite3.IntegrityError:
         raise CategoryError(f"There's already a category called {clean}.", field="name") from None
     conn.execute("UPDATE categories SET sort = ? WHERE id = ?", (1000 + cur.lastrowid, cur.lastrowid))
@@ -146,6 +174,11 @@ def _icon_locked(conn: sqlite3.Connection, row: sqlite3.Row, icon: Any) -> sqlit
     return conn.execute(f"{CATEGORY_ROWS} WHERE c.id = ?", (row["id"],)).fetchone()
 
 
+def _colour_locked(conn: sqlite3.Connection, row: sqlite3.Row, colour: Any) -> sqlite3.Row:
+    conn.execute("UPDATE categories SET colour = ? WHERE id = ?", (_colour(colour), row["id"]))
+    return conn.execute(f"{CATEGORY_ROWS} WHERE c.id = ?", (row["id"],)).fetchone()
+
+
 def _hide_locked(conn: sqlite3.Connection, row: sqlite3.Row, hidden: Any) -> sqlite3.Row:
     if not isinstance(hidden, bool):
         raise CategoryError("hidden must be true or false", field="hidden")
@@ -166,11 +199,13 @@ def _move_locked(conn: sqlite3.Connection, row: sqlite3.Row, group: Any) -> sqli
     return conn.execute(f"{CATEGORY_ROWS} WHERE c.id = ?", (row["id"],)).fetchone()
 
 
-def create(conn: sqlite3.Connection, name: Any, group: Any = None, icon: Any = None) -> dict[str, Any]:
+def create(conn: sqlite3.Connection, name: Any, group: Any = None, icon: Any = None,
+           colour: Any = None) -> dict[str, Any]:
     """A new spending category (is_income / is_transfer 0), in `group` (Misc by default) and with `icon` (its group's
-    fallback by default); sort 1000 + id, after the taxonomy, as the picker's hand-made ones always were."""
+    fallback by default); sort 1000 + id, after the taxonomy, as the picker's hand-made ones always were. `colour`: one
+    of the eight swatches, or None to follow the group."""
     with conn:
-        return _json(_create_locked(conn, name, group, icon))
+        return _json(_create_locked(conn, name, group, icon, colour))
 
 
 def rename(conn: sqlite3.Connection, name: Any, new_name: Any) -> dict[str, Any]:
@@ -184,6 +219,12 @@ def set_icon(conn: sqlite3.Connection, name: Any, icon: Any) -> dict[str, Any]:
     """A new icon for any category, built-in or user (Income and Transfers included)."""
     with conn:
         return _json(_icon_locked(conn, _row(conn, name), icon))
+
+
+def set_colour(conn: sqlite3.Connection, name: Any, colour: Any) -> dict[str, Any]:
+    """A swatch for any category's icon (built-in or user), or None to follow its group again."""
+    with conn:
+        return _json(_colour_locked(conn, _row(conn, name), colour))
 
 
 def set_hidden(conn: sqlite3.Connection, name: Any, hidden: bool) -> dict[str, Any]:
@@ -201,14 +242,17 @@ def move(conn: sqlite3.Connection, name: Any, group: Any) -> dict[str, Any]:
 
 
 def update(conn: sqlite3.Connection, name: Any, rename_to: Any = None, icon: Any = None, hidden: Any = None,
-           group: Any = None) -> dict[str, Any]:
-    """Only what is given changes, in one transaction (rename first, so the other steps use the new name)."""
+           group: Any = None, colour: Any = UNSET) -> dict[str, Any]:
+    """Only what is given changes, in one transaction (rename first, so the other steps use the new name). `colour`
+    is the one field where None is a value: it clears the override (the icon follows its group)."""
     with conn:
         row = _row(conn, name)
         if rename_to is not None:
             row = _rename_locked(conn, row, rename_to)
         if icon is not None:
             row = _icon_locked(conn, row, icon)
+        if colour is not UNSET:
+            row = _colour_locked(conn, row, colour)
         if hidden is not None:
             row = _hide_locked(conn, row, hidden)
         if group is not None:
@@ -467,6 +511,7 @@ def payload(conn: sqlite3.Connection, today: date | None = None) -> dict[str, An
         (groups[item["group"]]["categories"] if item["group"] in groups else ungrouped).append(item)
     hidden = [c["name"] for c in flat if c["hidden"]]
     return {"month": month,
+            "colours": list(COLOURS),
             "groups": [{"name": g["name"], "rgb": g["rgb"], "categories": g["categories"]} for g in groups.values()]
                       + ([{"name": "Income & transfers", "rgb": None, "categories": ungrouped}] if ungrouped else []),
             "ungrouped": ungrouped,

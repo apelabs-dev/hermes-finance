@@ -296,10 +296,11 @@ def test_the_api_gives_the_groups_and_each_categorys_group(conn, client):
     assert [c["name"] for c in tree["ungrouped"]] == ["Income", "Transfers"]
     coffee = tree["groups"][1]["categories"][2]
     assert coffee == {"name": "Coffee", "is_income": False, "is_transfer": False, "spending": True, "monthly_cap": None,
-                      "group": "Food", "icon": "coffee", "rgb": "245,180,84", "built_in": True, "hidden": False}
+                      "group": "Food", "icon": "coffee", "rgb": "245,180,84", "built_in": True, "hidden": False,
+                      "colour": None, "effective_colour": "#f5b454"}
     assert tree["ungrouped"][0] == {"name": "Income", "is_income": True, "is_transfer": False, "spending": False,
                                     "monthly_cap": None, "group": None, "icon": "arrow-down-left", "rgb": None,
-                                    "built_in": True, "hidden": False}
+                                    "built_in": True, "hidden": False, "colour": None, "effective_colour": None}
     flat = http_get(app, "/api/categories")
     assert [c["name"] for c in flat] == sorted(SPENDING + ["Income", "Transfers", "Kids"])
     assert {c["name"]: c for c in flat}["Coffee"] == coffee

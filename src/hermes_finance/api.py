@@ -717,15 +717,16 @@ def match_preview(conn: sqlite3.Connection, params: dict[str, str], today: date)
                                            "applied_to")} for t in found[:12]]}
 
 
-CATEGORY_ROWS = ("SELECT c.name, c.is_income, c.is_transfer, c.monthly_cap, c.icon, c.is_builtin, c.is_hidden, "
-                 "g.name AS grp, g.rgb FROM categories c LEFT JOIN category_groups g ON g.id = c.group_id")
+CATEGORY_ROWS = ("SELECT c.name, c.is_income, c.is_transfer, c.monthly_cap, c.icon, c.colour, c.is_builtin, "
+                 "c.is_hidden, g.name AS grp, g.rgb FROM categories c LEFT JOIN category_groups g ON g.id = c.group_id")
 
 
 def _category(r: sqlite3.Row) -> dict[str, Any]:
     return {"name": r["name"], "is_income": bool(r["is_income"]), "is_transfer": bool(r["is_transfer"]),
             "spending": not (r["is_income"] or r["is_transfer"]), "monthly_cap": r["monthly_cap"],
             "group": r["grp"], "icon": r["icon"], "rgb": r["rgb"],   # v16: group / rgb None for Income and Transfers
-            "built_in": bool(r["is_builtin"]), "hidden": bool(r["is_hidden"])}   # v23
+            "built_in": bool(r["is_builtin"]), "hidden": bool(r["is_hidden"]),   # v23
+            "colour": r["colour"], "effective_colour": catops.effective_colour(r["colour"], r["rgb"])}   # v24
 
 
 def categories(conn: sqlite3.Connection, params: dict[str, str] | None = None,
@@ -956,14 +957,18 @@ def _category_call(fn, *args, **kw) -> dict[str, Any]:
 
 
 def create_category(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
-    """{name, group?, icon?}: a new user spending category."""
-    return _category_call(catops.create, conn, data.get("name"), data.get("group"), data.get("icon"))
+    """{name, group?, icon?, colour?}: a new user spending category (colour: one of the eight swatches, else it follows
+    its group)."""
+    return _category_call(catops.create, conn, data.get("name"), data.get("group"), data.get("icon"),
+                          data.get("colour"))
 
 
 def update_category(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
-    """{name, rename?, icon?, hidden?, group?}: only what is given changes, in one transaction."""
+    """{name, rename?, icon?, hidden?, group?, colour?}: only what is given changes, in one transaction. colour: a
+    swatch, or null to follow the group again."""
     return _category_call(catops.update, conn, data.get("name"), data.get("rename"), data.get("icon"),
-                          data.get("hidden"), data.get("group"))
+                          data.get("hidden"), data.get("group"),
+                          data["colour"] if "colour" in data else catops.UNSET)
 
 
 def delete_category(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:

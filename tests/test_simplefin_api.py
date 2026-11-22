@@ -291,3 +291,21 @@ def test_the_cli_status_and_claim(conn, data_dir, monkeypatch, capsys):
     assert cli.main(["simplefin", "status", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["state"] == "connected" and payload["requests_today"] == 5
+
+
+PLAIN_UNREACHABLE = "Couldn't reach SimpleFIN. Nothing changed; try again in a minute."
+
+
+def test_a_blocked_claim_says_it_in_plain_words_without_an_exception_name(app, monkeypatch):
+    import urllib.error
+
+    def blocked(*a, **k):
+        raise urllib.error.URLError("unreachable")
+
+    monkeypatch.setattr(simplefin, "urllib_transport", blocked)
+    monkeypatch.setattr(simplefin.socket, "getaddrinfo", PUBLIC)
+    st, body, raw = call(app, "POST", "/api/simplefin/claim", {"token": TOKEN})
+    assert st == 502
+    assert body["error"] == PLAIN_UNREACHABLE
+    assert "URLError" not in raw and "Error" not in body["error"]
+    assert secretstore.simplefin_url() is None

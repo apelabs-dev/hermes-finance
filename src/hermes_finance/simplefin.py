@@ -48,6 +48,8 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9+/_-]+={0,2}\Z")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 URL_RE = re.compile(r"(?:https?|ftp)://\S+|www\.\S+", re.IGNORECASE)
 # Bridge answers 403 for a token it never issued and for one already claimed, so the copy has to be true for both.
+# One plain sentence for every way the Bridge can't be reached (claim, fetch, a dropped answer): never an exception name.
+UNREACHABLE = "Couldn't reach SimpleFIN. Nothing changed; try again in a minute."
 CLAIM_403 = ("SimpleFIN Bridge didn't accept this token. It may be mistyped or already used: create a new one at "
              "SimpleFIN Bridge.")
 REVOKED = ("SimpleFIN stopped accepting this access link, so it was revoked or expired. Balances stay as of the last "
@@ -308,7 +310,7 @@ def urllib_transport(method: str, url: str, headers: dict, body: bytes | None, t
             raw = raw[:MAX_CLAIM_BYTES]
         return Response(e.code, raw)
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, ValueError) as e:
-        raise TransportError(f"Couldn't reach SimpleFIN ({type(e).__name__}).") from None
+        raise TransportError(UNREACHABLE) from None
     with resp:
         status = getattr(resp, "status", 0) or 0
         length = (resp.headers.get("Content-Length") or "").strip()
@@ -317,7 +319,7 @@ def urllib_transport(method: str, url: str, headers: dict, body: bytes | None, t
         try:
             raw = resp.read(MAX_RESPONSE_BYTES + 1)
         except (OSError, ValueError) as e:
-            raise TransportError(f"Couldn't read SimpleFIN's answer ({type(e).__name__}).") from None
+            raise TransportError(UNREACHABLE) from None
         if len(raw) > MAX_RESPONSE_BYTES:
             raise SimpleFinError("SimpleFIN returned too much data.")
         return Response(status, raw)
@@ -337,7 +339,7 @@ def claim(token: Any, transport: Transport | None = None, timeout: float = DEFAU
     except SimpleFinError:
         raise
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, ValueError) as e:
-        raise TransportError(f"Couldn't reach SimpleFIN Bridge ({type(e).__name__}).") from None
+        raise TransportError(UNREACHABLE) from None
     status = getattr(response, "status", 0)
     if status in (301, 302, 303, 307, 308):
         raise SimpleFinError("SimpleFIN's claim endpoint redirected; refusing to follow it.")
@@ -556,7 +558,7 @@ class Client:
         except SimpleFinError:
             raise
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, ValueError) as e:
-            raise TransportError(f"Couldn't reach SimpleFIN ({type(e).__name__}).") from None
+            raise TransportError(UNREACHABLE) from None
         status = getattr(response, "status", 0)
         body = getattr(response, "body", b"") or b""
         if len(body) > MAX_RESPONSE_BYTES:

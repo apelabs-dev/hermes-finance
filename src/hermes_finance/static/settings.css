@@ -208,7 +208,9 @@ table.map { width: 100%; border-collapse: collapse; font-size: 14px; }
 .impdone .ring .rin > svg { width: 26px; height: 26px; color: var(--ok); }
 .impdone b { display: block; font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
 .impdone span { font-size: 14px; color: var(--mut); }
-.sheet.wide { width: min(720px, 96vw); }
+/* wide sheets: 720px on a desktop only. At 1023px and below every sheet is the full-width bottom sheet (app.css), and this
+   rule used to beat that one for just the wide ones (the link, token, confirm and import sheets sat 16px short). */
+@media (min-width: 1024px) { .sheet.wide { width: min(720px, 96vw); } }
 
 /* ---- light theme: these screens' own colours ---- */
 :root[data-theme=light] .snav.sfoot { border-top-color: var(--line); }
@@ -309,8 +311,30 @@ table.map { width: 100%; border-collapse: collapse; font-size: 14px; }
 .rrow.confirm.catask .pairc { display: flex; flex: none; align-items: center; gap: 8px; flex-wrap: nowrap; justify-content: flex-end; }
 .rrow.confirm.catask .selv { flex: 0 1 200px; min-width: 0; }
 .catsheet .fld { margin-top: 12px; }
+/* B3: the Group select is one plain control like Name: full width, 48px, the same radius and size (no box around a select) */
+.catsheet select.selv { display: block; width: 100%; height: 48px; border-radius: 12px; padding: 0 38px 0 14px; font-size: 15.5px;
+  color: var(--fg); background-position: calc(100% - 20px) 21px, calc(100% - 15px) 21px;
+  /* 48px is already past the 44px hit area, so tap.css's phone trick (transparent 4px borders, an inset-shadow line and
+     negative margins on select.selv) is switched off here: the line is a real 1px border at every width */
+  border: 1px solid var(--line2); box-shadow: none; margin: 0; background-clip: border-box; }
+.catsheet select.selv:focus-visible { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px rgba(142, 168, 255, .18); }
+.catsheet select.selv:disabled { opacity: .6; cursor: default; }
 @media (max-width: 1023.98px) {
   .cats .rrow .grow > .rpat b { white-space: normal; overflow-wrap: anywhere; }
   .rrow.confirm.catask { padding: 10px 12px; flex-wrap: wrap; }
   .rrow.confirm.catask .pairc { flex: 1 1 100%; flex-wrap: wrap; }
+}
+
+/* AI provider -> CLI: the not-found path box and the signed-out login command */
+.inp.fx.path { width: 300px; }
+.srow .grow > span.ferr { color: #ffa3a3; margin-top: 4px; }
+:root[data-theme=light] .srow .grow > span.ferr { color: #a82424; }
+.srow .grow > span.ferr:empty { display: none; }
+.clicmd { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 12px; border-radius: 10px; background: #0e1118;
+  border: 1px solid var(--line2); color: var(--fg); white-space: nowrap; user-select: all; }
+:root[data-theme=light] .clicmd { background: #f7f8fb; }
+@media (max-width: 751.98px) {
+  .clipath .pairc, .clisign .pairc { flex: 1 1 100%; flex-wrap: nowrap; }
+  .clipath .inp.fx.path { flex: 1 1 auto; width: auto; min-width: 0; }
+  .clisign .pairc { flex-wrap: wrap; }
 }

@@ -14,9 +14,9 @@ import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config
+from . import caticons, config
 
-SCHEMA_VERSION = 23  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
+SCHEMA_VERSION = 24  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
                      # 4: manual_accounts, manual_balance_history, loan_payments, holding_snapshots;
                      # 5: institutions, security_logos; 6: settings;
                      # 7: manual_accounts vin..value_source, asset_valuations, vin_decodes, api_usage, api_calls;
@@ -52,6 +52,8 @@ SCHEMA_VERSION = 23  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_revie
                      #    never overwritten. No FX: amounts and codes are preserved (_v22_currency)
                      # 23 (categories): categories.is_builtin / categories.is_hidden, the 36 seeded rows marked built-in
                      #    (after v22 Currency; this step depends on nothing it adds)
+                     # 24 (category colour): categories.colour (ADDED_COLUMNS), NULL = the icon follows its group, else
+                     #    one of the eight swatches (caticons.COLOURS); _v24_schema keeps only those eight
 
 # Estimated values of manual vehicles (the Carfax trade-in) and properties (the Redfin Estimate): one row per successful
 # lookup, never updated. Rows 'marketcheck' / 'rentcast' (before TASK-13b) stay as history, never shown or used.
@@ -877,6 +879,7 @@ ADDED_COLUMNS = [
     ("manual_accounts", "currency", "TEXT"),                                         # v22 (multi-currency)
     ("categories", "is_builtin", "INTEGER NOT NULL DEFAULT 0"),                     # v23 (categories)
     ("categories", "is_hidden", "INTEGER NOT NULL DEFAULT 0"),                      # v23 (categories)
+    ("categories", "colour", "TEXT"),                                               # v24: NULL = follow the group
 ]
 
 # v23 (categories): the 36 seeded rows, by name, are built-ins (catops.py's built-in guard reads this).
@@ -892,6 +895,15 @@ def _v23_schema(conn: sqlite3.Connection) -> None:
     marks = ", ".join("?" for _ in BUILTIN_CATEGORY_NAMES)
     conn.execute(f"UPDATE categories SET is_builtin = 1 WHERE is_builtin = 0 AND name IN ({marks})",
                  BUILTIN_CATEGORY_NAMES)
+
+
+def _v24_schema(conn: sqlite3.Connection) -> None:
+    """v23 -> v24 (category colour): the column itself comes from ADDED_COLUMNS (NULL on every existing row: the icon
+    follows its group). This step keeps only values the eight swatches allow and reads anything else as NULL; on a
+    column the upgrade just made that is no row, and a rerun changes nothing."""
+    marks = ", ".join("?" for _ in caticons.COLOURS)
+    conn.execute(f"UPDATE categories SET colour = NULL WHERE colour IS NOT NULL AND colour NOT IN ({marks})",
+                 caticons.COLOURS)
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
@@ -939,6 +951,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             _v19_schema(conn)
         if before < 23:   # after the seeded rows are in and after v19's renames: the 36 of them exist, by their names
             _v23_schema(conn)
+        if before < 24:   # the column was added above; only a stray value needs reading as NULL
+            _v24_schema(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

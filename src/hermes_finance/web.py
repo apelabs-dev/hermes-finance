@@ -92,10 +92,12 @@ STATIC_FILES = {
 FEATURE_FILES = ("iconpick", "goals", "txmeta", "billcal", "rollover", "alpaca", "bills",   # + TASK-21's bills (tracked by hand)
                  "chat",                                                          # + TASK-23's Ask panel
                  "catpick",                                                       # + polish P0's category picker
+                 "catcolour",                                                     # + B3's per-category icon colour (schema v24)
                  "txfilter",                                                       # + polish P1's Transactions filters
                  "wherewent",                                                      # + polish P2b's grouped spending card
                  "simplefin",                                                      # + v21's SimpleFIN chooser and sheets
                  "budgets")                                                        # + polish P2A's grouped Budgets (last)
+STATIC_FILES["popclose.js"] = "text/javascript; charset=utf-8"   # B2: one close-on-scroll rule for every popover (no CSS)
 STATIC_FILES.update({f"{n}.js": "text/javascript; charset=utf-8" for n in FEATURE_FILES})
 STATIC_FILES.update({f"{n}.css": "text/css; charset=utf-8" for n in FEATURE_FILES})
 # Root paths browsers ask for on their own -> the static file they get.
@@ -884,6 +886,7 @@ def render_page(s: dict[str, Any], tailnet: bool = False, shell: dict[str, Any] 
 <script src="/static/settings.js" defer></script>
 <script src="/static/setup.js" defer></script>
 <script src="/static/import.js" defer></script>
+<script src="/static/popclose.js" defer></script>
 {''.join(f'<script src="/static/{n}.js" defer></script>' for n in FEATURE_FILES)}
 <script src="/static/app.js" defer></script>
 </head>

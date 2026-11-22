@@ -122,7 +122,7 @@ def test_read_only_connection_never_upgrades_a_v21_database(data_dir):
     try:
         tooldefs.read_connection(path)
     except tooldefs.ToolError as e:
-        assert "schema v21" in str(e) and "v23" in str(e)
+        assert "schema v21" in str(e) and f"v{db.SCHEMA_VERSION}" in str(e)
     else:
         raise AssertionError("a read-only tool connection must refuse an old database, never upgrade it")
     assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 21

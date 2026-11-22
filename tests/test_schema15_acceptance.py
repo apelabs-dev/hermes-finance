@@ -81,6 +81,8 @@ V16_COLUMNS = {("categories", "group_id"): ("INTEGER", 0, None), ("categories", 
 V17_COLUMNS = {("goals", "icon"): ("TEXT", 0, None), ("goals", "colour"): ("TEXT", 0, None)}
 # v23 (categories): two flags at their 0 default; is_builtin is then set for the 36 seeded rows by the step.
 V23_COLUMNS = {("categories", "is_builtin"): ("INTEGER", 1, "0"), ("categories", "is_hidden"): ("INTEGER", 1, "0")}
+# v24 (category colour): one nullable column, NULL on every row (the icon follows its group).
+V24_COLUMNS = {("categories", "colour"): ("TEXT", 0, None)}
 V16_FOREIGN_KEYS = {("category_groups", "group_id", "id", "NO ACTION", "NO ACTION", "NONE")}
 # and on to 18 (polish P2e): two new tables, empty (no group budget, no kept group)
 V18_OBJECTS = {("table", "group_budgets"), ("table", "group_budget_kept")}
@@ -334,7 +336,7 @@ def _assert_kept(before: dict, after: dict, lane: str, where: str = "after the u
             assert {c: now[c] for c in row if c not in moved and not (empty_ccy and c == "iso_currency")} == \
                 {c: v for c, v in kept.items() if not (empty_ccy and c == "iso_currency")}, \
                 f"{where}: {table} rowid {rowid}: an original value changed"
-            assert {c: v for c, v in now.items() if c not in row and (table, c) not in V16_COLUMNS | V17_COLUMNS | V23_COLUMNS} == added, \
+            assert {c: v for c, v in now.items() if c not in row and (table, c) not in V16_COLUMNS | V17_COLUMNS | V23_COLUMNS | V24_COLUMNS} == added, \
                 f"{where}: {table} rowid {rowid}: the columns 15 adds are not at their defaults"
 
 
@@ -356,7 +358,7 @@ def _assert_converged(conn: sqlite3.Connection, lane: str, before: dict, fresh: 
     assert parents.changes(before, after) == (ADDED_OBJECTS[lane] | V16_OBJECTS | V18_OBJECTS, set(),
                                               CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED
                                               | {("table", "categories"), ("table", "goals")})
-    columns = {**{k: v[:3] for k, v in ADDED_COLUMNS[lane].items()}, **V16_COLUMNS, **V17_COLUMNS, **V22_COLUMNS, **V23_COLUMNS}
+    columns = {**{k: v[:3] for k, v in ADDED_COLUMNS[lane].items()}, **V16_COLUMNS, **V17_COLUMNS, **V22_COLUMNS, **V23_COLUMNS, **V24_COLUMNS}
     for kind, table in CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED | {("table", "categories"), ("table", "goals")}:
         if kind != "table":
             continue

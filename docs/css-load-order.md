@@ -18,15 +18,16 @@ The app page (`web.render_page`):
 8. `bills.css`
 9. `chat.css`
 10. `catpick.css`
-11. `txfilter.css`
-12. `wherewent.css`
-13. `simplefin.css`
-14. `budgets.css`
-15. `settings.css`
-16. `light.css`
-17. `tap.css`
+11. `catcolour.css`
+12. `txfilter.css`
+13. `wherewent.css`
+14. `simplefin.css`
+15. `budgets.css`
+16. `settings.css`
+17. `light.css`
+18. `tap.css`
 
-Sheets 2 to 14 are the feature sheets, in `web.FEATURE_FILES` order. Each entry there also loads its `.js`, so a
+Sheets 2 to 15 are the feature sheets, in `web.FEATURE_FILES` order. Each entry there also loads its `.js`, so a
 feature sheet always comes with a script of the same name.
 
 The sign-in and first-run page: `app.css`, `settings.css`, `light.css`, `tap.css` (`web.render_login_page`; no feature sheet).

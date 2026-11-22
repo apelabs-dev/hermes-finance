@@ -28,7 +28,8 @@ absence of any tool item in the stream. Every turn also requires a stored, passi
 never a silent fallback to another brain.
 
 The child's command line is fixed (per CLI, below), no shell, its working directory a fresh empty temporary one, its
-environment only ENV_KEEP, a system PATH and plain output: no ANTHROPIC_*, CLAUDE_*, OPENAI_* or CODEX_* variable, no
+environment only ENV_KEEP, a system PATH (led by the executable's own folder, so an npm wrapper's `env node` runs; no
+other folder) and plain output: no ANTHROPIC_*, CLAUDE_*, OPENAI_* or CODEX_* variable, no
 proxy, no finance key or setting. It is alone in its own process group; its stdin and stdout are pipes and, for a
 normal turn, its stderr is never read (DEVNULL).
 
@@ -73,7 +74,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from . import bridge, db
+from . import bridge, db, prefs
 
 CLIS = {"claude": {"name": "Claude Code", "bin": "claude", "env": "FINANCE_CLAUDE_BIN"},
         "codex": {"name": "Codex", "bin": "codex", "env": "FINANCE_CODEX_BIN"}}
@@ -82,6 +83,10 @@ STATE_KEY = "ai.cli_check"         # a settings row (JSON), never a prefs key
 OFF_ENV = "HERMES_CLI_BRAINS"      # "off"/"0" -> executable() is None (tests and scripts set it)
 ENV_KEEP = ("HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR")
 PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+# Where an installed CLI usually lives when the service's own PATH (launchd's) doesn't list it. Searched after PATH, in
+# this order: ~/.local/bin, ~/.claude/local, SYSTEM_DIRS, then npm's global bin (see search_dirs).
+SYSTEM_DIRS = (Path("/opt/homebrew/bin"), Path("/usr/local/bin"))
+LOGIN_COMMANDS = {"claude": "claude auth login", "codex": "codex login"}
 MAX_OUT = 1 << 20                  # bytes of stdout read at most
 MAX_PROMPT = 200_000               # characters of the one prompt
 MIN_CALL = 5.0                     # seconds of the deadline needed to start a child
@@ -284,25 +289,80 @@ def off() -> bool:
     return os.environ.get(OFF_ENV, "").strip().lower() in ("off", "0", "false", "no")
 
 
-def executable(cli_id: str) -> Path | None:
-    """The executable to run: the CLI's env var (an absolute, executable file only), else the first on PATH; None when
-    the CLI brains are off."""
+def search_dirs() -> list[Path]:
+    """The install folders looked in after PATH (the single list: the lookup and the not-found copy both read it):
+    ~/.local/bin, ~/.claude/local, SYSTEM_DIRS, then npm's global bin, which is `$NPM_CONFIG_PREFIX/bin` when that is an
+    absolute path, else ~/.npm-global/bin (npm itself is never run). `~` is the real home of this process."""
+    home = Path.home()
+    prefix = (os.environ.get("NPM_CONFIG_PREFIX") or "").strip()
+    npm = Path(prefix) / "bin" if prefix and Path(prefix).is_absolute() else home / ".npm-global" / "bin"
+    out: list[Path] = []
+    for d in (home / ".local" / "bin", home / ".claude" / "local", *SYSTEM_DIRS, npm):
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def _usable(path: Path) -> bool:
+    """An absolute path to an existing, executable file (a directory, a relative name or a plain file never is)."""
+    try:
+        return path.is_absolute() and path.is_file() and os.access(path, os.X_OK)
+    except (OSError, ValueError):
+        return False
+
+
+def _on_path(binary: str) -> Path | None:
+    """The first usable `binary` on PATH. An empty or relative PATH entry means the working directory: never searched."""
+    for entry in (os.environ.get("PATH") or "").split(os.pathsep):
+        if entry and os.path.isabs(entry) and _usable(Path(entry) / binary):
+            return Path(entry) / binary
+    return None
+
+
+def saved_path(conn: sqlite3.Connection | None, cli_id: str) -> str:
+    """The path the owner saved in Settings, "" when none or when it no longer passes prefs' check (read as unset)."""
+    if conn is None or cli_id not in CLIS:
+        return ""
+    try:
+        return prefs.get(conn, f"ai.cli_path.{cli_id}")
+    except sqlite3.Error:
+        return ""
+
+
+def executable(cli_id: str, conn: sqlite3.Connection | None = None) -> Path | None:
+    """The executable to run, first match wins: the CLI's env var, the path the owner saved in Settings (given `conn`),
+    the first on PATH, then the well-known install folders (search_dirs). Each candidate must be an absolute, existing,
+    executable file. None when the CLI brains are off or nothing is found."""
     if off() or cli_id not in CLIS:
         return None
     configured = (os.environ.get(CLIS[cli_id]["env"]) or "").strip()
     if configured:
         exe = Path(configured).expanduser()
-        if exe.is_absolute() and exe.is_file() and os.access(exe, os.X_OK):
+        if _usable(exe):
             return exe
-    found = shutil.which(CLIS[cli_id]["bin"])
-    return Path(found) if found else None
+    saved = saved_path(conn, cli_id)
+    if saved and _usable(Path(saved)):
+        return Path(saved)
+    found = _on_path(CLIS[cli_id]["bin"])
+    if found is not None:
+        return found
+    for d in search_dirs():
+        if _usable(d / CLIS[cli_id]["bin"]):
+            return d / CLIS[cli_id]["bin"]
+    return None
 
 
-def child_env() -> dict[str, str]:
-    """The child's whole environment: ENV_KEEP as this process has them, a system PATH, plain output."""
+def child_env(exe_dir: Path | str | None = None) -> dict[str, str]:
+    """The child's whole environment: ENV_KEEP as this process has them, a system PATH, plain output. Given the
+    executable's own folder, that folder leads PATH (an npm wrapper's `#!/usr/bin/env node` finds the node beside it);
+    no other folder is ever added."""
     env = {k: os.environ[k] for k in ENV_KEEP if os.environ.get(k)}
-    env.update(PATH=PATH, TERM="dumb", NO_COLOR="1")
+    env.update(PATH=f"{exe_dir}:{PATH}" if exe_dir else PATH, TERM="dumb", NO_COLOR="1")
     return env
+
+
+def _dir_of(argv: list[Any]) -> Path:
+    return Path(str(argv[0])).parent
 
 
 def _probe(argv: list[str], timeout: float) -> tuple[str, int] | None:
@@ -310,7 +370,8 @@ def _probe(argv: list[str], timeout: float) -> tuple[str, int] | None:
     when it couldn't run or took longer than `timeout` (its group killed)."""
     try:
         proc = subprocess.Popen([str(a) for a in argv], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, env=child_env(), cwd="/", start_new_session=True)
+                                stderr=subprocess.STDOUT, env=child_env(_dir_of(argv)), cwd="/",
+                                start_new_session=True)
     except OSError:
         return None
     with _LIVE_LOCK:
@@ -354,15 +415,16 @@ def version(exe: Path) -> str | None:
     return value
 
 
-def installed(cli_id: str) -> dict[str, Any]:
+def installed(cli_id: str, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     """What the Settings page needs to show one CLI: where it is and which version, or that it wasn't found."""
-    exe = executable(cli_id)
+    exe = executable(cli_id, conn)
     return {"id": cli_id, "name": CLIS[cli_id]["name"], "path": str(exe) if exe is not None else None,
             "version": version(exe) if exe is not None else None, "found": exe is not None}
 
 
 def check_state(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
-    """{cli: {version, passed, at, reason, evidence}}: the stored isolation checks ({} when absent or malformed)."""
+    """{cli: {version, passed, at, reason, evidence, signed_out}}: the stored isolation checks ({} when absent or
+    malformed). signed_out marks a check attempt that failed with the auth error (an older row has none: False)."""
     try:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (STATE_KEY,)).fetchone()
         value = json.loads(row[0]) if row else {}
@@ -379,20 +441,36 @@ def check_state(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
                             "passed": entry.get("passed") is True,
                             "at": entry.get("at") if isinstance(entry.get("at"), str) else None,
                             "reason": reason if isinstance(reason, str) else "",
-                            "evidence": entry.get("evidence") if isinstance(entry.get("evidence"), dict) else {}}
+                            "evidence": entry.get("evidence") if isinstance(entry.get("evidence"), dict) else {},
+                            "signed_out": entry.get("signed_out") is True}
     return out
 
 
 def save_check(conn: sqlite3.Connection, cli_id: str, version: str | None, passed: bool, reason: str = "",
-               evidence: dict[str, Any] | None = None) -> None:
-    """Store one CLI's isolation check (one settings row, JSON: every CLI's entry kept)."""
+               evidence: dict[str, Any] | None = None, signed_out: bool = False) -> None:
+    """Store one CLI's isolation check (one settings row, JSON: every CLI's entry kept). `signed_out` marks an attempt
+    that failed with the auth error; the next saved check replaces the entry, so the mark clears itself."""
     state = check_state(conn)
-    state[cli_id] = {"version": version, "passed": bool(passed), "at": db.now(), "reason": reason or "",
-                     "evidence": evidence or {}}
+    state[cli_id] = {"version": version, "passed": bool(passed) and not signed_out, "at": db.now(),
+                     "reason": reason or "", "evidence": evidence or {}, "signed_out": bool(signed_out)}
     with conn:
         conn.execute("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE "
                      "SET value = excluded.value, updated_at = excluded.updated_at",
                      (STATE_KEY, json.dumps(state), db.now()))
+
+
+def signin_state(check: dict[str, Any] | None, current_version: str | None) -> tuple[str, str | None]:
+    """(state, when) from stored evidence only: the app has no sign-in read and never runs a model on a page load.
+    signed_in: the stored check passed for the version found now (a real call worked, on `when`). signed_out: the
+    latest check attempt for this version failed with the auth error. unknown: no check yet, a different version, or a
+    check that failed for another reason."""
+    if not check or not current_version or check.get("version") != current_version:
+        return "unknown", None
+    if check.get("signed_out"):
+        return "signed_out", check.get("at")
+    if check.get("passed") is True:
+        return "signed_in", check.get("at")
+    return "unknown", None
 
 
 def ready(conn: sqlite3.Connection, cli_id: str) -> tuple[Path | None, str]:
@@ -400,7 +478,7 @@ def ready(conn: sqlite3.Connection, cli_id: str) -> tuple[Path | None, str]:
     a stored passing check, and that check's version equal to the version found now (a changed CLI is unchecked)."""
     if off():
         return None, "off"
-    exe = executable(cli_id)
+    exe = executable(cli_id, conn)
     if exe is None:
         return None, "missing"
     stored = check_state(conn).get(cli_id)
@@ -590,7 +668,7 @@ def _run(cli_id: str, argv: list[str], body: bytes, deadline: float, cwd: Path,
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE if err is not None else subprocess.DEVNULL,
-                                env=child_env(), cwd=str(cwd), start_new_session=True)
+                                env=child_env(_dir_of(argv)), cwd=str(cwd), start_new_session=True)
     except OSError as e:
         raise CliError("missing", name=name) from e
     with _LIVE_LOCK:

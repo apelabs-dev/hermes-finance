@@ -152,15 +152,15 @@ def test_the_chooser_at_both_widths_and_both_themes(chrome, site, theme, width):
           text: T(w.querySelector('.way-h .grow > span')), strengths: [...w.querySelectorAll('.way-pro li')].map(T),
           drawbacks: [...w.querySelectorAll('.way-con li')].map(T), go: T(w.querySelector('.btn.w')),
           logo: Boolean(w.querySelector('.ia img')) || T(w.querySelector('.ia'))})),
-        slot: T(sheet.querySelector('.way-slot .slotm'))}; })()""")
+        slot: T(sheet.querySelector('.way-slot, .slotm'))}; })()""")
     assert got["title"] == "Link a bank or card"
-    assert got["lead"].startswith("Both end in the same place")
+    assert got["lead"] == "Pick how this bank connects. You can use both."
     assert [w["name"] for w in got["ways"]] == ["Plaid", "SimpleFIN"]
     assert got["ways"][0]["go"] == "Continue with Plaid" and got["ways"][1]["go"] == "Continue with SimpleFIN"
-    assert "Covers most US banks" in got["ways"][0]["strengths"][0]
-    assert "Bridge allows 24 requests a day" in got["ways"][1]["drawbacks"][1]
+    assert "Most US banks" in got["ways"][0]["strengths"][0]
+    assert "24 requests a day" in got["ways"][1]["drawbacks"][1]
     assert got["ways"][0]["logo"] and got["ways"][1]["logo"]       # an initials tile until the vendor logo is cached
-    assert "of 10 used" in got["slot"]
+    assert got["slot"] is None                       # the meter lives in Settings -> Connections now
     path = shot(chrome, f"simplefin-chooser-{width}-{theme}.png")
     assert path.exists()
 

@@ -37,7 +37,7 @@ ICONS = tuple(caticons.ALL)   # v23: the same 100-icon set categories use (the s
 # selection and saves cleanly (the DB row itself is only changed when its sheet is saved).
 LEGACY_ICONS = {"pencil": "receipt-text", "split": "target", "card": "credit-card", "handcoins": "hand-coins",
                 "briefcase": "briefcase-business"}
-COLOURS = ("#4fd1a5", "#8ea8ff", "#5fc6e8", "#c792ea", "#f5b454", "#ff8fb1", "#ff7b7b", "#9ba2b6")
+COLOURS = caticons.COLOURS   # the eight swatches, unchanged (caticons.py holds the one tuple)
 KINDS = ("save", "payoff", "monthly")
 TRACKS = ("account", "earmark", "manual")
 MAX_NAME = 60

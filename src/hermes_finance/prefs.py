@@ -26,9 +26,11 @@ Stdlib only (the Hermes plugin imports the read side under its own Python).
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from .db import now
@@ -48,9 +50,10 @@ MAX_LIST = 20
 
 
 class PrefError(ValueError):
-    def __init__(self, message: str, field: str | None = None):
+    def __init__(self, message: str, field: str | None = None, plain: bool = False):
         super().__init__(message)
         self.field = field
+        self.plain = plain        # a whole sentence for the owner: validate() doesn't put the key in front of it
 
 
 @dataclass(frozen=True)
@@ -133,6 +136,31 @@ def _identity(v):
     return v
 
 
+CLI_BINS = ("claude", "codex")      # clibrain.CLIS' ids, which are also the binaries' names (a test keeps them equal)
+
+
+def _cli_path(binary):
+    """A path the owner saved for a CLI: empty (unset), or an absolute (after ~) existing executable file whose name is
+    the CLI's own binary. It is only ever run with --version and the isolation self-test."""
+    def check(v):
+        refusal = PrefError(f"That isn't an executable file named {binary}.", plain=True)
+        if not isinstance(v, str):
+            raise refusal
+        v = v.strip()
+        if not v:
+            return ""
+        try:
+            path = Path(v).expanduser()
+            ok = (len(v) <= 1024 and path.is_absolute() and path.name == binary and path.is_file()
+                  and os.access(path, os.X_OK))
+        except (OSError, RuntimeError, ValueError):
+            ok = False
+        if not ok:
+            raise refusal
+        return str(path)
+    return check
+
+
 def _header(v):
     v = _text(60)(v)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", v):
@@ -150,6 +178,7 @@ SPEC: dict[str, Pref] = {
     "alerts.destination": Pref("Hermes chat", _text(60)),
     "ai.mode": Pref("hermes", _choice(("hermes", "api", "cli", "off"))),
     "ai.cli": Pref("claude", _choice(("claude", "codex"))),
+    **{f"ai.cli_path.{b}": Pref("", _cli_path(b), public=False) for b in CLI_BINS},   # "" = unset
     "ai.preset": Pref("openrouter", _choice(tuple(AI_PRESETS))),
     "ai.base_url": Pref(AI_PRESETS["openrouter"], _url),
     "ai.model": Pref("", _text(120, empty=True)),
@@ -224,7 +253,7 @@ def validate(data: dict[str, Any], allowed=None) -> dict[str, Any]:
         try:
             clean[k] = SPEC[k].check(v)
         except PrefError as e:
-            raise PrefError(f"{k} {e}", k) from None
+            raise PrefError(str(e) if e.plain else f"{k} {e}", k) from None
     return clean
 
 

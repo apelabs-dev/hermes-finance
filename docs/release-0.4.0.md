@@ -1,10 +1,10 @@
 # Release 0.4.0
 
 This page is the source for the 0.4.0 pull request body: what ships, what was cut and why, the schema change from v21
-to v23, and what an owner upgrading from 0.3.0 should know. It is a maintainer page, not part of the site.
+to v24, and what an owner upgrading from 0.3.0 should know. It is a maintainer page, not part of the site.
 
-0.3.0 is schema v20. The 0.4.0 branch adds three numbered schema steps, one for each of three features (v21 SimpleFIN,
-v22 multi-currency, v23 categories), and a v20 database goes through all of them on first start.
+0.3.0 is schema v20. The 0.4.0 branch adds four numbered schema steps (v21 SimpleFIN, v22 multi-currency, v23
+categories, v24 category colour), and a v20 database goes through all of them on first start.
 
 ## What ships
 
@@ -18,14 +18,16 @@ v22 multi-currency, v23 categories), and a v20 database goes through all of them
   Settings → Region display currency is listed apart (an **Other currencies** card, per-currency day totals, a budget
   "also" line, foreign rows on Investments and Loans & debt) and is in no one-number total. OFX and CSV imports keep
   each row's own code. Goals, alerts, the agent prompts and the Ask text write each amount in its own currency.
-- **User-managed categories (schema v23).** The 36 seeded categories are marked built-in once, by name; hand-made ones
+- **User-managed categories (schema v23, colour v24).** The 36 seeded categories are marked built-in once, by name; hand-made ones
   are yours. A Settings card above Categorization rules creates, renames, re-icons, hides, moves and
   move-and-deletes categories, with one shared 100-icon picker that Goals use too. The same operations are in
   `finance categories` and the agent tools (`finance_categories`, with approve-first create / update / delete).
-  Hidden categories stay in every money total, and the AI never offers one. See [Settings](settings.md#categories).
+  Hidden categories stay in every money total, and the AI never offers one. A category's icon colour follows its group
+  unless you pick one of the eight goal swatches. See [Settings](settings.md#categories).
 - **CLI brains.** **Settings → AI provider → CLI** runs a Claude Code or Codex CLI that is already signed in on the
   computer, as a plain text-completion endpoint: one process per request, no tools, no keys to paste. See
-  [AI modes](ai-modes.md#cli-a-locally-installed-agent).
+  [AI modes](ai-modes.md#cli-a-locally-installed-agent). The app finds the CLI under a service's minimal PATH too
+  (`~/.local/bin`, `~/.claude/local`, the Homebrew folders and npm's global bin), or at a path you save.
 - **Keyboard-operable transaction rows.** A row opens and closes from the keyboard, details close on navigation, and
   focus and scroll survive a sheet save that redraws the list.
 - **Test and CI hardening.** A SimpleFIN sync reads only the `today=` it is given, so its tests no longer depend on the
@@ -55,7 +57,7 @@ Per the owner rule, the PDF import card and the batch import card were dropped. 
 tests only: `docs/pdf-import-spike.md`, `tests/test_pdfspike_*.py` and `tests/fixtures/pdfspike/`. They add no
 product code path. CSV, OFX and QFX import stays as it was, plus the currency handling above.
 
-## Schema v21 to v23
+## Schema v21 to v24
 
 - **v21 (SimpleFIN).** Adds `items.provider` (`plaid` or `simplefin`), `accounts.conn_id` (the Bridge connection id),
   widens `transactions.source` to allow `simplefin` (SQLite cannot alter a CHECK, so the transactions table is rebuilt
@@ -67,6 +69,8 @@ product code path. CSV, OFX and QFX import stays as it was, plus the currency ha
   replaced.
 - **v23 (categories).** Adds `categories.is_builtin` and `categories.is_hidden`. Exactly 36 rows become built-in, by
   name; every other category stays yours and visible.
+- **v24 (category colour).** Adds `categories.colour`, empty for every existing row. Empty means the icon follows its
+  group's colour; a set value is one of the eight goal swatches. No amount or filing changes.
 
 Each step is idempotent and runs through `db.connect`, the app's own start. A read-only connection never upgrades a
 database and refuses an old one with a clear message.
@@ -76,7 +80,7 @@ database and refuses an old one with a clear message.
 1. **Back up first.** `finance backup --out <dir>` (see [Backup and restore](backup-restore.md)). The first start on 0.4.0
    upgrades the database in place, and a backup taken on 0.4.0 does not restore onto an older app.
 2. **Nothing to configure for the upgrade itself.** A 0.3.0 database (v20), and a database from a branch build at v21 or
-   v22, all end at v23 with every row kept. `tests/test_release_040_migration.py` proves this on a clean 0.3.0 schema
+   v22, all end at v24 with every row kept. `tests/test_release_040_migration.py` proves this on a clean 0.3.0 schema
    and on both v21 shapes, and that all three end with the same tables, columns, indexes, views and triggers as a new
    database.
 3. **Display currency.** It defaults to USD, so nothing changes for an all-USD household. If you set Settings →

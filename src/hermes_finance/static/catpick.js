@@ -8,7 +8,7 @@
   const {h, fill, icon, badge, api, toast, HOOKS, catLabel} = X;
   const PHONE = '(max-width: 600px)';
   let GROUPS = null;   // the request for /api/category-groups, made the first time a picker opens
-  let OPEN = null;     // {root, scrim, btn, close} of the picker on screen
+  let OPEN = null;     // {root, scrim, btn, stop} of the picker on screen
   let uid = 0;
 
   const loadGroups = () => {
@@ -37,12 +37,13 @@
 
   function close(returnFocus = false) {
     if (!OPEN) return;
-    const {root, scrim, btn} = OPEN;
+    const {root, scrim, btn, stop} = OPEN;
     OPEN = null;
+    stop();
     root.remove();
     if (scrim) scrim.remove();
     btn.setAttribute('aria-expanded', 'false');
-    if (returnFocus) btn.focus();
+    if (returnFocus) HFPopClose.focus(btn);   // (without moving the page)
   }
 
   // Under the button if the whole list fits there, else above it, else as much of the window as it needs (over the button)
@@ -93,12 +94,17 @@
     });
     // v23: one extra row at the bottom of the list, aligned with the rows above, opening the new-category sheet and then
     // picking the new category for the transaction that opened this picker.
+    // The picker closes first (focus back on the row's button), then the sheet opens: Cancel, Escape and the x return
+    // to that button; Add category gives the row the new category and puts focus back on its button.
     createNew = (name) => {
       if (typeof X.categoryNew !== 'function') return;
-      X.categoryNew({name, onDone: (c) => {
+      close(true);
+      X.categoryNew({name, onDone: async (c) => {
         GROUPS = null;
-        close(true);
-        if (c && c.name !== btn.value) { btn.value = c.name; onPick(c.name); }
+        if (c && c.name && c.name !== btn.value) {
+          btn.value = c.name;
+          try { await onPick(c.name); } finally { HFPopClose.focus(btn); }
+        } else HFPopClose.focus(btn);
       }});
     };
     const newRow = h('div', {class: 'cpkg cpkadd', role: 'group', 'aria-label': 'New'},
@@ -153,7 +159,7 @@
     if (scrim) document.body.append(scrim);
     document.body.append(root);
     place(root, btn);
-    OPEN = {root, scrim, btn};
+    OPEN = {root, scrim, btn, stop: HFPopClose.watch({root, trigger: btn, close: (restore) => close(restore)})};
     btn.setAttribute('aria-expanded', 'true');
     const cur = opts.find((o) => o.el.dataset.cat === btn.value);
     if (cur) setActive(cur.el);
@@ -161,14 +167,14 @@
     if (phone) { root.tabIndex = -1; root.focus(); } else q.focus();
   }
 
-  // Escape closes only the picker (not a sheet under it); a tap outside closes it; so do scrolling the page and resizing
+  // Escape closes only the picker (not a sheet under it); a tap outside closes it; scrolling the page and resizing close
+  // it too (popclose.js, started where the picker opens)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && OPEN) { e.preventDefault(); e.stopImmediatePropagation(); close(true); }
   }, true);
   document.addEventListener('pointerdown', (e) => {
     if (OPEN && !OPEN.root.contains(e.target) && !OPEN.btn.contains(e.target) && e.target !== OPEN.scrim) close();
   }, true);
-  window.addEventListener('resize', () => { if (OPEN) place(OPEN.root, OPEN.btn); });
   window.addEventListener('hashchange', () => close());
   document.addEventListener('hf-categories-changed', () => { GROUPS = null; });
 

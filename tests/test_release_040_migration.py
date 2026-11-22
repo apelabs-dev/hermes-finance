@@ -1,4 +1,4 @@
-"""Release 0.4.0 migration proof (schema v23). A clean 0.3.0 database (schema v20) and the two v21 shapes the other
+"""Release 0.4.0 migration proof (schema v24: v23 plus categories.colour). A clean 0.3.0 database (schema v20) and the two v21 shapes the other
 branches made both come through the app's own startup path (db.connect) to the current schema with every row of every
 table kept, exactly 36 built-in categories, v22's currency fill touching no amount, and one schema at the end: the same
 tables, columns, indexes, views and triggers as a database created new. Connecting again changes nothing.
@@ -128,13 +128,13 @@ def migrated(request, data_dir, tmp_path):
     conn.close()
 
 
-def test_schema_version_is_23():
-    assert db.SCHEMA_VERSION == 23, "this proof is for release 0.4.0 (schema v23); update it with the next migration"
+def test_schema_version_is_24():
+    assert db.SCHEMA_VERSION == 24, "this proof is for release 0.4.0 (schema v24); update it with the next migration"
 
 
 def test_every_start_keeps_every_row_and_ends_with_the_36_built_ins(migrated):
     start, old, conn = migrated
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 23, start
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 24, start
     after = counts(conn)
     for table, n in old["counts"].items():
         assert after.get(table) == n, f"{start}: table {table} had {n} rows, has {after.get(table)}"
@@ -203,7 +203,7 @@ def test_connecting_again_changes_nothing(migrated, tmp_path):
     conn.close()
     again = db.connect(path)
     try:
-        assert again.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert again.execute("PRAGMA user_version").fetchone()[0] == 24
         assert counts(again) == first_counts, f"{start}: row counts changed on the second connect"
         assert snapshot(again, skip=set()) == first, f"{start}: rows changed on the second connect"
         assert again.execute("SELECT COUNT(*) FROM categories WHERE is_builtin = 1").fetchone()[0] == 36

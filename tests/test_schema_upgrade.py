@@ -803,3 +803,87 @@ def test_upgrade_from_v13_to_v14_adds_rule_deletions_and_keeps_every_row(data_di
     assert tuple(conn.execute("SELECT category_id, source, rule_id, detached_by FROM classifications WHERE transaction_id = 't1'"
                               ).fetchone())[1:] == ("rule", user_rule, None)
     conn.close()
+
+
+def test_upgrade_from_v23_adds_categories_colour_and_keeps_every_row(data_dir):
+    """v24 (categories.colour): a v23 database (tests/fixtures/schema_v23.sql, dumped from the tree before the change),
+    with a hand-made category, a cap, a hidden one, a group budget, a rule, a classification and a goal, gets one new
+    nullable column and nothing else: every row and every value of every table is as it was, the colour is NULL
+    everywhere (follow the group), the upgraded definitions are a new database's, and a rerun or an interrupted run
+    changes nothing. A read-only connection refuses it."""
+    path = config.db_path()
+    raw = _old_db(path, "schema_v23.sql", 23)
+    ts = "2026-08-05T00:00:00Z"
+    assert "colour" not in [r[1] for r in raw.execute("PRAGMA table_info(categories)")]
+    for table, column in (("manual_accounts", "currency"), ("transactions", "iso_currency"), ("accounts", "iso_currency")):
+        raw.execute(f"UPDATE {table} SET {column} = 'USD' WHERE {column} IS NULL")   # v22 fills these on any upgrade
+    raw.execute("INSERT INTO categories (name, is_income, is_transfer, group_id, icon, sort, is_builtin, is_hidden, "
+                "monthly_cap) VALUES ('Kids', 0, 0, (SELECT id FROM category_groups WHERE name = 'Misc'), 'tent', 1001, "
+                "0, 1, 75)")
+    raw.execute("INSERT INTO group_budgets (group_id, amount, created_at, updated_at) "
+                "SELECT id, 900, ?, ? FROM category_groups WHERE name = 'Misc'", (ts, ts))
+    raw.execute("INSERT INTO rules (match_field, match_type, pattern, category_id, priority, created_from, created_at) "
+                "SELECT 'name', 'exact', 'X', id, 200, 'user', ? FROM categories WHERE name = 'Kids'", (ts,))
+    raw.execute("INSERT INTO goals (kind, name, target, icon, colour, created_at, updated_at) "
+                "VALUES ('save', 'Trip', 500, 'tent', '#8ea8ff', ?, ?)", (ts, ts))   # a v23 goal always has both (v17 fills them)
+    raw.commit()
+    every_table = sorted(_names(raw) - {"sqlite_sequence"})
+    before = {t: [tuple(r) for r in raw.execute(f"SELECT * FROM {t} ORDER BY rowid")] for t in every_table}
+    categories_before = [tuple(r) for r in raw.execute("SELECT * FROM categories ORDER BY id")]
+    assert len(categories_before) == 37 and any(r[1] == "Kids" for r in categories_before)
+    raw.close()
+
+    ro = db.connect_readonly(path)                                  # never upgrades, and says so
+    try:
+        assert ro.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert "colour" not in {r[1] for r in ro.execute("PRAGMA table_info(categories)")}
+    finally:
+        ro.close()
+    from hermes_finance import tooldefs
+    with pytest.raises(tooldefs.ToolError) as refused:
+        tooldefs.read_connection(path)
+    assert "schema v23" in str(refused.value) and f"v{db.SCHEMA_VERSION}" in str(refused.value)
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 23
+
+    conn = db.connect(path)
+    assert db.SCHEMA_VERSION == 24 and conn.execute("PRAGMA user_version").fetchone()[0] == 24
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(categories)")]
+    assert cols[-1] == "colour" and cols.count("colour") == 1
+    assert next(r[2:] for r in conn.execute("PRAGMA table_info(categories)") if r[1] == "colour")[:1] == ("TEXT",)
+    assert [tuple(r)[:-1] for r in conn.execute("SELECT * FROM categories ORDER BY id")] == categories_before
+    assert [r[0] for r in conn.execute("SELECT colour FROM categories")] == [None] * 37
+    for t in every_table:
+        if t == "categories":
+            continue
+        got = [tuple(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY rowid")]
+        if t == "settings":                                         # nothing is written by the step itself
+            got = [r for r in got if r in before[t]]
+        assert got == before[t], t
+    fresh = db.connect(path.parent / "fresh.db")
+    assert _shape(conn) == _shape(fresh)                            # an upgraded database is a new one plus its rows
+    assert [tuple(r) for r in conn.execute("SELECT name, type, \"notnull\", dflt_value FROM pragma_table_info('categories')")] \
+        == [tuple(r) for r in fresh.execute("SELECT name, type, \"notnull\", dflt_value FROM pragma_table_info('categories')")]
+    assert [r[0] for r in fresh.execute("SELECT colour FROM categories")] == [None] * 36
+    fresh.close()
+    after = [tuple(r) for r in conn.execute("SELECT * FROM categories ORDER BY id")]
+    db.init_schema(conn)                                            # again: nothing changes
+    assert [tuple(r) for r in conn.execute("SELECT * FROM categories ORDER BY id")] == after
+    with conn:
+        conn.execute("UPDATE categories SET colour = '#ff7b7b' WHERE name = 'Kids'")
+        conn.execute("PRAGMA user_version = 23")                    # as if the run stopped before the version was written
+    conn.close()
+    conn = db.connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 24
+    assert conn.execute("SELECT colour FROM categories WHERE name = 'Kids'").fetchone()[0] == "#ff7b7b"   # kept, not reset
+    assert conn.execute("SELECT COUNT(*) FROM categories WHERE colour IS NOT NULL").fetchone()[0] == 1
+    conn.close()
+
+
+def test_v24_schema_clears_a_colour_that_is_not_one_of_the_swatches(conn):
+    with conn:
+        conn.execute("UPDATE categories SET colour = '#123456' WHERE name = 'Coffee'")
+        conn.execute("UPDATE categories SET colour = '#4fd1a5' WHERE name = 'Groceries'")
+    db._v24_schema(conn)
+    db._v24_schema(conn)
+    assert conn.execute("SELECT colour FROM categories WHERE name = 'Coffee'").fetchone()[0] is None
+    assert conn.execute("SELECT colour FROM categories WHERE name = 'Groceries'").fetchone()[0] == "#4fd1a5"

@@ -121,11 +121,12 @@
           if (dupKind.value === 'second') kind.value = guessKey(guess);
         });
       }
-      const amount = a.balance == null ? '' : ` · ${X.money2(a.balance)}`;
       const row = h('div', {class: `li sf-acct${dup ? ' dup' : ''}`},
         h('span', {class: 'grow'}, h('b', {class: 'nmrow'}, h('span', {class: 'nm'}, a.name || 'Account'), tags),
-          h('span', {class: 'meta2'}, h('span', {class: 'chip2'}, a.mask ? `••${a.mask}` : bank),
-            dup ? ` · already synced through Plaid${amount}` : ` · looks like ${LABEL[guessKey(guess)].toLowerCase()}${amount}`)),
+          // the label truncates, the amount never does (.mt shrinks; .sf-bal keeps its width)
+          h('span', {class: 'meta2'}, h('span', {class: a.mask ? 'chip2' : 'chip2 bk'}, a.mask ? `••${a.mask}` : bank),
+            h('span', {class: 'mt'}, dup ? '· already synced through Plaid' : `· looks like ${LABEL[guessKey(guess)].toLowerCase()}`),
+            a.balance == null ? null : h('span', {class: 'sf-bal'}, ` · ${X.money2(a.balance)}`))),
         dup ? dupKind : kind, second);
       rows.push({account: a, choice});
       groups.get(bank).push(row);

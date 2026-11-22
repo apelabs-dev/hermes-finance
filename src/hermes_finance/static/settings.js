@@ -415,21 +415,25 @@
     const item = cli.items.find((i) => i.id === cli.chosen) || cli.items[0];
     const state = !item.found ? 'missing'
       : item.checked_version && item.checked_version === item.version ? (item.passed ? 'passed' : 'failed') : 'unchecked';
-    const strip = state === 'passed' ? pill('sm', 'check', 'Locked down')
+    // Sign-in is only what the stored checks prove (Python: clibrain.signin_state): "Signed in" needs a passing check
+    // for this version, "Signed out" a stored auth failure; anything else is "Couldn't check sign-in".
+    const signin = item.found ? item.signin : null;
+    const strip = !item.found ? pill('sm nt', null, 'Not found')
+      : signin === 'signed_out' ? pill('sm bad', 'alert', 'Signed out')
       : state === 'failed' ? pill('sm bad', 'alert', 'Not used')
-      : pill('sm nt', null, state === 'missing' ? 'Not found' : 'Not checked');
+      : signin === 'signed_in' ? pill('sm', 'check', 'Signed in')
+      : pill('sm nt', null, "Couldn't check sign-in");
     let sub;
     if (state === 'passed') sub = item.id === 'codex'
       ? 'Its tool calls were rejected in the check, so it can only answer. Checked again whenever the version changes.'
-      : 'Started with no tools and no MCP servers, so it can only answer. Checked again whenever the version changes.';
+      : 'No tools, no MCP servers. Checked again on each new version.';
     else if (state === 'failed') sub = item.reason && item.reason.length <= 160
       ? item.reason : 'One tool stayed reachable after lockdown on this version. Ask stays off until a version passes.';
-    else if (state === 'unchecked') sub = 'Not checked on this version yet. The check sends one short request with this CLI and reads what it could reach.';
-    else sub = `${item.name} isn't installed on this computer.`;
+    else sub = 'Not checked on this version yet. The check sends one short request with this CLI and reads what it could reach.';
     if (cli.off) sub += ' The CLI brains are switched off on this computer (HERMES_CLI_BRAINS=off).';
     const checkPill = state === 'passed' ? pill('sm', 'check', `Passed · ${item.checked_version}`)
       : state === 'failed' ? pill('sm bad', 'x', `Failed · ${item.checked_version}`)
-      : pill('sm nt', null, state === 'missing' ? 'Not found' : 'Not checked');
+      : pill('sm nt', null, 'Not checked');
     const checkBtn = h('button', {class: 'btn sm ghost', type: 'button', disabled: cli.off,
       onclick: async () => {
         checkBtn.disabled = true;
@@ -445,19 +449,78 @@
         }
       }}, icon('refresh'), 'Check again');
     const plan = item.id === 'codex' ? 'ChatGPT subscription' : 'Claude subscription';
+    const dirs = ['PATH', ...(item.searched || [])];
+    const where = dirs.length > 1 ? `${dirs.slice(0, -1).join(', ')} or ${dirs[dirs.length - 1]}` : dirs[0];
+    let middle;
+    if (!item.found) middle = cliPathRow(item, redraw, cli);
+    else if (signin === 'signed_out') middle = signInRow(item, checkBtn);
+    else middle = srow('Isolation check', sub, h('span', {class: 'pairc'}, checkPill, checkBtn), 'tight');
     return [
       h('div', {class: 'aist'}, ibadge('terminal', RGB.purple, 's'),
         h('span', {class: 'grow'}, h('b', {}, item.found && item.version ? `${item.name} ${item.version}` : item.name),
-          h('span', {}, item.found ? `Found at ${item.display || item.path}` : 'Not found on this computer')), strip),
+          h('span', {}, item.found ? (item.display || item.path) : `Not found in ${where}`),
+          item.found && signin === 'signed_in' && item.signin_at ? h('span', {}, `Checked ${whenShort(item.signin_at)}`) : null),
+        strip),
       srow('Which CLI', 'Runs on this computer with your own login',
         select([['claude', 'Claude Code'], ['codex', 'Codex']], cli.chosen, 'Which CLI',
           (v) => save({'ai.cli': v}, () => { cli.chosen = v; redraw(); })), 'tight'),
-      srow('Isolation check', sub, h('span', {class: 'pairc'}, checkPill, checkBtn), 'tight'),
-      srow('Changes still ask you first', 'It suggests categories and rules. Nothing is applied without your OK, same as today.',
+      middle,
+      srow('Changes still ask you first', 'It suggests categories and rules. Nothing is applied without your OK.',
         pill('sm nt', 'lock', 'Always'), 'tight'),
       h('div', {class: 'safety'}, icon('alert'),
         h('span', {}, `This runs on your ${plan} outside its own app. Check that your plan allows it. It counts against that plan's limits, not the monthly cap here.`)),
     ];
+  }
+  // Not found: the one fix is a path. The server validates it (an absolute, executable file named for the CLI) and
+  // answers in plain words; Save shows that inline and, on success, re-reads both CLIs so the card turns to Found.
+  function cliPathRow(item, redraw, cli) {
+    const input = h('input', {type: 'text', 'aria-label': `Path to ${item.id}`, spellcheck: 'false', autocapitalize: 'off',
+      autocomplete: 'off', placeholder: `/path/to/${item.id}`, value: item.saved_path || ''});
+    const err = h('span', {class: 'ferr', role: 'alert'});
+    const btn = h('button', {class: 'btn sm', type: 'button'}, 'Save');
+    const run = async () => {
+      err.textContent = '';
+      btn.disabled = true;
+      try {
+        await post('/api/prefs', {[`ai.cli_path.${item.id}`]: input.value.trim()});
+        const r = await api('/api/ai/cli');
+        for (const fresh of r.items) Object.assign(cli.items.find((i) => i.id === fresh.id) || {}, fresh);
+        redraw();
+      } catch (e) {
+        err.textContent = e.message;
+        btn.disabled = false;
+      }
+    };
+    btn.addEventListener('click', run);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
+    return h('div', {class: 'srow tight clipath'},
+      h('span', {class: 'grow'}, h('b', {}, `Path to ${item.id}`), h('span', {}, 'Already installed? Paste where it lives.'), err),
+      h('span', {class: 'pairc'}, h('span', {class: 'inp fx path'}, input), btn));
+  }
+  // Signed out: the one command to run in a terminal, a Copy button, then Check again (the same check as ever).
+  function signInRow(item, checkBtn) {
+    const code = h('code', {class: 'clicmd'}, item.login_command);
+    const copy = h('button', {class: 'btn sm ghost', type: 'button'}, icon('copy'), 'Copy');
+    copy.addEventListener('click', async () => {
+      const selectIt = () => {
+        const range = document.createRange();
+        range.selectNodeContents(code);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      };
+      try {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('no clipboard');
+        await navigator.clipboard.writeText(item.login_command);
+        fill(copy, icon('check'), 'Copied');
+        setTimeout(() => fill(copy, icon('copy'), 'Copy'), 2000);
+      } catch (e) {
+        selectIt();                       // no clipboard here (plain http): select it, the owner presses Cmd/Ctrl+C
+      }
+    });
+    return h('div', {class: 'srow tight clisign'},
+      h('span', {class: 'grow'}, h('b', {}, 'Sign in'), h('span', {}, 'Run this in a terminal, then check again.')),
+      h('span', {class: 'pairc'}, code, copy, checkBtn));
   }
   function aiBody(d, mode, redraw) {
     const ai = d.prefs.ai;
@@ -754,7 +817,7 @@
   function categorySheet(c, opts = {}) {
     const built = Boolean(c && c.built_in);
     const structural = Boolean(c && !c.spending);
-    const state = {icon: (c && c.icon) || groupFallbackIcon('Misc')};
+    const state = {icon: (c && c.icon) || groupFallbackIcon('Misc'), colour: (c && c.colour) || null};
     const errs = {name: h('p', {class: 'ferr', role: 'alert'}), group: h('p', {class: 'ferr', role: 'alert'}),
       icon: h('p', {class: 'ferr', role: 'alert'})};
     const name = h('input', {type: 'text', maxlength: '60', value: c ? c.name : (opts.name || ''), disabled: built});
@@ -764,19 +827,28 @@
     const group = h('select', {class: 'selv', 'aria-label': 'Group', disabled: built || structural}, groupOptions);
     const iconSlot = h('div');
     let picked = Boolean(c && c.icon);
+    // the icon is drawn in the effective colour: the chosen swatch, else the group's
+    const tint = () => (state.colour ? HF.rgbOf(state.colour) : groupRgb(group.value));
     const picker = () => fill(iconSlot, HF.iconPicker({
-      rgb: groupRgb(group.value), value: state.icon, label: 'Category icon',
+      rgb: tint(), value: state.icon, label: 'Category icon',
       onPick: (namePicked) => { picked = true; state.icon = namePicked; }
     }));
+    // v24 (catcolour.js): "Same as <Group>" with a Change button, or the chosen swatch with "Use <Group> colour". Income and
+    // transfers have no group, so no colour to follow or change.
+    const colourField = structural ? null : HF.catColourField({palette: CATS.colours, group: group.value, groupRgb: groupRgb(group.value),
+      value: state.colour, onChange: (v) => { state.colour = v; picker(); }});
     group.addEventListener('change', () => {
       if (!picked) state.icon = groupFallbackIcon(group.value);
+      if (colourField) colourField.setGroup(group.value, groupRgb(group.value));
       picker();
     });
     const err = h('div', {class: 'ferr', role: 'alert'});
     const saveBtn = h('button', {class: 'btn', type: 'button'}, c ? 'Save' : 'Add category');
+    // Name sits in the app's bordered .inp box; the Group select is itself that box (one plain control, no box around a
+    // select), and the Colour and Icon controls bring their own look
     const field = (label, control, hint, key) => h('div', {class: 'fld', dataset: {f: key}},
-      h('label', {}, label), h('div', {class: key === 'icon' ? '' : 'inp'}, control), hint ? h('p', {class: 'hint'}, hint) : null,
-      errs[key] || null);
+      h('label', {}, label), ['icon', 'group', 'colour'].includes(key) ? control : h('div', {class: 'inp'}, control),
+      hint ? h('p', {class: 'hint'}, hint) : null, errs[key] || null);
     const limits = built ? (structural
       ? 'Income and transfers stay outside the categories: their icon can change, nothing else.'
       : 'A built-in category can change its icon or be hidden, not renamed or moved between groups.') : null;
@@ -791,13 +863,16 @@
           if (wanted && wanted !== c.name) body.rename = wanted;
           if (group.value !== c.group) body.group = group.value;
         }
-        if (body.icon === c.icon && !body.rename && !body.group) { closeModal(); return; }
+        if (!structural && state.colour !== (c.colour || null)) body.colour = state.colour;   // null: follow the group again
+        if (body.icon === c.icon && !body.rename && !body.group && !('colour' in body)) { closeModal(); return; }
       } else {
         body = {name: name.value, group: group.value, icon: state.icon};
+        if (state.colour) body.colour = state.colour;
       }
       saveBtn.disabled = true;
+      let made;
       try {
-        await post(c ? '/api/categories/update' : '/api/categories/create', body);
+        made = await post(c ? '/api/categories/update' : '/api/categories/create', body);
       } catch (e) {
         saveBtn.disabled = false;
         if (e.field && errs[e.field]) errs[e.field].textContent = e.message;
@@ -807,8 +882,8 @@
       closeModal();
       saved(c ? 'Category saved' : 'Category added');
       HF.categoriesChanged();
-      await refreshCats();
-      if (opts.onDone) opts.onDone(CATS);
+      await Promise.all([refreshCats(), HF.ensureCategories().catch(() => null)]);   // (tiles elsewhere read the stored colour)
+      if (opts.onDone) opts.onDone(made);   // the category as the server saved it (the picker gives the row this one)
     };
     saveBtn.addEventListener('click', save);
     picker();
@@ -817,6 +892,7 @@
       h('p', {class: 'rlead'}, c ? catName(c) : 'A spending category, in one of the eight groups.'),
       field('Name', name, built ? limits : 'Up to 60 characters; names are unique ignoring case.', 'name'),
       field('Group', group, built ? null : 'Counts as spending and joins this group in budgets and charts.', 'group'),
+      colourField ? field('Colour', colourField.el, null, 'colour') : null,
       field('Icon', iconSlot, null, 'icon'),
       err,
       h('div', {class: 'row'}, saveBtn, h('button', {class: 'btn ghost', type: 'button', onclick: closeModal}, 'Cancel'))],
@@ -906,7 +982,7 @@
       const hide = c.spending ? () => actCategory(c, {hidden: !c.hidden}, c.hidden ? `${c.name} is visible again` : `${c.name} is hidden`) : null;
       const mine = !c.built_in && c.spending;
       return h('div', {class: `rrow catrow${c.hidden ? ' off' : ''}${open ? ' rmenu-open' : ''}`, dataset: {cat: c.name}},
-        ibadge(c.icon || 'tag', c.rgb || groupRgb(c.group), 'xs'),
+        ibadge(c.icon || 'tag', HF.HOOKS.catRgb(c) || groupRgb(c.group), 'xs'),
         h('span', {class: 'grow'}, h('span', {class: 'rpat'}, h('b', {}, c.name), mine ? tag('Yours') : null, c.hidden ? tag('Hidden') : null),
           h('span', {class: 'rsub'}, count)),
         h('span', {class: 'rn v'}, count),

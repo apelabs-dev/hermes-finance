@@ -89,8 +89,8 @@ def test_cli_mode_shows_the_unchecked_cli(browser, tmp_path, stub):
                           ".map((x) => x.textContent)") == ["Hermes", "API key", "CLI", "Off"]
         assert browser.js("document.querySelector('[aria-label=\"AI provider\"] [aria-pressed=true]').textContent") == "CLI"
         strip = browser.js("document.querySelector('.aibody .aist').textContent")
-        assert f"Claude Code {VERSION}" in strip and f"Found at {cs.shown(stub.claude.path)}" in strip
-        assert browser.js("document.querySelector('.aibody .aist .pill').textContent") == "Not checked"
+        assert f"Claude Code {VERSION}" in strip and cs.shown(stub.claude.path) in strip
+        assert browser.js("document.querySelector('.aibody .aist .pill').textContent") == "Couldn't check sign-in"
         isolation = browser.js(row_js("Isolation check"))
         assert isolation["pill"] == "Not checked" and "Not checked on this version yet." in isolation["text"]
         assert isolation["buttons"] == ["Check again"]
@@ -112,8 +112,8 @@ def test_check_again_passes_and_is_stored(browser, tmp_path, stub):
         pick(browser, "CLI")
         check(browser)
         assert pill_is(browser, "Isolation check", f"Passed · {VERSION}")
-        assert browser.js("document.querySelector('.aibody .aist .pill').textContent") == "Locked down"
-        assert browser.js("document.querySelector('.aibody .aist .grow > span').textContent").startswith("Found at ")
+        assert browser.js("document.querySelector('.aibody .aist .pill').textContent") == "Signed in"
+        assert browser.js("document.querySelector('.aibody .aist .grow > span').textContent") == cs.shown(stub.claude.path)
         stored = next(i for i in site.api("/api/ai/cli")["items"] if i["id"] == "claude")
         assert stored["passed"] is True and stored["checked_version"] == VERSION and stored["version"] == VERSION
         assert browser.problems() == []
