@@ -29,6 +29,16 @@ def module():
     return mod
 
 
+def set_version(name, data, value):
+    """Rewrite only the file's version field, the way sync_release reads it (a comment that names a version is data)."""
+    mod = module()
+    if name == '.release-please-manifest.json':
+        return json.dumps({'.': value}, indent=2) + '\n'
+    result, count = re.subn(mod.PATTERNS[name], lambda m: m[1] + value + m[2], data)
+    assert count == 1, name
+    return result
+
+
 def fixture(tmp_path, legacy_manifest=False):
     public = tmp_path / 'public'
     public.mkdir()
@@ -40,7 +50,7 @@ def fixture(tmp_path, legacy_manifest=False):
         target.parent.mkdir(parents=True, exist_ok=True)
         data = (ROOT / name).read_text()
         if name != 'CHANGELOG.md':
-            data = data.replace(module().version(name, data), '0.2.0')
+            data = set_version(name, data, '0.2.0')
         target.write_text(data)
     git(public, 'add', '.')
     git(public, 'commit', '-qm', 'feat: baseline')
@@ -61,7 +71,7 @@ def fixture(tmp_path, legacy_manifest=False):
         target = public / name
         if not target.exists():
             target.write_text(json.dumps({'.': '0.2.0'}, indent=2) + '\n')
-        target.write_text(target.read_text().replace('0.2.0', '0.3.0') if name != 'CHANGELOG.md'
+        target.write_text(set_version(name, target.read_text(), '0.3.0') if name != 'CHANGELOG.md'
                           else '# Changelog\n\n## 0.3.0\n\nFeatures.\n\n' + target.read_text().split('\n', 1)[1].lstrip())
     git(public, 'add', '.')
     git(public, 'commit', '-qm', 'chore(main): release 0.3.0')
