@@ -26,11 +26,10 @@
       h('span', {class: 'ipk-chev'}, icon('chevd')));
     const search = h('input', {type: 'search', class: 'search ipk-search', placeholder: 'Search all icons',
       'aria-label': 'Search icons', autocomplete: 'off', spellcheck: 'false'});
-    const count = h('span', {class: 'ipk-count'});
     const scroll = h('div', {class: 'ipk-scroll'});
     const none = h('p', {class: 'ipk-none', hidden: true}, 'No icon matches.');
     const panel = h('div', {class: 'ipk-open', hidden: true},
-      h('div', {class: 'ipk-head'}, search, count), scroll, none);
+      h('div', {class: 'ipk-head'}, search), scroll, none);
     const tiles = [];   // every tile button in the open list (searchable), in document order
 
     function tile(name) {
@@ -75,7 +74,6 @@
       }
       fill(scroll, sections);
       none.hidden = tiles.length > 0;
-      count.textContent = `${tiles.length} icon${tiles.length === 1 ? '' : 's'}`;
     }
 
     function drawQuick() {
@@ -122,7 +120,6 @@
       data = d;
       drawQuick();
       if (open) drawOpen();
-      else count.textContent = `${d.count} icons`;
       root.dataset.ready = 'true';
     }).catch((e) => {
       fill(root, h('p', {class: 'ipk-none'}, `Could not load the icons: ${e.message}`));

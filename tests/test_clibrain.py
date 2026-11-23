@@ -705,6 +705,38 @@ def test_a_codex_selftest_reads_the_locked_captures_rejections(stub):
     assert run["argv"][:3] == ["exec", "--sandbox", "read-only"]
 
 
+DEPRECATION = {"type": "item.completed", "item": {"id": "item_x", "type": "error", "message":
+               "`[features].unified_exec_zsh_fork` is deprecated and ignored. (The patched zsh backend has been "
+               "removed. Remove `unified_exec_zsh_fork` from [features] in config.toml or profile configuration files.)"}}
+
+
+def test_a_deprecated_feature_notice_is_not_a_tool(stub):
+    """0.171.0 prints a deprecation notice for a feature that no longer exists; it is not a tool item."""
+    events = [json.loads(line) for line in (STREAMS / "codex-locked-with-stderr.jsonl").read_text().splitlines()]
+    stub.codex.script({**cs.codex(DEPRECATION, *events),
+                       "stderr_text": fixture("codex-locked-with-stderr.stderr.txt").decode()})
+    got = clibrain.selftest("codex", stub.codex.path, soon(30))
+    assert got["passed"] is True, got
+    assert got["evidence"]["tool_items"] == 0
+
+
+def test_the_deprecation_notice_alone_does_not_stand_in_for_the_tool_host_notice(tmp_path):
+    out = (json.dumps(DEPRECATION) + "\n").encode()
+    got = clibrain._judge_codex(out, 0, CANARY, tmp_path)
+    assert got["passed"] is False and got["evidence"]["tool_items"] == 0
+    assert got["evidence"]["tool_host"] is None
+
+
+def test_any_other_error_item_still_counts_as_a_tool(tmp_path):
+    other = {"type": "item.completed", "item": {"id": "i", "type": "error", "message": "a shell tool is available"}}
+    got = clibrain._judge_codex((json.dumps(other) + "\n").encode(), 0, CANARY, tmp_path)
+    assert got["passed"] is False and got["reason"] == clibrain.TOOL_REASON
+
+
+def test_the_lockdown_does_not_disable_a_removed_feature():
+    assert "unified_exec_zsh_fork" not in clibrain.DISABLES
+
+
 def test_a_codex_selftest_without_rejections_is_inconclusive(stub):
     events = [json.loads(line) for line in (STREAMS / "codex-forced-attempt.jsonl").read_text().splitlines()]
     stub.codex.script(cs.codex(*events))

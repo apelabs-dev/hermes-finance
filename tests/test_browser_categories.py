@@ -177,7 +177,7 @@ def test_categories_end_to_end(tmp_path, width, theme):
             assert b.js("document.querySelector('#sheet .ipk-scroll') !== null")
             set_input(b, "#sheet .ipk-search", "rocket")
             assert b.js("document.querySelectorAll('#sheet .ipk-scroll .gicon').length") == 1
-            assert b.js("document.querySelector('#sheet .ipk-count').textContent") == "1 icon"
+            assert b.js("document.querySelector('#sheet .ipk-count')") is None   # no "N icons" count beside the search
             tap(b, "#sheet .ipk-scroll .gicon[aria-label='rocket']")
             assert b.js("document.querySelector('#sheet .gicon[aria-label=rocket]').getAttribute('aria-pressed')") == "true"
             tap(b, "#sheet .row .btn:not(.ghost)")

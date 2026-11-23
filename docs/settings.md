@@ -154,9 +154,10 @@ hiding it stays left out after Show.
 
 **New category** is also a row at the bottom of any category picker, and typing a name that matches nothing offers to
 create it. The new category's icon comes from the shared 100-icon picker (two rows of common icons, then Show all 100
-with search); Goals use the same picker, with their eight colour swatches unchanged. **Colour** reads “Same as <group>”
-by default, so the icon wears its group's colour; **Change** offers the same eight swatches, and **Use <group> colour**
-puts it back. The colour only changes how the icon is drawn, never a total.
+with search); Goals use the same picker and its eight colour swatches. **Colour** shows the same eight swatches with
+the group's own colour already selected: picking another swatch sets the icon's colour, and picking the group's swatch
+keeps following the group. A group whose colour is outside the eight (Shopping, Bills) gets a first swatch in the
+group's own colour. The colour only changes how the icon is drawn, never a total.
 
 ## Categorization rules
 

@@ -666,7 +666,7 @@ def tabs_settle_to(port, before, wait=30.0):
     while True:
         try:
             now = targets(port)
-        except (OSError, http.client.HTTPException):   # the listing itself timed out (5 s): ask again
+        except (OSError, http.client.HTTPException):   # the listing itself timed out (30 s): ask again
             now = None
         if now == before or time.monotonic() > deadline:
             return now

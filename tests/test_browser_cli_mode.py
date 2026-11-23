@@ -90,7 +90,7 @@ def test_cli_mode_shows_the_unchecked_cli(browser, tmp_path, stub):
         assert browser.js("document.querySelector('[aria-label=\"AI provider\"] [aria-pressed=true]').textContent") == "CLI"
         strip = browser.js("document.querySelector('.aibody .aist').textContent")
         assert f"Claude Code {VERSION}" in strip and cs.shown(stub.claude.path) in strip
-        assert browser.js("document.querySelector('.aibody .aist .pill').textContent") == "Couldn't check sign-in"
+        assert browser.js("document.querySelectorAll('.aibody .aist .pill').length") == 0
         isolation = browser.js(row_js("Isolation check"))
         assert isolation["pill"] == "Not checked" and "Not checked on this version yet." in isolation["text"]
         assert isolation["buttons"] == ["Check again"]

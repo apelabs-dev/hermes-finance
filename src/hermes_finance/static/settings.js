@@ -416,13 +416,15 @@
     const state = !item.found ? 'missing'
       : item.checked_version && item.checked_version === item.version ? (item.passed ? 'passed' : 'failed') : 'unchecked';
     // Sign-in is only what the stored checks prove (Python: clibrain.signin_state): "Signed in" needs a passing check
-    // for this version, "Signed out" a stored auth failure; anything else is "Couldn't check sign-in".
+    // for this version, "Signed out" a stored auth failure. No badge before any check for this version (an unchecked CLI
+    // is not a broken one); "Couldn't check sign-in" only when the check ran on this version and left sign-in unknown.
     const signin = item.found ? item.signin : null;
     const strip = !item.found ? pill('sm nt', null, 'Not found')
       : signin === 'signed_out' ? pill('sm bad', 'alert', 'Signed out')
       : state === 'failed' ? pill('sm bad', 'alert', 'Not used')
-      : signin === 'signed_in' ? pill('sm', 'check', 'Signed in')
-      : pill('sm nt', null, "Couldn't check sign-in");
+      : signin === 'signed_in' && state === 'passed' ? pill('sm', 'check', 'Signed in')
+      : state !== 'unchecked' && signin === 'unknown' ? pill('sm nt', null, "Couldn't check sign-in")
+      : null;
     let sub;
     if (state === 'passed') sub = item.id === 'codex'
       ? 'Its tool calls were rejected in the check, so it can only answer. Checked again whenever the version changes.'
@@ -833,8 +835,8 @@
       rgb: tint(), value: state.icon, label: 'Category icon',
       onPick: (namePicked) => { picked = true; state.icon = namePicked; }
     }));
-    // v24 (catcolour.js): "Same as <Group>" with a Change button, or the chosen swatch with "Use <Group> colour". Income and
-    // transfers have no group, so no colour to follow or change.
+    // v24 (catcolour.js): the same eight goal swatches, with the group's own swatch preselected; picking it means follow the
+    // group (save colour = null), picking another sets the icon's colour. Income and transfers have no group, so no colour.
     const colourField = structural ? null : HF.catColourField({palette: CATS.colours, group: group.value, groupRgb: groupRgb(group.value),
       value: state.colour, onChange: (v) => { state.colour = v; picker(); }});
     group.addEventListener('change', () => {
@@ -1246,7 +1248,7 @@
 
   // ---- the page ----------------------------------------------------------------------------------------------------
   HF.RENDER.settings = async (tk) => {
-    fill(document.getElementById('page'), HF.skeleton(['s1', 's1', 's1', 's1']));
+    fill(document.getElementById('page'), HF.settingsSkeleton());
     // TASK-24 loads rules independently; an unavailable rules route does not hide the other settings.
     const [d, , rules, cats] = await Promise.all([api('/api/settings/page'), HF.ensureAccounts().catch(() => null),
       api('/api/rules').catch(() => null), api('/api/categories/page').catch(() => null)]);

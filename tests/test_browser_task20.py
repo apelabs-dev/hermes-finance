@@ -79,7 +79,8 @@ def test_every_extension_runs_once(browser, features):
     # + (polish P0) catpick + (polish P1) txfilter + (polish P2b) wherewent + (v21) simplefin + (polish P2A) budgets
     # + (v23) iconpick, the shared 100-icon picker that Goals and the categories card both use
     # + (v24) catcolour, the New category sheet's Colour row
-    assert browser.js("window.HF_EXT.length") == 17
+    # + settingsskel, the Settings loading skeleton
+    assert browser.js("window.HF_EXT.length") == 18
     assert browser.problems() == []
 
 

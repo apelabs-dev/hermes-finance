@@ -96,6 +96,7 @@ FEATURE_FILES = ("iconpick", "goals", "txmeta", "billcal", "rollover", "alpaca",
                  "txfilter",                                                       # + polish P1's Transactions filters
                  "wherewent",                                                      # + polish P2b's grouped spending card
                  "simplefin",                                                      # + v21's SimpleFIN chooser and sheets
+                 "settingsskel",                                                   # + polish: Settings' loading skeleton
                  "budgets")                                                        # + polish P2A's grouped Budgets (last)
 STATIC_FILES["popclose.js"] = "text/javascript; charset=utf-8"   # B2: one close-on-scroll rule for every popover (no CSS)
 STATIC_FILES.update({f"{n}.js": "text/javascript; charset=utf-8" for n in FEATURE_FILES})

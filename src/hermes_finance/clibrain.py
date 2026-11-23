@@ -105,7 +105,7 @@ TOOL_EVENTS = frozenset({"tool_call", "mcp_tool_call", "web_search", "command_ex
 CLAUDE_FLAGS = ("--tools", "--disallowedTools", "--strict-mcp-config", "--safe-mode", "--no-session-persistence",
                 "--permission-prompts", "--output-format")
 # what Codex has to be able to turn off: the 2026-11-14 evidence's feature list (features list must name each)
-DISABLES = ("shell_tool", "unified_exec", "unified_exec_tty", "unified_exec_zsh_fork", "skill_search", "view_image",
+DISABLES = ("shell_tool", "unified_exec", "unified_exec_tty", "skill_search", "view_image",
             "hooks", "apps", "computer_use", "browser_use", "browser_use_external", "browser_use_full_cdp_access",
             "in_app_browser", "image_generation", "goals", "multi_agent", "plugins", "plugin_sharing", "remote_plugin",
             "sleep_tool", "tool_suggest", "code_mode_host", "realtime_conversation", "workspace_dependencies",
@@ -787,10 +787,20 @@ def _startup_notice(item: Any) -> bool:
             and _tool_host_notice(str(item.get("message") or "")))
 
 
+def _deprecation_notice(item: Any) -> bool:
+    """Whether this item is a Codex notice that a config feature is deprecated and ignored (0.171.0 prints one for a
+    feature it removed). It is a configuration notice about a flag, not a tool item."""
+    if not (isinstance(item, dict) and item.get("type") == "error"):
+        return False
+    low = str(item.get("message") or "").lower()
+    return "[features]" in low and "deprecated and ignored" in low
+
+
 def _codex_item_allowed(item: Any) -> bool:
-    """The only items a Codex turn may carry: its decision text, its reasoning, and the startup notice."""
+    """The only items a Codex turn may carry: its decision text, its reasoning, the startup notice and a deprecated-
+    feature notice."""
     what = item.get("type") if isinstance(item, dict) else None
-    return what in ("agent_message", "reasoning") or _startup_notice(item)
+    return what in ("agent_message", "reasoning") or _startup_notice(item) or _deprecation_notice(item)
 
 
 def _codex_tool_event(event: dict[str, Any]) -> bool:
@@ -975,7 +985,7 @@ def _judge_codex(out: bytes, code: int, token: str, tmp: Path,
             what = item.get("type") if isinstance(item, dict) else None
             if (kind == "item.completed" and what == "agent_message" and isinstance(item.get("text"), str)):
                 text = item["text"]
-            elif what == "error":
+            elif what == "error" and _tool_host_notice(str(item.get("message") or "")):
                 tool_host = "disabled"
         elif kind in TOOL_EVENTS:
             tool_items += 1

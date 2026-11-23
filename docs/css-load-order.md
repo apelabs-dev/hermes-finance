@@ -22,12 +22,13 @@ The app page (`web.render_page`):
 12. `txfilter.css`
 13. `wherewent.css`
 14. `simplefin.css`
-15. `budgets.css`
-16. `settings.css`
-17. `light.css`
-18. `tap.css`
+15. `settingsskel.css`
+16. `budgets.css`
+17. `settings.css`
+18. `light.css`
+19. `tap.css`
 
-Sheets 2 to 15 are the feature sheets, in `web.FEATURE_FILES` order. Each entry there also loads its `.js`, so a
+Sheets 2 to 16 are the feature sheets, in `web.FEATURE_FILES` order. Each entry there also loads its `.js`, so a
 feature sheet always comes with a script of the same name.
 
 The sign-in and first-run page: `app.css`, `settings.css`, `light.css`, `tap.css` (`web.render_login_page`; no feature sheet).

@@ -175,8 +175,10 @@ fresh empty directory, with your login and none of the app's own environment.
 - **Finding the CLI.** The app looks, in order, at the CLI's environment variable, a path saved in the card's
   **Path to …** box, `PATH`, then `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin` and npm's
   global bin, so a background service with a minimal `PATH` still finds it. **Not found** lists where it looked. The
-  card says **Signed in** only after a check passed and **Signed out** after a login failure; otherwise it says it
-  couldn't check, and it never runs the CLI just to draw the card.
+  card says **Signed in** only after a check passed on the installed version and **Signed out** after a login failure;
+  with no check yet for that version it shows no sign-in badge at all, and the Isolation check row's **Not checked**
+  plus its **Check again** button carry that state. It never runs the CLI just to draw the card, so a check happens
+  only when you ask for one.
 - **Fail closed, no fallback.** A missing CLI, an unchecked version, a version that changed since its check, or a failed
   check refuses the turn with one line in Ask. Nothing silently falls back to Hermes or an API key.
 

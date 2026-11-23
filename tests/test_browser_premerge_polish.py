@@ -375,8 +375,8 @@ def test_signed_in_is_never_shown_without_a_stored_pass_for_this_version(chrome,
         assert "Signed in" not in got["all"] and "Signed out" not in got["all"], got["strip"]
         if seeded == "failed isolation":        # the isolation verdict is the news there; still no "Signed in"
             assert got["pill"] == "Not used"
-        else:
-            assert got["pill"] == "Couldn't check sign-in"
+        else:                                   # no check for this version: no badge at all
+            assert got["pill"] is None
         assert len(got["lines"]) == 1            # no check date line without a proof
         chrome.problems()
     finally:
@@ -436,7 +436,7 @@ def test_the_path_box_saves_and_flips_the_card_to_found(chrome, tmp_path, base, 
         got = card(chrome)
         assert got["name"].startswith("Codex ") and CODEX_VERSION in got["name"], got["name"]
         assert got["lines"][0] == cs.shown(elsewhere / "codex")
-        assert got["pill"] == "Couldn't check sign-in" and "Path to codex" not in got["labels"]
+        assert got["pill"] is None and "Path to codex" not in got["labels"]
         assert "Isolation check" in got["labels"]
         with db.connect(srv.path) as conn:
             assert prefs.get(conn, "ai.cli_path.codex") == str(elsewhere / "codex")
@@ -713,11 +713,17 @@ def edit_sheet(b, srv, name: str, width: int = 1280, theme: str = "dark") -> Non
 
 
 COLOUR = """(() => { const f = document.querySelector('#sheet .fld[data-f=colour]'); if (!f) return null;
-  const vis = (x) => x && x.getClientRects().length > 0; const dot = f.querySelector('.cc-dot');
-  return {text: f.querySelector('.cc-row .cc-name')?.textContent, button: [...f.querySelectorAll('.cc-row button')].map((x) => x.textContent),
-    swatches: [...f.querySelectorAll('.gcolour')].filter(vis).map((x) => x.dataset.colour),
-    pressed: [...f.querySelectorAll('.gcolour')].filter((x) => x.getAttribute('aria-pressed') === 'true').map((x) => x.dataset.colour),
-    dot: dot ? getComputedStyle(dot).backgroundColor : null, label: f.querySelector('label')?.textContent}; })()"""
+  const vis = (x) => x && x.getClientRects().length > 0;
+  const sw = [...f.querySelectorAll('.gcolour')].filter(vis);
+  return {label: f.querySelector('label')?.textContent, swatches: sw.map((x) => x.dataset.colour),
+    groups: sw.map((x) => x.dataset.group === '1'), names: sw.map((x) => x.getAttribute('aria-label')),
+    pressed: sw.filter((x) => x.getAttribute('aria-pressed') === 'true').map((x) => x.dataset.colour),
+    other: [...f.querySelectorAll('button')].filter((x) => vis(x) && !x.classList.contains('gcolour')).map((x) => x.textContent),
+    text: f.textContent}; })()"""
+
+
+def click_swatch(b, selector: str) -> None:
+    b.js(f"document.querySelector({json.dumps(selector)}).click()")
 
 
 def press(b, scope: str, label: str) -> None:
@@ -749,29 +755,56 @@ def test_group_is_one_plain_select_like_name(chrome, site, width, theme):
 
 
 @pytest.mark.parametrize("theme", THEMES)
-def test_the_colour_row_follows_the_group_until_a_swatch_overrides_it(chrome, site, theme):
+def test_the_colour_row_is_the_goal_swatches_with_the_group_preselected(chrome, site, theme):
     open_new_sheet(chrome, site, 1280, theme)
     got = chrome.js(COLOUR)
-    assert got["label"] == "Colour" and got["text"] == "Same as Misc" and got["button"] == ["Change"], got
-    assert got["swatches"] == [] and got["dot"] == GROUP_RGB["Misc"], got
+    assert got["label"] == "Colour", got
+    assert got["swatches"] == SWATCHES, got
+    assert got["pressed"] == ["#9ba2b6"], got                  # a new category follows Misc, which is Slate
+    assert got["groups"] == [c == "#9ba2b6" for c in SWATCHES], got
+    assert got["other"] == [], got
+    assert not any(word in got["text"] for word in ("Change", "Use ", "Same as")), got
     order = chrome.js("[...document.querySelectorAll('#sheet .fld')].map((f) => f.dataset.f)")
     assert order == ["name", "group", "colour", "icon"], order
-    set_group(chrome, "Food")                                  # on "follow the group": the label and the dot follow
+    set_group(chrome, "Food")                                  # following the group: the preselection moves
     got = chrome.js(COLOUR)
-    assert got["text"] == "Same as Food" and got["dot"] == GROUP_RGB["Food"], got
-    press(chrome, "#sheet .fld[data-f=colour]", "Change")      # exactly the eight goal swatches
+    assert got["pressed"] == ["#f5b454"] and got["swatches"] == SWATCHES, got
+    chrome.problems()
+
+
+def test_an_override_sticks_and_the_group_swatch_returns_to_following(chrome, site):
+    open_new_sheet(chrome, site)
+    set_group(chrome, "Food")
+    click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-colour="#ff8fb1"]')
     got = chrome.js(COLOUR)
-    assert got["swatches"] == SWATCHES and got["pressed"] == [], got
-    chrome.js("document.querySelector('#sheet .fld[data-f=colour] .gcolour[data-colour=\"#ff8fb1\"]').click()")
+    assert got["pressed"] == ["#ff8fb1"], got
+    assert got["groups"] == [c == "#f5b454" for c in SWATCHES], got
+    click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-colour="#ff8fb1"]')   # not a toggle
+    assert chrome.js(COLOUR)["pressed"] == ["#ff8fb1"]
+    set_group(chrome, "Home")                                  # an override does not move
+    assert chrome.js(COLOUR)["pressed"] == ["#ff8fb1"]
+    click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-group="1"]')   # Home's own swatch: follow again
+    assert chrome.js(COLOUR)["pressed"] == ["#8ea8ff"]
+    set_group(chrome, "Misc")                                  # following: the preselection moves with the group
+    assert chrome.js(COLOUR)["pressed"] == ["#9ba2b6"]
+    chrome.problems()
+
+
+def test_a_group_colour_outside_the_palette_gets_a_leading_swatch(chrome, site):
+    open_new_sheet(chrome, site)
+    set_group(chrome, "Shopping")
     got = chrome.js(COLOUR)
-    assert got["text"] == "Pink" and got["button"] == ["Use Food colour"] and got["pressed"] == ["#ff8fb1"], got
-    assert got["dot"] == rgb_of("#ff8fb1"), got
-    set_group(chrome, "Misc")                                  # an override stays; only the reset button's name follows
+    assert len(got["swatches"]) == 9 and got["swatches"][1:] == SWATCHES, got
+    assert got["swatches"][0] == "rgb(245,158,139)" and got["names"][0] == "Shopping", got
+    assert got["groups"] == [True] + [False] * 8, got
+    assert got["pressed"] == [got["swatches"][0]], got
+    click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-colour="#ff8fb1"]')
+    assert chrome.js(COLOUR)["pressed"] == ["#ff8fb1"]
+    set_group(chrome, "Misc")                                  # back in the palette: the leading swatch goes
     got = chrome.js(COLOUR)
-    assert got["text"] == "Pink" and got["button"] == ["Use Misc colour"] and got["pressed"] == ["#ff8fb1"], got
-    press(chrome, "#sheet .fld[data-f=colour]", "Use Misc colour")
-    got = chrome.js(COLOUR)
-    assert got["text"] == "Same as Misc" and got["button"] == ["Change"] and got["swatches"] == [], got
+    assert got["swatches"] == SWATCHES and got["pressed"] == ["#ff8fb1"], got
+    click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-group="1"]')
+    assert chrome.js(COLOUR)["pressed"] == ["#9ba2b6"]
     chrome.problems()
 
 
@@ -782,8 +815,7 @@ def test_the_icon_picker_is_the_real_one_and_shows_the_effective_colour(chrome, 
     assert chrome.js("document.querySelectorAll('#sheet .ipk-quick .gicon').length") == 16
     set_group(chrome, "Food")
     assert chrome.js(ink) == GROUP_RGB["Food"]
-    press(chrome, "#sheet .fld[data-f=colour]", "Change")
-    chrome.js("document.querySelector('#sheet .fld[data-f=colour] .gcolour[data-colour=\"#5fc6e8\"]').click()")
+    click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-colour="#5fc6e8"]')
     assert chrome.js(ink) == rgb_of("#5fc6e8")
     assert chrome.js("document.querySelectorAll('#sheet .ipk-quick .gicon').length") == 16
 
@@ -802,8 +834,7 @@ def stored(srv, name: str) -> dict:
 def test_a_chosen_swatch_is_saved_and_the_tile_draws_it(chrome, site):
     open_new_sheet(chrome, site)
     set_group(chrome, "Food")
-    press(chrome, "#sheet .fld[data-f=colour]", "Change")
-    chrome.js("document.querySelector('#sheet .fld[data-f=colour] .gcolour[data-colour=\"#ff8fb1\"]').click()")
+    click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-colour="#ff8fb1"]')
     add_category(chrome, "Pet food")
     got = stored(site, "Pet food")
     assert got["colour"] == "#ff8fb1" and got["effective_colour"] == "#ff8fb1" and got["group"] == "Food", got
@@ -822,12 +853,16 @@ def test_a_chosen_swatch_is_saved_and_the_tile_draws_it(chrome, site):
     assert chrome.js("getComputedStyle(document.querySelector('.cpk [data-cat=Coffee] .cb')).color") == GROUP_RGB["Food"]
 
 
-def test_a_new_category_without_a_swatch_follows_its_group(chrome, site):
+@pytest.mark.parametrize("group, want", [("Food", "#f5b454"), ("Shopping", "#f59e8b")])
+def test_a_new_category_without_a_swatch_follows_its_group(chrome, site, group, want):
     open_new_sheet(chrome, site)
-    set_group(chrome, "Food")
-    add_category(chrome, "Pet food")
+    set_group(chrome, group)
+    got = chrome.js(COLOUR)                    # the group's own swatch is selected before anything is picked
+    assert got["pressed"] == [{"Food": "#f5b454", "Shopping": "rgb(245,158,139)"}[group]], got
+    assert got["groups"] == [c == got["pressed"][0] for c in got["swatches"]], got   # and it is marked as the group's
+    add_category(chrome, "Pet food")           # untouched: leaves the group's swatch selected
     got = stored(site, "Pet food")
-    assert got["colour"] is None and got["effective_colour"] == "#f5b454", got
+    assert got["colour"] is None and got["effective_colour"] == want, got
 
 
 def make_category(site, colour: str | None) -> None:
@@ -843,15 +878,15 @@ def test_editing_shows_the_stored_swatch_and_saving_keeps_or_resets_it(chrome, s
     make_category(site, "#ff8fb1")
     edit_sheet(chrome, site, "Pet food")
     got = chrome.js(COLOUR)
-    assert got["text"] == "Pink" and got["button"] == ["Use Food colour"] and got["pressed"] == ["#ff8fb1"], got
+    assert got["pressed"] == ["#ff8fb1"], got
     assert got["swatches"] == SWATCHES, got
     if action == "keep":                     # an unrelated edit (the name) must not drop the override
         chrome.js("""(() => { const i = document.querySelector('#sheet .fld[data-f=name] input'); i.value = 'Pet supplies';
           i.dispatchEvent(new Event('input', {bubbles: true})); })()""")
-    elif action == "reset":
-        press(chrome, "#sheet .fld[data-f=colour]", "Use Food colour")
+    elif action == "reset":                  # Food's own swatch: follow the group again
+        click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-group="1"]')
     else:
-        chrome.js("document.querySelector('#sheet .fld[data-f=colour] .gcolour[data-colour=\"#5fc6e8\"]').click()")
+        click_swatch(chrome, '#sheet .fld[data-f=colour] .gcolour[data-colour="#5fc6e8"]')
     press(chrome, "#sheet .row", "Save")
     wait_for(chrome, "!document.querySelector('#modal.on')", "the sheet to close")
     got = stored(site, "Pet supplies" if action == "keep" else "Pet food")
