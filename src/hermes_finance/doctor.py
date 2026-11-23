@@ -133,9 +133,10 @@ def plaid(values: dict[str, str]) -> Check:
 
 
 def ai(conn: sqlite3.Connection, values: dict[str, str]) -> Check:
-    from . import bridge, chat, secretstore
+    from . import bridge, chat, clibrain, secretstore
     b = chat.brain(conn)
-    keys = ["ai.mode", "ai.base_url", "ai.model", secretstore.AI_KEY, bridge.BIN_ENV, "HERMES_HOME"]
+    keys = ["ai.mode", "ai.base_url", "ai.model", secretstore.AI_KEY, bridge.BIN_ENV, "HERMES_HOME", "ai.cli",
+            clibrain.OFF_ENV, clibrain.CLIS["claude"]["env"], clibrain.CLIS["codex"]["env"]]
     if b["mode"] == "off":
         return Check("ai", "off", "AI is off (Settings > AI provider): no Ask panel, no AI classification", keys)
     if b["mode"] == "hermes":
@@ -143,6 +144,17 @@ def ai(conn: sqlite3.Connection, values: dict[str, str]) -> Check:
             return Check("ai", "missing", f"ai.mode is hermes but no Hermes executable was found ({bridge.BIN_ENV}, else "
                          "$HERMES_HOME/hermes-agent/venv/bin/hermes)", keys, [bridge.BIN_ENV])
         return Check("ai", "ok", "via Hermes (the hermes-finance plugin's completion bridge; the plugin isn't checked)", keys)
+    if b["mode"] == "cli":
+        cli_id, name = b["cli"], clibrain.CLIS[b["cli"]]["name"]
+        env = clibrain.CLIS[cli_id]["env"]
+        if clibrain.executable(cli_id, conn) is None:
+            return Check("ai", "missing", f"ai.mode is cli but {name} wasn't found ({env}, else its command on PATH)",
+                         keys, [env])
+        _exe, why = clibrain.ready(conn, cli_id)
+        if why:
+            return Check("ai", "missing", clibrain.line(why, name=name), keys)
+        checked = (clibrain.check_state(conn).get(cli_id) or {}).get("at") or ""
+        return Check("ai", "ok", f"via {name} (checked {checked[:10]})", keys)
     missing = [k for k, v in (("ai.base_url", b.get("url")), ("ai.model", b.get("model"))) if not v]
     if not values.get(secretstore.AI_KEY) and b.get("preset") != "local":
         missing.append(secretstore.AI_KEY)

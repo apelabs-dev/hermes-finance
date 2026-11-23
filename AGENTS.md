@@ -81,7 +81,13 @@ uv run python scripts/check.py full --part 2   # then tests/test_gates.py (the l
 
 - Work on your own branch (a worktree is easiest). Use a temp `FINANCE_DATA_DIR` and a port other than 8765 for
   anything you try by hand, so your own install, its `data/` and its server are never touched.
-- Write failing tests first, then the fix; run `check.py full` (or its two parts) before you call a change done, and
-  report the literal counts and anything you couldn't verify.
+- Write failing tests first, then the fix; run the tests your change touches locally, and the full suite before you
+  call a change done: on CI (push the branch: `ci.yml` runs `check.py ci`; a manual Nightly run is `check.py full` on
+  macOS) or locally with `check.py full` (or its two parts). Report the literal counts, the CI run if you used one,
+  and anything you couldn't verify.
+
+Remotes: `origin` is the private development repository (all branches; CI runs on every push). Agents may push their
+own `ci/<name>` branches there without asking, to run the suite on GitHub instead of locally. `public` is release-only
+(its push URL is disabled): never push to it. Release Please and the weekly demo are skipped in the private repository.
 
 Releases follow the squashed public export loop in [docs/releasing.md](docs/releasing.md); sync public release versions before the next export.

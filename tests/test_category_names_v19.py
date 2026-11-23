@@ -110,7 +110,7 @@ def test_v18_to_v19_renames_by_id_and_refiles_only_plaid_defaults(data_dir):
     raw.close()
 
     conn = db.connect(path)   # the app's own startup path upgrades it
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     # the names, each on its old id; the category Other keeps its name, in the group now called Misc
     now = dict(rows(conn, "SELECT name, id FROM categories"))
     assert {n: now[n] for n in ("Other Transport", "Other Shopping", "Other Health", "Other")} == \
@@ -183,6 +183,7 @@ def test_a_hand_made_category_with_the_new_name_stops_the_upgrade_and_writes_not
     raw.commit()
     mine = raw.execute("SELECT id FROM categories WHERE name = ?", (taken,)).fetchone()[0]
     before = snapshot(raw)
+    before_categories = before.pop("categories")   # v23 adds two columns; the rows' own values are compared below
     raw.close()
     with pytest.raises(db.SchemaError) as e:
         db.connect(path)
@@ -191,7 +192,11 @@ def test_a_hand_made_category_with_the_new_name_stops_the_upgrade_and_writes_not
     assert "nothing was changed" in str(e.value)
     raw = sqlite3.connect(path)
     assert raw.execute("PRAGMA user_version").fetchone()[0] == 18
-    assert snapshot(raw) == before
+    after = snapshot(raw)
+    del after["categories"]
+    assert after == before
+    assert rows(raw, "SELECT id, name, parent, monthly_cap, is_income, is_transfer, group_id, icon, sort "
+                     "FROM categories ORDER BY rowid") == before_categories
     # renamed by hand, the next start upgrades
     raw.execute("UPDATE categories SET name = 'Mine' WHERE id = ?", (mine,))
     raw.commit()

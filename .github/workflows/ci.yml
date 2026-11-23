@@ -5,6 +5,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,6 +22,9 @@ jobs:
       # Extra private words for the privacy scanner (comma-separated; empty on forks). The scanner never prints them,
       # and tests/redact.py keeps them out of every test report.
       HERMES_FINANCE_TEST_PRIVATE: ${{ secrets.HERMES_FINANCE_TEST_PRIVATE }}
+      # The public mirror's URL (repo variable, set on the private dev repo only), so the scanner counts
+      # CHANGELOG's links to it as the project's own URL. Empty on the public repo: GITHUB_REPOSITORY is it.
+      HERMES_FINANCE_PUBLIC_URL: ${{ vars.HERMES_FINANCE_PUBLIC_URL }}
       HERMES_PLAID: "off"
     steps:
       - uses: actions/checkout@v4

@@ -155,31 +155,56 @@
   const txLoaded = HOOKS.txLoaded;
   HOOKS.txLoaded = (d) => {
     txLoaded(d);
+    // a filter change rebuilds every row in place (updateTx: pushState + loadTx): the sheet's row is gone, so close it
+    if (OPEN_TID && (!panel.hidden || X.$('modal').classList.contains('on'))
+        && !document.querySelector(`#page tr[data-tid="${CSS.escape(OPEN_TID)}"]`)) closeTxAny();
     const tk = S.token;
     loadSaved().then(() => { if (tk === S.token && S.page === 'transactions') drawBar(); });
   };
 
   // ---- the transaction sheet -------------------------------------------------------------------------------------
   let OPEN = null;  // {t, state, save} of the sheet on screen
+  let OPEN_TID = null;   // the transaction either sheet form shows (the modal has no OPEN)
+  let panelTid = null;   // the tid of the row the docked panel opened from: closing puts focus back on that row, found
+                         // again by tid (a redraw while the panel is open replaces the row, so never hold the element)
   document.addEventListener('click', (e) => {
     const tr = e.target.closest('#page table.tx tbody tr[data-tid]');
     if (!tr || e.target.closest('select, button, a, input')) return;
     openTx(tr.dataset.tid);
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !panel.hidden && !X.$('modal').classList.contains('on')) closeTx(true);
+    if (e.key === 'Escape' && !panel.hidden && !X.$('modal').classList.contains('on')) { closeTx(true); return; }
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const tr = e.target.closest && e.target.closest('#page table.tx tbody tr[data-tid]');
+    if (!tr || e.target !== tr) return;   // a nested button / select / link keeps its own action
+    e.preventDefault();                   // (Space would scroll the page)
+    openTx(tr.dataset.tid);
   });
-  window.addEventListener('hashchange', () => closeTx(true));
+  window.addEventListener('hashchange', closeTxAny);
 
   HOOKS.openTx = (tid) => openTx(tid);   // TASK-21: Back from Track as a bill (a phone) opens the transaction again
+  HOOKS.closeTx = closeTxAny;            // (app.js route): a page change without a hashchange closes it too
 
-  function closeTx(save) {
+  function closeTxAny() {   // a page change closes whichever form the sheet is in
+    closeTx(true);
+    if (X.$('modal').classList.contains('on') && X.$('sheet').classList.contains('txsheet')) closeModal();
+  }
+
+  function closeTx(save, returnFocus = true) {
     if (panel.hidden) return;
     const open = OPEN;
+    const back = panelTid;
     panel.hidden = true;
     document.body.classList.remove('txopen');
     document.querySelectorAll('#page tr.sel').forEach((tr) => tr.classList.remove('sel'));
     OPEN = null;
+    OPEN_TID = null;
+    panelTid = null;
+    if (returnFocus) {
+      const row = back && document.querySelector(`#page tr[data-tid="${CSS.escape(back)}"]`);
+      if (row) row.focus({preventScroll: true});   // a close never scrolls the page to the row it returns focus to
+      else if (panel.contains(document.activeElement)) document.activeElement.blur();  // its row is gone: no focus in a hidden dialog
+    }
     if (save && open) open.save();
   }
 
@@ -187,12 +212,14 @@
     const t = TX.rows.find((r) => r.transaction_id === tid);
     if (!t) return;
     if (OPEN && OPEN.t.transaction_id === tid && !panel.hidden) return;
-    closeTx(true);
+    closeTx(true, false);   // opening another row: no focus or scroll back to the old one, the new sheet takes focus
     if (!TAGS) TAGS = await api('/api/tags').then((d) => d.tags).catch(() => []);
     const cats = await X.ensureCategories();
     document.querySelectorAll('#page tr.sel').forEach((tr) => tr.classList.remove('sel'));
     const tr = document.querySelector(`#page tr[data-tid="${CSS.escape(tid)}"]`);
     if (tr) tr.classList.add('sel');
+    panelTid = tid;   // the origin: closing returns focus to the row with this tid (null when opened from elsewhere, e.g. a bill sheet)
+    OPEN_TID = tid;
     if (matchMedia(DOCK).matches) {
       const sheet = txSheet(t, cats, () => closeTx(true));
       fill(panel, sheet.kids);
@@ -204,6 +231,7 @@
     } else {
       const sheet = txSheet(t, cats, closeModal);
       openSheet(sheet.kids, {cls: 'txsheet', onClose: () => {
+        OPEN_TID = null;
         document.querySelectorAll('#page tr.sel').forEach((x) => x.classList.remove('sel'));
         sheet.save();
       }});
@@ -372,7 +400,16 @@
         problems.push(e.message);
       }
       if (done.length) {
-        X.loadTx(S.token, true).catch(() => {});  // the list redrawn with it (its tags, its split cell)
+        // the close put focus back on the origin row and the redraw below replaces it: put focus on the new row with the
+        // same tid once the redraw's promise resolves (never a timer), unless focus has legitimately moved on since
+        const had = document.activeElement;
+        X.loadTx(S.token, true).catch(() => {}).then(() => {   // the list redrawn with it (its tags, its split cell)
+          if (!had || had.isConnected) return;   // still there, or focus deliberately moved elsewhere
+          if (S.page !== 'transactions' || document.activeElement !== document.body) return;   // focus moved on: leave it
+          const tid = had.dataset && had.dataset.tid;
+          const row = tid && document.querySelector(`#page tr[data-tid="${CSS.escape(tid)}"]`);
+          if (row) row.focus({preventScroll: true});   // never scroll the page to it
+        });
         if (done.includes('split') || done.includes('unsplit') || done.includes('category')) loadCounts();
         if (done.some((x) => x.includes('tags'))) loadSaved().then(drawBar);
       }

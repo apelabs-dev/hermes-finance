@@ -162,6 +162,8 @@ def check(paths: Sequence[str], read, matcher: Matcher) -> List[Tuple[str, int, 
 #   email          an email address outside the reserved/placeholder domains (PLACEHOLDER_DOMAINS)
 #   long-id        a 17-20 digit number (a Discord snowflake, an account id) that isn't obviously made up
 #   hex-id         a standalone 12-hex id (a cron job id) that isn't obviously made up
+#   brand-name     the former product's name, any case, with an optional space, dash or underscore between its two halves
+#                  (BRAND_RX below: the pattern is split on purpose, so this line can't match itself)
 # The exact public strings masked before matching, each with its reason. Nothing else is allowed by text. Each entry
 # masks itself here too, so the domain's private word still hits anywhere else (another subdomain included).
 # The repository's own URL is the one runtime mask (own_repo_slugs): the release tooling writes it into CHANGELOG.md
@@ -244,6 +246,9 @@ _ASSIGN_RX = re.compile(r"(?i)\b([\w.-]*(?:secret|_key|token|password|passwd)\w*
 _EMAIL_RX = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})")
 _LONG_ID_RX = re.compile(r"(?<![\w.])\d{17,20}(?![\w.])")
 _HEX_ID_RX = re.compile(r"(?<![0-9A-Za-z#_-])[0-9a-f]{12}(?![0-9A-Za-z_-])")
+# The former product's name, which no file may carry (the brand-name rule; tests/test_release_scan.py also checks every
+# tracked path and file, shipping or not). Written split so this line doesn't match its own pattern.
+BRAND_RX = re.compile(r"fly[ _-]?" r"budget", re.I)
 
 
 def _entropy(s: str) -> float:
@@ -312,6 +317,8 @@ def release_hits_in_text(text: str, words: Iterable[str], masks: Iterable[str] =
     for x in _HEX_ID_RX.finditer(text):
         if not synthetic_hex(x.group(0)):
             add(x.start(), "hex-id", x.group(0))
+    for x in BRAND_RX.finditer(text):
+        add(x.start(), "brand-name", x.group(0))
     return sorted(found)
 
 

@@ -62,6 +62,7 @@ on a hit, 0 when clean, 2 on bad usage. The rules:
 | `email` | an email address outside the reserved and placeholder domains (`example.com`, `.test`, `.invalid`, ...) |
 | `long-id` | a 17–20 digit number (an account or channel id) that isn't obviously made up |
 | `hex-id` | a standalone 12-hex id (a job id) that isn't obviously made up |
+| `brand-name` | the former product's name, in any case, with an optional space, dash or underscore between its two halves. Checked on every tracked path and file, shipping or not (`tests/test_release_scan.py`); the pattern is `BRAND_RX` in `scripts/dehardcode.py` |
 
 What it lets through, each a committed, reasoned decision in `scripts/dehardcode.py`:
 

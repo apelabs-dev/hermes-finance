@@ -8,7 +8,8 @@
 
 A pending action's `origin` (ORIGINS) is who recorded it, set by the code path that records it: `client` is only the
 name a client gave itself, which anyone can make "Ask" (TASK-23 review C1). "ask" is an Ask turn answered with the app's
-API key, "ask_hermes" one answered through Hermes's completion bridge (chat.py, bridge.py); both are the Ask panel's own. One recorded `held_by` a running Ask turn
+API key, "ask_hermes" one answered through Hermes's completion bridge (chat.py, bridge.py), "ask_cli" one answered by a
+local Claude Code or Codex CLI (clibrain.py); all are the Ask panel's own. One recorded `held_by` a running Ask turn
 is neither listed nor decidable until the turn release()s it with its answer, or withdraw()s it when it fails (C2).
 reconcile() settles what a process that stopped left behind: a held row whose turn can't be running any more is
 withdrawn, and an Approve still being applied long after it was claimed is a final "may be partly done" failure,
@@ -33,8 +34,8 @@ ALLOW_WRITES = "mcp.allow_writes"
 LAST_USED = "mcp.last_used"
 MAX_NAME = 200   # a client's name / title / version, as stored
 ASK_OWNER_PREFIX = "Ask owner:"       # internal client value; _row exposes only client=Ask
-ORIGINS = ("mcp", "ask", "ask_hermes")   # pending_actions.origin: the MCP server (any client), the Ask panel's own
-                                         # turn (API key), the Ask panel's own turn through the Hermes bridge
+ORIGINS = ("mcp", "ask", "ask_hermes", "ask_cli")   # pending_actions.origin: the MCP server (any client), the Ask
+                                                    # panel's own turn (API key), its Hermes and CLI turns
 HELD_STALE = 300           # seconds: a held row older than this has no turn that can still publish it (an Ask turn
                            # releases its cards before its deadline, chat.TIMEOUT, or not at all, and tries to
                            # withdraw them until chat.TIMEOUT + chat.SETTLE: 90 s, pinned by a test). One it couldn't
@@ -110,7 +111,7 @@ def record_pending(conn: sqlite3.Connection, tool: str, arguments: dict[str, Any
 
 
 def _row(r: sqlite3.Row) -> dict[str, Any]:
-    internal = r["client"] if r["origin"] in ("ask", "ask_hermes") else None
+    internal = r["client"] if r["origin"] in ("ask", "ask_hermes", "ask_cli") else None
     return {"id": r["id"], "tool": r["tool"], "arguments": json.loads(r["arguments"]), "summary": r["summary"],
             "client": "Ask" if internal and internal.startswith(ASK_OWNER_PREFIX) else r["client"], "origin": r["origin"],
             "held": r["held_by"] is not None, "status": r["status"],
@@ -121,7 +122,7 @@ def _row(r: sqlite3.Row) -> dict[str, Any]:
 def ask_owner(conn: sqlite3.Connection, action_id: int) -> str | None:
     """An Ask row's opaque owner binding, kept out of every serialized action/card response."""
     row = conn.execute("SELECT client, origin FROM pending_actions WHERE id = ?", (action_id,)).fetchone()
-    internal = row["client"] if row and row["origin"] in ("ask", "ask_hermes") else None
+    internal = row["client"] if row and row["origin"] in ("ask", "ask_hermes", "ask_cli") else None
     return internal[len(ASK_OWNER_PREFIX):] if internal and internal.startswith(ASK_OWNER_PREFIX) else None
 
 

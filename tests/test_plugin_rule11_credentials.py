@@ -29,6 +29,7 @@ import pytest
 from agent_tools import load_plugin, plugin_ctx
 from conftest import FAKE_CLIENT_ID, FAKE_SECRET, account, add_item, page, txn
 from hermes_finance import alpaca, config, doctor, secretstore, syncnow, tooldefs
+from offline_env import VENDOR_SWITCHES
 from hermes_finance.plaid import PlaidClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -246,7 +247,8 @@ print(json.dumps(out))
 def child_env(decoys, tmp_path, **extra) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PLAID_", "APCA_", "AI_API_KEY", "PYTHON"))}
     env.update(FINANCE_SECRETS_FILE=str(decoys["secrets"]), HERMES_ENV_FILE=str(decoys["env"]),
-               HERMES_ALPACA_KEY_FILE=str(decoys["alpaca"]), FINANCE_DATA_DIR=str(tmp_path / "data"), **extra)
+               HERMES_ALPACA_KEY_FILE=str(decoys["alpaca"]), FINANCE_DATA_DIR=str(tmp_path / "data"),
+               **VENDOR_SWITCHES, **extra)   # Alpaca stays as the test left it: the probe reads its key
     return env
 
 

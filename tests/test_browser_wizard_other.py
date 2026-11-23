@@ -102,3 +102,52 @@ def test_a_truly_empty_database_keeps_the_old_sentence(browser, tmp_path):
         assert browser.problems() == []
     finally:
         srv.close()
+
+
+# --- step 5, "Connect your first bank", without Plaid keys ----------------------------------------------------------
+
+def step5(b: Chrome, srv: Server) -> dict:
+    b.size(1440, 900)
+    b.goto(f"{srv.url}/?t={time.time():.3f}#/setup?step=5")
+    b.settle()
+    return b.js("""(() => { const sheet = document.querySelector('#page .sheet');
+      const connect = [...sheet.querySelectorAll('button')].find((x) => x.textContent.includes('Connect a bank'));
+      const note = sheet.querySelector('#su-nokeys');
+      const sf = [...sheet.querySelectorAll('button')].find((x) => x.textContent.includes('SimpleFIN'));
+      return {title: sheet.querySelector('h2').textContent, text: sheet.textContent, off: connect.disabled,
+        note: note ? note.textContent : null, noteSize: note ? parseFloat(getComputedStyle(note).fontSize) : null,
+        noteShown: Boolean(note && note.getClientRects().length), simplefin: sf ? sf.textContent : null,
+        simplefinOn: sf ? !sf.disabled : null}; })()""")
+
+
+def test_without_plaid_keys_the_connect_step_says_why_and_offers_simplefin(browser, tmp_path):
+    from hermes_finance import web
+    srv = Server(empty(tmp_path), today=TODAY)
+    try:
+        page = step5(browser, srv)
+        assert page["title"] == "Connect your first bank" and page["off"] is True
+        assert page["note"] == web.PLAID_SETUP_MSG and page["noteShown"] and page["noteSize"] >= 13
+        assert "Plaid opens in a secure window" not in page["text"]      # the button can't open one
+        assert page["simplefin"] == "Use SimpleFIN instead" and page["simplefinOn"] is True
+        browser.js("[...document.querySelectorAll('#page .sheet button')].find((x) => x.textContent.includes('SimpleFIN')).click()")
+        browser.js("new Promise((res, rej) => { const t0 = Date.now(); const tick = () => { if (document.querySelector('#sheet .ways')) res(1);"
+                   " else if (Date.now() - t0 > 5000) rej(new Error('no chooser')); else setTimeout(tick, 50); }; tick(); })")
+        assert browser.js("document.querySelector('#sheet h2').textContent") == "Link a bank or card"
+        assert "Continue with SimpleFIN" in browser.js("document.getElementById('sheet').textContent")
+        assert browser.problems() == []
+    finally:
+        srv.close()
+
+
+def test_with_plaid_keys_the_connect_step_is_unchanged(browser, tmp_path, monkeypatch):
+    secrets = tmp_path / "secrets.env"
+    secrets.write_text("PLAID_CLIENT_ID=fake-client\nPLAID_SECRET=fake-secret\n")
+    secrets.chmod(0o600)
+    monkeypatch.setenv("FINANCE_SECRETS_FILE", str(secrets))
+    srv = Server(empty(tmp_path), today=TODAY)
+    try:
+        page = step5(browser, srv)
+        assert page["off"] is False and page["note"] is None and page["simplefin"] is None
+        assert "Plaid opens in a secure window" in page["text"]
+    finally:
+        srv.close()

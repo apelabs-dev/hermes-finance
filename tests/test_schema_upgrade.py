@@ -47,6 +47,9 @@ def dump(conn, tables=V1_TABLES):
     every value it had)."""
     added = {(t, c) for t, c, _ in db.ADDED_COLUMNS + db.TASK18_COLUMNS}  # TASK-18: transactions.source ... too
     added |= {("goals", "icon"), ("goals", "colour")}  # v17 appearance does not alter original goal values
+    # v22 fills a missing transaction currency from its account (else the display currency); test_currency_v22 checks
+    # that fill exactly, so the historical row comparison ignores the one column it changes.
+    added |= {("transactions", "iso_currency")}
     out = {}
     for t in tables:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({t})") if (t, r[1]) not in added]
@@ -98,7 +101,7 @@ def test_upgrade_from_v1_keeps_every_row_and_adds_snapshots(data_dir, client, fa
 
     conn = db.connect(path)  # the live DB is upgraded exactly like this on the next start
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert dump(conn) == before
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(balance_snapshots)")]
     assert cols == ["account_id", "date", "current", "available", "iso_currency"]
@@ -171,7 +174,7 @@ def test_upgrade_from_v2_keeps_every_row_and_adds_ai_tables(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert dump(conn, V2_TABLES) == before
     assert columns(conn, "ai_runs") == (["run_id", "created_at", "applied_at", "queued_groups", "queued_txns",
                                          "summary_json"], ["run_id"])
@@ -281,7 +284,7 @@ def test_upgrade_from_v3_keeps_every_row_and_adds_manual_tables(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert dump(conn, V3_TABLES) == before
     assert columns(conn, "manual_accounts") == (
         ["id", "kind", "name", "institution", "subtype", "balance", "credit_limit", "interest_rate", "original_amount",
@@ -289,7 +292,8 @@ def test_upgrade_from_v3_keeps_every_row_and_adds_manual_tables(data_dir):
          "created_at", "updated_at", "archived_at",
          "vin", "vehicle_trim", "mileage", "mileage_as_of", "zip_code", "address", "vin_decoded", "value_source",  # v7
          "vehicle_condition",  # v8
-         "linked_loan_id"],  # v9
+         "linked_loan_id",  # v9
+         "currency"],  # v22
         ["id"])
     assert columns(conn, "manual_balance_history") == (["manual_account_id", "date", "balance"],
                                                        ["manual_account_id", "date"])
@@ -413,7 +417,7 @@ def test_upgrade_from_v4_keeps_every_row_and_adds_the_logo_caches(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert dump(conn, V4_TABLES) == before
     assert columns(conn, "institutions") == (["institution_id", "name", "logo_png", "logo_source", "primary_color", "url",
                                               "fetched_at"], ["institution_id"])
@@ -465,7 +469,7 @@ def test_upgrade_from_v5_keeps_every_row_and_adds_settings(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert dump(conn, V5_TABLES) == before
     assert columns(conn, "settings") == (["key", "value", "updated_at"], ["key"])
     with pytest.raises(sqlite3.IntegrityError):
@@ -515,11 +519,11 @@ def test_upgrade_from_v6_adds_valuation(data_dir):
 
     conn = db.connect(path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert dump(conn, V6_TABLES) == before                          # every old value kept
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(manual_accounts)")]
-    assert cols[-10:] == ["vin", "vehicle_trim", "mileage", "mileage_as_of", "zip_code", "address", "vin_decoded",
-                          "value_source", "vehicle_condition", "linked_loan_id"]
+    assert cols[-11:] == ["vin", "vehicle_trim", "mileage", "mileage_as_of", "zip_code", "address", "vin_decoded",
+                          "value_source", "vehicle_condition", "linked_loan_id", "currency"]
     # an upgraded table is the same as a new one (the columns were added at the end of the CREATE TABLE too)
     fresh = sqlite3.connect(":memory:")
     fresh.executescript(db.SCHEMA)
@@ -624,7 +628,7 @@ def _upgrade_and_check(path: Path, raw: sqlite3.Connection, tables: list[str]) -
     before = dump(raw, tables)
     raw.close()
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert dump(conn, tables) == before
     assert set(V11_NEW + V12_NEW + V13_NEW + V14_NEW + ["pending_actions"]) <= _names(conn) and "v_spend_lines" in _names(conn, "view")
     fresh = db.connect(path.parent / "fresh.db")
@@ -713,7 +717,12 @@ def test_upgrade_from_v11_batch_a_to_v13_adds_only_batch_c_and_task21(data_dir):
     conn = _upgrade_and_check(path, raw, tables)
     assert {r[0]: r[1] for r in conn.execute("SELECT key, value FROM settings WHERE key LIKE 'valuations.%'")} == \
         {"valuations.carfax": "false", "valuations.redfin": "true"}   # the owner's choice, not re-seeded
-    assert [tuple(r) for r in conn.execute("SELECT * FROM transactions WHERE source = 'import'")] == before_imported
+    # v22 fills the imported row's missing currency (its manual account's, USD here); every other value is untouched
+    idx = [r[1] for r in conn.execute("PRAGMA table_info(transactions)")].index("iso_currency")
+    after_imported = [tuple(r) for r in conn.execute("SELECT * FROM transactions WHERE source = 'import'")]
+    strip = lambda rows: [r[:idx] + r[idx + 1:] for r in rows]
+    assert strip(after_imported) == strip(before_imported)
+    assert [r[idx] for r in after_imported] == ["USD"]
     assert tuple(conn.execute("SELECT account_name, institution_name, category, source FROM v_transactions "
                               "WHERE transaction_id = 'imp1'").fetchone()) == ("Credit union", "Local CU", "Other", "import")
     assert tuple(conn.execute("SELECT account_name, institution_name, category, spend FROM v_spend_lines "
@@ -779,7 +788,8 @@ def test_upgrade_from_v13_to_v14_adds_rule_deletions_and_keeps_every_row(data_di
     conn = _upgrade_and_check(path, raw, tables)
     assert [r[1] for r in conn.execute("PRAGMA table_info(classifications)")][-1] == "detached_by"
     assert [r[0] for r in conn.execute("SELECT detached_by FROM classifications")] == [None] * 3
-    assert _names(conn, "trigger") == {"trg_classifications_protect_user", "trg_classifications_detached_changed"}
+    assert _names(conn, "trigger") == {"trg_classifications_protect_user", "trg_classifications_detached_changed",
+                                       "trg_simplefin_requests_day_cap", "trg_simplefin_requests_manual_cap"}
     assert [r[1] for r in conn.execute("PRAGMA table_info(rule_deletions)")] == [
         "id", "receipt_hash", "rule_id", "match_field", "match_type", "pattern", "category_id", "priority", "created_from",
         "created_at", "filed", "deleted_at", "restored_at", "restored_rule_id"]
@@ -793,3 +803,87 @@ def test_upgrade_from_v13_to_v14_adds_rule_deletions_and_keeps_every_row(data_di
     assert tuple(conn.execute("SELECT category_id, source, rule_id, detached_by FROM classifications WHERE transaction_id = 't1'"
                               ).fetchone())[1:] == ("rule", user_rule, None)
     conn.close()
+
+
+def test_upgrade_from_v23_adds_categories_colour_and_keeps_every_row(data_dir):
+    """v24 (categories.colour): a v23 database (tests/fixtures/schema_v23.sql, dumped from the tree before the change),
+    with a hand-made category, a cap, a hidden one, a group budget, a rule, a classification and a goal, gets one new
+    nullable column and nothing else: every row and every value of every table is as it was, the colour is NULL
+    everywhere (follow the group), the upgraded definitions are a new database's, and a rerun or an interrupted run
+    changes nothing. A read-only connection refuses it."""
+    path = config.db_path()
+    raw = _old_db(path, "schema_v23.sql", 23)
+    ts = "2026-08-05T00:00:00Z"
+    assert "colour" not in [r[1] for r in raw.execute("PRAGMA table_info(categories)")]
+    for table, column in (("manual_accounts", "currency"), ("transactions", "iso_currency"), ("accounts", "iso_currency")):
+        raw.execute(f"UPDATE {table} SET {column} = 'USD' WHERE {column} IS NULL")   # v22 fills these on any upgrade
+    raw.execute("INSERT INTO categories (name, is_income, is_transfer, group_id, icon, sort, is_builtin, is_hidden, "
+                "monthly_cap) VALUES ('Kids', 0, 0, (SELECT id FROM category_groups WHERE name = 'Misc'), 'tent', 1001, "
+                "0, 1, 75)")
+    raw.execute("INSERT INTO group_budgets (group_id, amount, created_at, updated_at) "
+                "SELECT id, 900, ?, ? FROM category_groups WHERE name = 'Misc'", (ts, ts))
+    raw.execute("INSERT INTO rules (match_field, match_type, pattern, category_id, priority, created_from, created_at) "
+                "SELECT 'name', 'exact', 'X', id, 200, 'user', ? FROM categories WHERE name = 'Kids'", (ts,))
+    raw.execute("INSERT INTO goals (kind, name, target, icon, colour, created_at, updated_at) "
+                "VALUES ('save', 'Trip', 500, 'tent', '#8ea8ff', ?, ?)", (ts, ts))   # a v23 goal always has both (v17 fills them)
+    raw.commit()
+    every_table = sorted(_names(raw) - {"sqlite_sequence"})
+    before = {t: [tuple(r) for r in raw.execute(f"SELECT * FROM {t} ORDER BY rowid")] for t in every_table}
+    categories_before = [tuple(r) for r in raw.execute("SELECT * FROM categories ORDER BY id")]
+    assert len(categories_before) == 37 and any(r[1] == "Kids" for r in categories_before)
+    raw.close()
+
+    ro = db.connect_readonly(path)                                  # never upgrades, and says so
+    try:
+        assert ro.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert "colour" not in {r[1] for r in ro.execute("PRAGMA table_info(categories)")}
+    finally:
+        ro.close()
+    from hermes_finance import tooldefs
+    with pytest.raises(tooldefs.ToolError) as refused:
+        tooldefs.read_connection(path)
+    assert "schema v23" in str(refused.value) and f"v{db.SCHEMA_VERSION}" in str(refused.value)
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 23
+
+    conn = db.connect(path)
+    assert db.SCHEMA_VERSION == 24 and conn.execute("PRAGMA user_version").fetchone()[0] == 24
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(categories)")]
+    assert cols[-1] == "colour" and cols.count("colour") == 1
+    assert next(r[2:] for r in conn.execute("PRAGMA table_info(categories)") if r[1] == "colour")[:1] == ("TEXT",)
+    assert [tuple(r)[:-1] for r in conn.execute("SELECT * FROM categories ORDER BY id")] == categories_before
+    assert [r[0] for r in conn.execute("SELECT colour FROM categories")] == [None] * 37
+    for t in every_table:
+        if t == "categories":
+            continue
+        got = [tuple(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY rowid")]
+        if t == "settings":                                         # nothing is written by the step itself
+            got = [r for r in got if r in before[t]]
+        assert got == before[t], t
+    fresh = db.connect(path.parent / "fresh.db")
+    assert _shape(conn) == _shape(fresh)                            # an upgraded database is a new one plus its rows
+    assert [tuple(r) for r in conn.execute("SELECT name, type, \"notnull\", dflt_value FROM pragma_table_info('categories')")] \
+        == [tuple(r) for r in fresh.execute("SELECT name, type, \"notnull\", dflt_value FROM pragma_table_info('categories')")]
+    assert [r[0] for r in fresh.execute("SELECT colour FROM categories")] == [None] * 36
+    fresh.close()
+    after = [tuple(r) for r in conn.execute("SELECT * FROM categories ORDER BY id")]
+    db.init_schema(conn)                                            # again: nothing changes
+    assert [tuple(r) for r in conn.execute("SELECT * FROM categories ORDER BY id")] == after
+    with conn:
+        conn.execute("UPDATE categories SET colour = '#ff7b7b' WHERE name = 'Kids'")
+        conn.execute("PRAGMA user_version = 23")                    # as if the run stopped before the version was written
+    conn.close()
+    conn = db.connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 24
+    assert conn.execute("SELECT colour FROM categories WHERE name = 'Kids'").fetchone()[0] == "#ff7b7b"   # kept, not reset
+    assert conn.execute("SELECT COUNT(*) FROM categories WHERE colour IS NOT NULL").fetchone()[0] == 1
+    conn.close()
+
+
+def test_v24_schema_clears_a_colour_that_is_not_one_of_the_swatches(conn):
+    with conn:
+        conn.execute("UPDATE categories SET colour = '#123456' WHERE name = 'Coffee'")
+        conn.execute("UPDATE categories SET colour = '#4fd1a5' WHERE name = 'Groceries'")
+    db._v24_schema(conn)
+    db._v24_schema(conn)
+    assert conn.execute("SELECT colour FROM categories WHERE name = 'Coffee'").fetchone()[0] is None
+    assert conn.execute("SELECT colour FROM categories WHERE name = 'Groceries'").fetchone()[0] == "#4fd1a5"

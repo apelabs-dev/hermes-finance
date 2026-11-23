@@ -40,12 +40,18 @@ os.environ["HERMES_ALPACA"] = "off"
 # TASK-22: nor Plaid (Sync now and finance_sync reach it from the app, the plugin and `finance mcp`): the real transport
 # refuses while this is set, in this process and every one a test starts. Tests hand PlaidClient a FakePlaid.
 os.environ["HERMES_PLAID"] = "off"
+# v21: nor SimpleFIN Bridge (its setup token, /accounts, or either vendor's logo): the real transport refuses while
+# this is set, in this process and every process a test starts. SimpleFIN tests inject a fake transport.
+os.environ["HERMES_SIMPLEFIN"] = "off"
 # TASK-23: nor Hermes's API server (the Ask panel's default brain, 127.0.0.1:8642: loopback, so the socket guard below
 # lets it through): every process names a closed port instead. A Hermes-mode test points it at its own fake server.
 os.environ["FINANCE_HERMES_URL"] = "http://127.0.0.1:9/v1"
 # Nor the real Hermes through the Ask bridge (bridge.executable): the hermes executable is a path that doesn't exist, in
 # every process a test starts too. A bridge test points FINANCE_HERMES_BIN at its own stub or sandboxed runtime.
 os.environ["FINANCE_HERMES_BIN"] = str(Path(tempfile.gettempdir()) / "hermes-finance-tests-no-hermes-bin")
+# Nor a real Claude Code or Codex CLI (clibrain.executable): the whole CLI brain is off, in every process a test starts
+# too. A CLI-brain test lifts the switch and points FINANCE_CLAUDE_BIN / FINANCE_CODEX_BIN at its own stub.
+os.environ["HERMES_CLI_BRAINS"] = "off"
 
 from hermes_finance import alpaca, cdp_client, config, db, photos, valuation  # noqa: E402
 from hermes_finance.config import Settings  # noqa: E402
@@ -122,6 +128,7 @@ def no_network(request, monkeypatch):
     DevTools, or a Unix socket."""
     if request.node.get_closest_marker("live"):
         monkeypatch.delenv("HERMES_PLAID", raising=False)
+        monkeypatch.delenv("HERMES_SIMPLEFIN", raising=False)
         return
 
     def blocked(*args, **kwargs):
@@ -168,6 +175,8 @@ def no_network(request, monkeypatch):
     monkeypatch.setenv("HERMES_ALPACA_KEY_FILE", str(NO_ALPACA_KEYS))
     monkeypatch.setenv("HERMES_ALPACA", "off")
     monkeypatch.setenv("HERMES_PLAID", "off")
+    monkeypatch.setenv("HERMES_SIMPLEFIN", "off")
+    monkeypatch.setenv("HERMES_CLI_BRAINS", "off")
     monkeypatch.setattr(alpaca, "transport", lambda *a, **k: blocked())  # an Alpaca test sets its own
     assert not NO_ENV_FILE.exists() and not NO_SECRETS_FILE.exists() and not NO_ALPACA_KEYS.exists()
 

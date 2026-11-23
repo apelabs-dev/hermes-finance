@@ -1,0 +1,2 @@
+/* The Colour row of the New / Edit category sheet (catcolour.js) is the goal form's own swatch row: it reuses
+   goals.css's `.gcolours` / `.gcolour` rules, so it has no styles of its own. */

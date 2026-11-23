@@ -27,6 +27,7 @@ from typing import Any, Iterable
 
 from . import manual
 from .money import money
+from .db import display_currency
 
 DAYS = 5            # an entry lasts this many days after the payment left (and a card's inflow this close answers it)
 CENTS = 0.01        # a card's inflow within a cent of the payment answers it
@@ -127,5 +128,6 @@ def entries(conn: sqlite3.Connection, today: date, excluded: Iterable[str] = ())
                     "from_account": {"name": t["account_name"], "mask": t["account_mask"]},
                     "card_id": card["account_id"], "card": card["name"], "mask": card["mask"],
                     "institution": card["institution_name"], "label": label,
-                    "line": f"Payment in transit: {money(t['amount'])} to {label} (sent {sent:%b} {sent.day})"})
+                    "line": f"Payment in transit: {money(t['amount'], currency=display_currency(conn))} to {label} "
+                            f"(sent {sent:%b} {sent.day})"})
     return out

@@ -14,9 +14,9 @@ import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config
+from . import caticons, config
 
-SCHEMA_VERSION = 20  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
+SCHEMA_VERSION = 24  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
                      # 4: manual_accounts, manual_balance_history, loan_payments, holding_snapshots;
                      # 5: institutions, security_logos; 6: settings;
                      # 7: manual_accounts vin..value_source, asset_valuations, vin_decodes, api_usage, api_calls;
@@ -44,6 +44,16 @@ SCHEMA_VERSION = 20  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_revie
                      # 20 (account policy): view-only change. v_transactions filters accounts in the
                      #    `excluded_accounts` denylist, so spending, budgets, cash flow and the transaction lists inherit
                      #    it; the view is recreated by init_schema (no table or data change)
+                     # 21 (SimpleFIN): items.provider, accounts.conn_id, transactions.source gains 'simplefin' (the
+                     #    CHECK can't be altered: _v21_schema rebuilds transactions with every row, index, trigger and
+                     #    view kept), and simplefin_requests, the cross-process request budget (_v21_schema)
+                     # 22 (multi-currency): manual_accounts.currency (ADDED_COLUMNS) and v_spend_lines.iso_currency.
+                     #    Transactions with no code inherit their account's (else the display currency); a known code is
+                     #    never overwritten. No FX: amounts and codes are preserved (_v22_currency)
+                     # 23 (categories): categories.is_builtin / categories.is_hidden, the 36 seeded rows marked built-in
+                     #    (after v22 Currency; this step depends on nothing it adds)
+                     # 24 (category colour): categories.colour (ADDED_COLUMNS), NULL = the icon follows its group, else
+                     #    one of the eight swatches (caticons.COLOURS); _v24_schema keeps only those eight
 
 # Estimated values of manual vehicles (the Carfax trade-in) and properties (the Redfin Estimate): one row per successful
 # lookup, never updated. Rows 'marketcheck' / 'rentcast' (before TASK-13b) stay as history, never shown or used.
@@ -83,7 +93,8 @@ CREATE TABLE IF NOT EXISTS items (
     txn_update_status TEXT,                   -- Plaid transactions_update_status
     created_at        TEXT NOT NULL,          -- when we exchanged it (= a Trial slot was used)
     last_sync_at      TEXT,
-    removed_at        TEXT                    -- rows are NEVER deleted; removed Items keep their slot
+    removed_at        TEXT,                   -- rows are NEVER deleted; removed Items keep their slot
+    provider          TEXT NOT NULL DEFAULT 'plaid' CHECK (provider IN ('plaid', 'simplefin'))  -- v21
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -98,7 +109,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     available_balance REAL,
     credit_limit      REAL,
     iso_currency      TEXT,
-    updated_at        TEXT
+    updated_at        TEXT,
+    conn_id           TEXT                    -- v21: SimpleFIN's connection id (NULL for Plaid)
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -307,8 +319,10 @@ CREATE TABLE IF NOT EXISTS manual_accounts (
     vehicle_condition TEXT CHECK (vehicle_condition IN ('fair', 'good', 'excellent')),
                                               -- vehicles: what Carfax prices (carfax.com/value's own list); 'good'
     -- v9 (TASK-13b)
-    linked_loan_id  INTEGER REFERENCES manual_accounts(id)
+    linked_loan_id  INTEGER REFERENCES manual_accounts(id),
                                               -- vehicle / property: the manual loan it's financed by (its equity)
+    -- v22 (multi-currency)
+    currency        TEXT                      -- ISO 4217 code, or a provider's custom id; NULL reads as the display currency
 );
 
 -- Balance of a manual account over time: the entered balance on its balance_as_of day, plus (loans) the
@@ -632,7 +646,7 @@ DROP VIEW IF EXISTS v_items;
 -- Items without the access token.
 CREATE VIEW v_items AS
 SELECT item_id, institution_id, institution_name, status, error_code, error_message, products,
-       txn_update_status, created_at, last_sync_at, removed_at
+       txn_update_status, created_at, last_sync_at, removed_at, provider
 FROM items;
 
 -- Effective category: classification row (user > user rule > ai > ai rule > plaid, materialized by
@@ -860,7 +874,36 @@ ADDED_COLUMNS = [
     ("categories", "group_id", "INTEGER REFERENCES category_groups(id)"),           # v16 (polish P0): NULL = Income,
     ("categories", "icon", "TEXT"),                                                 # Transfers; a Lucide icon name
     ("categories", "sort", "INTEGER"),                                              # order within its group
+    ("items", "provider", "TEXT NOT NULL DEFAULT 'plaid' CHECK (provider IN ('plaid', 'simplefin'))"),   # v21
+    ("accounts", "conn_id", "TEXT"),                                                # v21 (SimpleFIN)
+    ("manual_accounts", "currency", "TEXT"),                                         # v22 (multi-currency)
+    ("categories", "is_builtin", "INTEGER NOT NULL DEFAULT 0"),                     # v23 (categories)
+    ("categories", "is_hidden", "INTEGER NOT NULL DEFAULT 0"),                      # v23 (categories)
+    ("categories", "colour", "TEXT"),                                               # v24: NULL = follow the group
 ]
+
+# v23 (categories): the 36 seeded rows, by name, are built-ins (catops.py's built-in guard reads this).
+BUILTIN_CATEGORY_NAMES = tuple(c[0] for c in DEFAULT_CATEGORIES)
+assert len(BUILTIN_CATEGORY_NAMES) == 36
+
+
+def _v23_schema(conn: sqlite3.Connection) -> None:
+    """v22 -> v23 (categories): mark the 36 seeded categories built-in, by name, only for rows that exist. A hand-made
+    category (is_builtin 0) and every is_hidden value are left as they are; a rerun changes nothing (the is_builtin = 0
+    guard matches no row the first run marked). Runs after DEFAULT_CATEGORIES are inserted and after v19's renames."""
+    assert len(BUILTIN_CATEGORY_NAMES) == 36
+    marks = ", ".join("?" for _ in BUILTIN_CATEGORY_NAMES)
+    conn.execute(f"UPDATE categories SET is_builtin = 1 WHERE is_builtin = 0 AND name IN ({marks})",
+                 BUILTIN_CATEGORY_NAMES)
+
+
+def _v24_schema(conn: sqlite3.Connection) -> None:
+    """v23 -> v24 (category colour): the column itself comes from ADDED_COLUMNS (NULL on every existing row: the icon
+    follows its group). This step keeps only values the eight swatches allow and reads anything else as NULL; on a
+    column the upgrade just made that is no row, and a rerun changes nothing."""
+    marks = ", ".join("?" for _ in caticons.COLOURS)
+    conn.execute(f"UPDATE categories SET colour = NULL WHERE colour IS NOT NULL AND colour NOT IN ({marks})",
+                 caticons.COLOURS)
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
@@ -881,6 +924,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             _link_loans(conn)
         _migrate_task18(conn, before)
         _task24_schema(conn)   # before VIEWS: v_transactions reads rule_deletions
+        _v21_schema(conn)      # before VIEWS: transactions is rebuilt (the new source CHECK) while nothing reads it
+        _v22_currency(conn)    # before VIEWS: fills every missing code, then v_spend_lines reads it
         conn.executescript(VIEWS)
         _task19_schema(conn)
         _task21_schema(conn)
@@ -904,6 +949,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
         _v18_schema(conn)
         if before < 19:
             _v19_schema(conn)
+        if before < 23:   # after the seeded rows are in and after v19's renames: the 36 of them exist, by their names
+            _v23_schema(conn)
+        if before < 24:   # the column was added above; only a stray value needs reading as NULL
+            _v24_schema(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
@@ -1058,13 +1107,13 @@ DROP VIEW IF EXISTS v_spend_lines;
 -- chart, cash flow, alerts, `finance spend` / budget-status) read this; a split never changes a total.
 CREATE VIEW v_spend_lines AS
 SELECT v.transaction_id, NULL AS split_line, v.date, v.month, v.name, v.merchant_name, v.amount, v.spend, v.pending,
-       v.category_id, v.category, v.category_source, v.is_income, v.is_transfer, v.account_id, v.account_name,
-       v.account_mask, v.account_type, v.item_id, v.institution_name, v.pfc_primary, v.pfc_detailed
+       v.iso_currency, v.category_id, v.category, v.category_source, v.is_income, v.is_transfer, v.account_id,
+       v.account_name, v.account_mask, v.account_type, v.item_id, v.institution_name, v.pfc_primary, v.pfc_detailed
 FROM v_transactions v
 WHERE NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = v.transaction_id)
 UNION ALL
 SELECT v.transaction_id, s.line, v.date, v.month, v.name, v.merchant_name, s.amount, s.amount, v.pending,
-       cat.id, cat.name, 'split', cat.is_income, cat.is_transfer, v.account_id, v.account_name,
+       v.iso_currency, cat.id, cat.name, 'split', cat.is_income, cat.is_transfer, v.account_id, v.account_name,
        v.account_mask, v.account_type, v.item_id, v.institution_name, v.pfc_primary, v.pfc_detailed
 FROM transaction_splits s
 JOIN v_transactions v ON v.transaction_id = s.transaction_id
@@ -1149,6 +1198,154 @@ def _task24_schema(conn: sqlite3.Connection) -> None:
     before this runs). Idempotent (CREATE IF NOT EXISTS). Rows a deleted rule filed before v15 have no receipt: they keep
     no user protection and no Undo."""
     conn.executescript(TASK24_SCHEMA)
+
+
+# --- v21: SimpleFIN (the transactions CHECK rebuild, and the provider's request budget) --------------------------------
+TRANSACTIONS_V21 = """CREATE TABLE transactions_v21 (
+    transaction_id         TEXT PRIMARY KEY,
+    account_id             TEXT NOT NULL REFERENCES accounts(account_id),
+    item_id                TEXT NOT NULL REFERENCES items(item_id),
+    date                   TEXT NOT NULL,     -- YYYY-MM-DD (posted date, or pending date)
+    authorized_date        TEXT,
+    name                   TEXT,
+    merchant_name          TEXT,
+    amount                 REAL NOT NULL,     -- Plaid sign: POSITIVE = money OUT, NEGATIVE = money IN
+    iso_currency           TEXT,
+    pending                INTEGER NOT NULL DEFAULT 0,
+    pending_transaction_id TEXT,
+    payment_channel        TEXT,              -- online | in store | other
+    pfc_primary            TEXT,              -- Plaid personal_finance_category.primary
+    pfc_detailed           TEXT,
+    pfc_confidence         TEXT,              -- VERY_HIGH | HIGH | MEDIUM | LOW | UNKNOWN
+    logo_url               TEXT,
+    website                TEXT,
+    location_json          TEXT,
+    counterparties_json    TEXT,
+    raw_json               TEXT,              -- full Plaid transaction object
+    removed                INTEGER NOT NULL DEFAULT 0,  -- 1 = Plaid / SimpleFIN removed it; row kept
+    first_seen_at          TEXT NOT NULL,
+    updated_at             TEXT NOT NULL,
+    source                 TEXT NOT NULL DEFAULT 'plaid' CHECK (source IN ('plaid', 'import', 'simplefin')),
+    import_id              INTEGER REFERENCES imports(id),
+    fitid                  TEXT
+)"""
+TRANSACTIONS_V21_COLUMNS = [
+    "transaction_id", "account_id", "item_id", "date", "authorized_date", "name", "merchant_name", "amount",
+    "iso_currency", "pending", "pending_transaction_id", "payment_channel", "pfc_primary", "pfc_detailed",
+    "pfc_confidence", "logo_url", "website", "location_json", "counterparties_json", "raw_json", "removed",
+    "first_seen_at", "updated_at", "source", "import_id", "fitid",
+]
+V21_SCHEMA = """
+-- Every SimpleFIN /accounts request, counted before it is made (simplefin_sync.reserve_request), so the 24-a-day
+-- provider budget and the 6 manual syncs a day hold across processes (the app, the CLI, the Hermes plugin). A failed,
+-- timed-out or refused call still counts: it was attempted. daily: the Hermes jobs' sync. manual: Sync now / a person's
+-- `finance sync`. confirm / backfill: the claim and the one-year first sync (they count against 24, never against 6).
+CREATE TABLE IF NOT EXISTS simplefin_requests (
+    id         INTEGER PRIMARY KEY,
+    at         TEXT NOT NULL,                 -- UTC timestamp
+    day        TEXT NOT NULL,                 -- local YYYY-MM-DD
+    trigger    TEXT NOT NULL CHECK (trigger IN ('daily', 'manual', 'confirm', 'backfill')),
+    start_date TEXT,                          -- the window asked for: YYYY-MM-DD
+    end_date   TEXT,
+    outcome    TEXT NOT NULL DEFAULT 'pending',  -- pending | ok | error | disconnected | limited | blocked
+    note       TEXT                           -- what happened, in words (never a URL or a token)
+);
+CREATE INDEX IF NOT EXISTS idx_simplefin_requests_day ON simplefin_requests(day, trigger);
+-- The hard local caps, enforced by the database itself: no code path can exceed them.
+CREATE TRIGGER IF NOT EXISTS trg_simplefin_requests_day_cap
+BEFORE INSERT ON simplefin_requests
+WHEN (SELECT COUNT(*) FROM simplefin_requests WHERE day = NEW.day) >= 24
+BEGIN
+    SELECT RAISE(ABORT, 'SimpleFIN request budget used up for today');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_simplefin_requests_manual_cap
+BEFORE INSERT ON simplefin_requests
+WHEN NEW.trigger = 'manual'
+ AND (SELECT COUNT(*) FROM simplefin_requests WHERE day = NEW.day AND trigger = 'manual') >= 6
+BEGIN
+    SELECT RAISE(ABORT, 'SimpleFIN allows 6 manual syncs a day');
+END;
+"""
+
+
+def display_currency(conn: sqlite3.Connection) -> str:
+    """The Settings > Region display currency (USD by default). Amounts are never converted to it: it is the currency
+    the one-number totals are kept in, and the fallback for a row with no code of its own."""
+    row = conn.execute("SELECT value FROM settings WHERE key = 'region.currency'").fetchone()
+    try:
+        value = json.loads(row[0]) if row else None
+    except (TypeError, ValueError):
+        value = None
+    return str(value).strip().upper() if isinstance(value, str) and value.strip() else "USD"
+
+
+def _v22_currency(conn: sqlite3.Connection) -> None:
+    """v21 -> v22 (multi-currency): one numbered step, idempotent, so it can be renumbered mechanically at a merge.
+
+    manual_accounts.currency is in ADDED_COLUMNS; every old manual account is display currency. A transaction with no
+    code inherits its account's currency (accounts.iso_currency, or a manual account's currency for an imported row),
+    else the display currency. A non-empty code and every amount are left exactly as they were: there is no FX here.
+    Balance snapshots with no code get the same account currency, so history is read the same way as the current value.
+    """
+    display = display_currency(conn)
+    conn.execute("UPDATE manual_accounts SET currency = ? WHERE currency IS NULL OR TRIM(currency) = ''", (display,))
+    conn.execute(
+        """UPDATE transactions SET iso_currency = COALESCE(
+               NULLIF(TRIM(iso_currency), ''),
+               (SELECT NULLIF(TRIM(a.iso_currency), '') FROM accounts a
+                 WHERE a.account_id = transactions.account_id),
+               (SELECT NULLIF(TRIM(m.currency), '') FROM manual_accounts m
+                 WHERE transactions.account_id = 'manual:' || m.id),
+               ?)
+           WHERE iso_currency IS NULL OR TRIM(iso_currency) = ''""", (display,))
+    conn.execute(
+        """UPDATE balance_snapshots SET iso_currency = COALESCE(
+               NULLIF(TRIM(iso_currency), ''),
+               (SELECT NULLIF(TRIM(a.iso_currency), '') FROM accounts a
+                 WHERE a.account_id = balance_snapshots.account_id),
+               ?)
+           WHERE iso_currency IS NULL OR TRIM(iso_currency) = ''""", (display,))
+
+
+def _v21_schema(conn: sqlite3.Connection) -> None:
+    """v20 -> v21 (SimpleFIN): SQLite can't change a CHECK, so transactions is copied into a table whose source accepts
+    'plaid', 'import' and 'simplefin', then swapped in. Every row and column is copied, the five indexes and every
+    trigger on the table are made again, and the views (v_transactions and the ones that read it) keep their names and
+    definitions: the view SQL never refers to the temporary name. One transaction; a leftover transactions_v21 from an
+    interrupted run is dropped first, and a table that already accepts 'simplefin' is left alone (only the request
+    budget table is ensured). Idempotent and interruptible."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'").fetchone()
+    if row is None or "'simplefin'" in row[0]:
+        conn.execute("DROP TABLE IF EXISTS transactions_v21")   # a finished migration's leftover is never copied
+        conn.executescript(V21_SCHEMA)
+        return
+    triggers = [r[0] for r in conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'transactions' AND sql IS NOT NULL")]
+    # Every view goes while the table is swapped (SQLite validates them on RENAME and refuses a missing table), then
+    # comes back exactly as it was; init_schema makes v_transactions and v_spend_lines again after this.
+    views = [(r[0], r[1]) for r in conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'view' AND sql IS NOT NULL ORDER BY rowid")]
+    for name, _ in views:
+        conn.execute(f'DROP VIEW IF EXISTS "{name}"')
+    columns = ", ".join(TRANSACTIONS_V21_COLUMNS)
+    conn.execute("DROP TABLE IF EXISTS transactions_v21")
+    conn.execute(TRANSACTIONS_V21)
+    conn.execute(f"INSERT INTO transactions_v21 ({columns}) SELECT {columns} FROM transactions")
+    conn.execute("DROP TABLE transactions")
+    conn.execute("ALTER TABLE transactions_v21 RENAME TO transactions")
+    for _, sql in views:
+        conn.execute(sql)
+    conn.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+        CREATE INDEX IF NOT EXISTS idx_transactions_item ON transactions(item_id);
+        CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
+        CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_name);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_fitid ON transactions(account_id, fitid)
+            WHERE fitid IS NOT NULL;
+    """)
+    for sql in triggers:
+        conn.execute(sql)
+    conn.executescript(V21_SCHEMA)
 
 
 # --- polish P0: category groups --------------------------------------------------------------------------------------
@@ -1359,7 +1556,7 @@ def connect_readonly(path: Path | None = None, timeout: float = 30) -> sqlite3.C
 def slots_used(conn: sqlite3.Connection) -> int:
     """Every Item ever exchanged counts, including removed ones (Plaid Trial never frees slots), plus every blocked
     duplicate the owner confirmed Plaid counted anyway (outcome 'duplicate_counted': an Item with no access_token)."""
-    return conn.execute("SELECT (SELECT COUNT(*) FROM items) + "
+    return conn.execute("SELECT (SELECT COUNT(*) FROM items WHERE provider = 'plaid') + "
                         "(SELECT COUNT(*) FROM link_attempts WHERE outcome = 'duplicate_counted')").fetchone()[0]
 
 

@@ -7,14 +7,15 @@ string (first value per key). All SQL is parameterized; filters never reach SQL 
 from __future__ import annotations
 
 import json
+import logging
 import math
 import sqlite3
 from datetime import date, timedelta
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from . import (alpaca, bills, classify, goals, groupbudget, insights, logos, manual, mcp_state, portfolio, prefs, report, txmeta,
-               valuation)
+from . import (alpaca, bills, caticons, catops, classify, config, goals, groupbudget, insights, logos, manual, mcp_state,
+               portfolio, prefs, report, simplefin_sync, txmeta, valuation)
 from .db import account_policy_sql, now
 
 # Only these image hosts are ever handed to the browser (they're also the CSP img-src).
@@ -49,6 +50,7 @@ KINDS = {
     "income": "v.is_income = 1",
     "transfers": "v.is_transfer = 1",
 }
+log = logging.getLogger(__name__)
 DEFAULT_LIMIT, MAX_LIMIT = 50, 500
 MAX_TEXT = 200
 MAX_CAP = 100_000
@@ -136,7 +138,7 @@ def last_sync(conn: sqlite3.Connection) -> str | None:
 # --- transactions ----------------------------------------------------------------------------------
 
 TXN_SELECT = """
-    SELECT v.transaction_id, v.date, v.name, v.merchant_name, v.amount, v.pending, v.category,
+    SELECT v.transaction_id, v.date, v.name, v.merchant_name, v.amount, v.iso_currency, v.pending, v.category,
            v.category_source, v.is_income, v.is_transfer, v.account_name, v.account_mask,
            v.institution_name, it.institution_id, v.logo_url, v.ai_note, v.ai_flagged, v.ai_verdict,
            json_extract(t.raw_json, '$.personal_finance_category_icon_url') AS icon_url
@@ -152,6 +154,7 @@ def _txn(r: sqlite3.Row) -> dict[str, Any]:
         "name": r["name"],
         "merchant_name": r["merchant_name"],
         "amount": r["amount"],
+        "iso_currency": (r["iso_currency"] or "").strip().upper() or None,
         "pending": bool(r["pending"]),
         "category": r["category"],
         "category_source": r["category_source"],
@@ -306,16 +309,42 @@ def _totals(conn: sqlite3.Connection, where: list[str], args: list[Any], kind: s
     expr, eargs = amount
     if conn.execute(f"SELECT 1 FROM v_transactions v WHERE {base} AND v.is_transfer = 0 LIMIT 1", args).fetchone():
         expr = f"(CASE WHEN v.is_transfer = 1 THEN 0 ELSE {expr} END)"
-    total = conn.execute(f"SELECT COALESCE(SUM({expr}), 0) FROM v_transactions v WHERE {base}", [*eargs, *args]).fetchone()[0]
-    months = {m: {"count": n, "total": insights._r(s)} for m, n, s in conn.execute(
-        f"SELECT v.month, COUNT(*), COALESCE(SUM({expr}), 0) FROM v_transactions v WHERE {base} GROUP BY v.month",
+    # No FX: each currency has its own figure. `sum` / `total` stay the display currency's (the one-number totals the
+    # page and the read commands have always shown); `sums` / `totals` carry every code a mixed day has.
+    display = insights._display(conn)
+    ccy = insights.currency_expr(display, "v.iso_currency")
+    sums = {code: insights._r(s) for code, s in conn.execute(
+        f"SELECT {ccy} AS currency, COALESCE(SUM({expr}), 0) FROM v_transactions v WHERE {base} GROUP BY currency",
         [*eargs, *args])}
+    total = sums.get(display, 0.0)
+    months = {}
+    for m, n, code, s in conn.execute(
+            f"SELECT v.month, COUNT(*), {ccy} AS currency, COALESCE(SUM({expr}), 0) FROM v_transactions v WHERE {base} "
+            f"GROUP BY v.month, currency", [*eargs, *args]):
+        e = months.setdefault(m, {"count": 0, "total": 0.0, "totals": {}})
+        e["count"] += n
+        e["totals"][code] = insights._r(s)
+        if code == display:
+            e["total"] = insights._r(s)
     days = {}
     if dates:
-        for d, n, s in conn.execute(f"SELECT v.date, COUNT(*), COALESCE(SUM({expr}), 0) FROM v_transactions v WHERE {base} "
-                                    f"AND v.date IN ({', '.join('?' * len(dates))}) GROUP BY v.date", [*eargs, *args, *dates]):
-            days[d] = {"count": n, "total": insights._r(s)}
-    return {"sum": insights._r(total), "days": days, "months": months}
+        for d, n, code, s in conn.execute(
+                f"SELECT v.date, COUNT(*), {ccy} AS currency, COALESCE(SUM({expr}), 0) FROM v_transactions v WHERE {base} "
+                f"AND v.date IN ({', '.join('?' * len(dates))}) GROUP BY v.date, currency", [*eargs, *args, *dates]):
+            e = days.setdefault(d, {"count": 0, "total": 0.0, "totals": {}})
+            e["count"] += n
+            e["totals"][code] = insights._r(s)
+            if code == display:
+                e["total"] = insights._r(s)
+    for e in [*days.values(), *months.values()]:
+        # A single-currency day/months entry stays exactly {count, total}: the extra per-currency map appears only when
+        # there is a second code (or a foreign one), so the old payloads are unchanged.
+        kept = {k: v for k, v in e["totals"].items() if round(v * 100)}
+        if len(kept) > 1 or (kept and display not in kept):
+            e["totals"] = kept
+        else:
+            e.pop("totals", None)
+    return {"sum": insights._r(total), "sums": sums, "days": days, "months": months}
 
 
 def facets(conn: sqlite3.Connection, kind: str, for_categories: tuple[list[str], list[Any]],
@@ -374,8 +403,11 @@ def overview(conn: sqlite3.Connection, params: dict[str, str], today: date) -> d
     cats = insights.category_spend(conn, month, today, rec)
     alerts = insights.alerts(conn, month, today, cats)
     nw = insights.net_worth(conn, history=False, today=today)
-    banks = conn.execute("SELECT COUNT(*) FROM items WHERE removed_at IS NULL").fetchone()[0]
+    banks = conn.execute("SELECT COUNT(*) FROM items WHERE removed_at IS NULL AND provider = 'plaid'").fetchone()[0]
     api_items = alpaca.items_payload(conn)
+    sf = simplefin_sync.status(conn, today)
+    sf_connected = 1 if sf["connected"] else 0
+    sf_broken = 1 if sf["state"] in ("needs_login", "subscription", "quota", "disconnected") else 0
     horizon = (today + timedelta(days=30)).isoformat()
     flow = insights.cashflow(conn, 6, today, end=month)
     return {
@@ -390,9 +422,9 @@ def overview(conn: sqlite3.Connection, params: dict[str, str], today: date) -> d
         # TASK-22f: every connection, the Plaid banks and Alpaca (the health chip: "All 9 connections healthy"; banks is
         # the Plaid part, what a sync covers)
         "connections": {
-            "total": banks + len(api_items), "banks": banks,
+            "total": banks + len(api_items) + sf_connected, "banks": banks,
             "broken": sum(a["kind"] == "connection" for a in alerts)
-                      + sum(it["status"] != "active" or bool(it["error_code"]) for it in api_items)},
+                      + sum(it["status"] != "active" or bool(it["error_code"]) for it in api_items) + sf_broken},
         "bills": [r for r in items if r["kind"] == "bill"],
         "upcoming": [r for r in items if today.isoformat() <= r["next_expected"] <= horizon],
         "recurring_totals": rec["monthly_totals"],
@@ -602,6 +634,10 @@ def sparks(conn: sqlite3.Connection, today: date, days: int = 60) -> dict[str, l
 def accounts(conn: sqlite3.Connection, params: dict[str, str] | None = None,
              today: date | None = None) -> dict[str, Any]:
     today = today or date.today()
+    try:   # the Add account chooser's vendor logos; a page request never waits on a vendor site
+        logos.ensure_vendor_logos(conn, background=True, db_path=config.db_path())
+    except Exception as e:
+        log.info("vendor logo trigger failed: %s", e)
     s = report.status(conn)  # built on v_items: never includes access tokens
     connected = sorted({it["institution_id"] for it in s["items"] if not it["removed_at"] and it["institution_id"]})
     liab = {r["account_id"]: {"apr": r["interest_rate"], "min_payment": r["minimum_payment_amount"],
@@ -617,6 +653,7 @@ def accounts(conn: sqlite3.Connection, params: dict[str, str] | None = None,
             "liabilities": liab, "institutions": logos.institutions_payload(conn),
             "valuation": valuation.providers(conn, today),
             "api_items": alpaca.items_payload(conn),  # TASK-19: Alpaca (read-only API; no Plaid slot)
+            "simplefin": simplefin_sync.status(conn, today),   # v21: the SimpleFIN tag, duplicate review, requests
             "today": today.isoformat(), "last_sync": last_sync(conn)}
 
 
@@ -680,19 +717,33 @@ def match_preview(conn: sqlite3.Connection, params: dict[str, str], today: date)
                                            "applied_to")} for t in found[:12]]}
 
 
-CATEGORY_ROWS = ("SELECT c.name, c.is_income, c.is_transfer, c.monthly_cap, c.icon, g.name AS grp, g.rgb "
-                 "FROM categories c LEFT JOIN category_groups g ON g.id = c.group_id")
+CATEGORY_ROWS = ("SELECT c.name, c.is_income, c.is_transfer, c.monthly_cap, c.icon, c.colour, c.is_builtin, "
+                 "c.is_hidden, g.name AS grp, g.rgb FROM categories c LEFT JOIN category_groups g ON g.id = c.group_id")
 
 
 def _category(r: sqlite3.Row) -> dict[str, Any]:
     return {"name": r["name"], "is_income": bool(r["is_income"]), "is_transfer": bool(r["is_transfer"]),
             "spending": not (r["is_income"] or r["is_transfer"]), "monthly_cap": r["monthly_cap"],
-            "group": r["grp"], "icon": r["icon"], "rgb": r["rgb"]}   # v16: group / rgb None for Income and Transfers
+            "group": r["grp"], "icon": r["icon"], "rgb": r["rgb"],   # v16: group / rgb None for Income and Transfers
+            "built_in": bool(r["is_builtin"]), "hidden": bool(r["is_hidden"]),   # v23
+            "colour": r["colour"], "effective_colour": catops.effective_colour(r["colour"], r["rgb"])}   # v24
 
 
 def categories(conn: sqlite3.Connection, params: dict[str, str] | None = None,
                today: date | None = None) -> list[dict[str, Any]]:
     return [_category(r) for r in conn.execute(f"{CATEGORY_ROWS} ORDER BY c.name")]
+
+
+def category_icons(conn: sqlite3.Connection, params: dict[str, str] | None = None,
+                   today: date | None = None) -> dict[str, Any]:
+    """v23: the 100-icon set in its 8 groups, the two 16-icon common sets, and the count (static: the shared picker)."""
+    return caticons.payload()
+
+
+def categories_page(conn: sqlite3.Connection, params: dict[str, str] | None = None,
+                    today: date | None = None) -> dict[str, Any]:
+    """v23: Settings -> Categories: every category with its group, icon, flags and this month's spend, in display order."""
+    return catops.payload(conn, today)
 
 
 def category_groups(conn: sqlite3.Connection, params: dict[str, str] | None = None,
@@ -829,6 +880,8 @@ GET_ROUTES: dict[str, Callable[[sqlite3.Connection, dict[str, str], date], Any]]
     "/api/recurring": recurring_page,
     "/api/accounts": accounts,
     "/api/categories": categories,
+    "/api/categories/icons": category_icons,
+    "/api/categories/page": categories_page,
     "/api/category-groups": category_groups,
     "/api/counts": counts,
     "/api/manual": manual_list,
@@ -892,6 +945,35 @@ def set_cap(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     with conn:
         conn.execute("UPDATE categories SET monthly_cap = ? WHERE id = ?", (cap, row["id"]))
     return {"category": row["name"], "monthly_cap": cap}
+
+
+# --- v23: categories (catops.py is the one domain layer; these are its HTTP shapes) -----------------------------------
+
+def _category_call(fn, *args, **kw) -> dict[str, Any]:
+    try:
+        return fn(*args, **kw)
+    except catops.CategoryError as e:
+        raise ApiError(str(e), e.status, e.field) from None
+
+
+def create_category(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
+    """{name, group?, icon?, colour?}: a new user spending category (colour: one of the eight swatches, else it follows
+    its group)."""
+    return _category_call(catops.create, conn, data.get("name"), data.get("group"), data.get("icon"),
+                          data.get("colour"))
+
+
+def update_category(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
+    """{name, rename?, icon?, hidden?, group?, colour?}: only what is given changes, in one transaction. colour: a
+    swatch, or null to follow the group again."""
+    return _category_call(catops.update, conn, data.get("name"), data.get("rename"), data.get("icon"),
+                          data.get("hidden"), data.get("group"),
+                          data["colour"] if "colour" in data else catops.UNSET)
+
+
+def delete_category(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
+    """{name, move_to}: reassign every referencing store to move_to, then delete the category."""
+    return _category_call(catops.delete, conn, data.get("name"), data.get("move_to"))
 
 
 def set_group_budget(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,32 @@
+/* The shared icon picker (v23, categories and goals): two rows of common icons closed; the same icons as the first
+ * group inside a searchable scrolling list open; the toggle below them. The selected ring is inset so the scroll area
+ * can never clip it. Every tile is a button (44px on a phone through tap.css). */
+.ipk { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; min-width: 0; }
+.ipk .gicons { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
+.ipk .gicon { width: 100%; height: 40px; cursor: pointer; border: 1px solid var(--line2); }
+.ipk .gicon[aria-pressed='true'] { outline: 2px solid var(--fg); outline-offset: -2px; }
+.ipk .gicon:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.ipk .ipk-quick { margin-top: 0; }
+.ipk .ipk-quick .gicon:nth-child(n+17) { display: none; }
+.ipk.ipk-opened .ipk-quick { display: none; }
+.ipk-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; font-size: 14px; }
+.ipk-toggle .ipk-few { display: none; }
+.ipk-opened .ipk-toggle .ipk-show { display: none; }
+.ipk-opened .ipk-toggle .ipk-few { display: inline; }
+.ipk-toggle .ipk-chev { display: inline-flex; transition: transform .15s ease-out; }
+.ipk-toggle[aria-expanded='true'] .ipk-chev { transform: rotate(180deg); }
+.ipk-open[hidden] { display: none; }
+.ipk-open { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ipk-head { display: flex; align-items: center; gap: 10px; }
+.ipk-head .ipk-search { flex: 1; min-width: 0; }
+.ipk-scroll { max-height: 300px; overflow: auto; overscroll-behavior: contain; padding: 6px; display: flex;
+  flex-direction: column; gap: 8px; }
+.ipk-group { min-width: 0; }
+.ipk-group .gh { margin: 2px 0 0; }
+.ipk-group .gicons { margin-top: 4px; }
+.ipk-none { margin: 0; padding: 12px 6px; color: var(--dim); font-size: 14px; }
+@media (max-width: 751.98px) {
+  .ipk .gicons { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .ipk .ipk-quick .gicon:nth-child(n+13) { display: none; }
+  .ipk .gicon { height: 44px; }
+}

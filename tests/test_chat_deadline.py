@@ -243,7 +243,7 @@ server, drip = sys.argv[1], sys.argv[2]
 p = subprocess.Popen([sys.executable, "-I", "-c", server, drip, "30"], stdin=subprocess.DEVNULL,
                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
 print("SERVER", p.stdout.readline().decode().split()[1], p.pid, flush=True)
-while True:
+for _ in range(15):                                 # idle holder, bounded: 15 min at most, never stray
     time.sleep(60)
 '''
 
@@ -296,6 +296,17 @@ def outcome(url: str, timeout: float, body: dict | None = None) -> tuple[tuple, 
 
 def processes() -> str:
     return subprocess.run(["/bin/ps", "-axww", "-o", "pid=,command="], capture_output=True, text=True, timeout=10).stdout
+
+
+def alive(pid: int) -> bool:
+    """Whether `pid` still exists: kill(pid, 0) names no signal, it only asks the kernel (no `ps` scan to be late)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 # --- one request: all of it by its deadline ----------------------------------------------------------------------------
@@ -652,8 +663,9 @@ def test_a_turn_stuck_behind_another_writer_gives_up_by_its_deadline_and_settle(
     """The turn's database waits keep its clock: the provider answers an error while another writer holds the
     database for good. Settling the request's cost and withdrawing the card wait until SETTLE after the deadline at
     most (not the database's 30 s each); the turn has ended while the writer still holds on, and its card stays held,
-    undecidable, for reconcile()."""
-    monkeypatch.setattr(chat, "TIMEOUT", 1.0)
+    undecidable, for reconcile(). (HELD_TIMEOUT, not 1 s: the write's first step is a cold child process, and Nightly
+    43038094270's 1 s deadline expired before the turn could even send its second request.)"""
+    monkeypatch.setattr(chat, "TIMEOUT", HELD_TIMEOUT)
     monkeypatch.setattr(chat, "SETTLE", 0.5, raising=False)   # (so this runs, and fails on its timing, on code without it)
     hold = threading.Event()
     gated.script = [{"message": call_msg("finance_set_cap", {"category": "Other Shopping", "monthly_cap": 900})},
@@ -705,7 +717,7 @@ BACKTRACKS = "(a+)+$"                           # a valid regex the model may pr
 SRC = str(chat.CODE) if hasattr(chat, "CODE") else os.path.dirname(os.path.dirname(chat.__file__))
 
 RUN_TOOL = r'''
-import json, os, sys, threading, time
+import json, os, subprocess, sys, threading, time
 from datetime import date
 from pathlib import Path
 
@@ -724,6 +736,19 @@ from hermes_finance import chat, tooldefs
 tooldefs.today = lambda: date.fromisoformat(today)
 # the marker comes in the environment, so only the isolated step's own command line shows it (code without one: none)
 chat.WORKER = getattr(chat, "WORKER", "") + "  # " + os.environ["HF_CHAT_DEADLINE_MARKER"]
+# the worker's own pid, written the moment it starts: a test that must kill the app while the child runs cannot learn
+# that from a later `ps` scan (its own start, not when ps first sees it, is the child's clock)
+pidfile = os.environ.get("HF_CHAT_DEADLINE_WORKER_PID")
+if pidfile:
+    real_popen = subprocess.Popen
+    def popen(*a, **k):
+        proc = real_popen(*a, **k)
+        tmp = pidfile + ".part"
+        with open(tmp, "w") as f:
+            f.write(str(proc.pid))
+        os.replace(tmp, pidfile)
+        return proc
+    subprocess.Popen = popen
 start = time.monotonic()
 try:
     result, payload, action = chat._run_tool(Path(db_path), date.fromisoformat(today), "finance_add_rule",
@@ -749,13 +774,17 @@ def synthetic_merchant_db() -> str:
     return str(path)
 
 
-def run_tool_child(pattern: str, marker: str, deadline: float, timebox: float | None = None):
+def run_tool_child(pattern: str, marker: str, deadline: float, timebox: float | None = None,
+                   worker_pid_file: str | None = None):
     """chat._run_tool(finance_add_rule, pattern) in a child process of its own (its own group, killed at `timebox`
-    seconds: a regex running in this process could never be stopped): (its JSON line or None, its Popen)."""
+    seconds: a regex running in this process could never be stopped): (its JSON line or None, its Popen).
+    `worker_pid_file`: where RUN_TOOL writes the isolated worker's pid the moment it starts."""
+    env = {**os.environ, "HF_CHAT_DEADLINE_MARKER": marker}
+    if worker_pid_file is not None:
+        env["HF_CHAT_DEADLINE_WORKER_PID"] = worker_pid_file
     proc = subprocess.Popen([sys.executable, "-I", "-c", RUN_TOOL, SRC, synthetic_merchant_db(), pattern, str(deadline),
                              TODAY.isoformat()], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, start_new_session=True,
-                            env={**os.environ, "HF_CHAT_DEADLINE_MARKER": marker})
+                            stderr=subprocess.DEVNULL, start_new_session=True, env=env)
     if timebox is None:
         return None, proc
     try:
@@ -807,28 +836,36 @@ def test_a_rule_pattern_that_backtracks_for_hours_ends_the_turn_at_its_deadline(
 
 def test_the_isolated_step_ends_itself_by_the_deadline_even_when_the_app_is_killed(data_dir):
     """The child has its own alarm (the deadline + 1 s, rounded up): SIGKILL the process that started it (it can't
-    clean up) while the child backtracks, and the child still ends by then, not hours later."""
+    clean up) while the child backtracks, and the child still ends by then, not hours later. The child's own pid is
+    read the moment it starts: a `ps` scan's first sighting can come seconds later (Nightly 43038094270), and the
+    window that must end before its alarm would start too late to leave it running when the app is killed."""
     marker = marker_of("orphan")
+    pidfile = os.path.join(os.path.dirname(config.db_path()), marker + ".pid")
     start = time.monotonic()
-    _, proc = run_tool_child(BACKTRACKS, marker, 3.0)
+    worker = None
+    _, proc = run_tool_child(BACKTRACKS, marker, 3.0, worker_pid_file=pidfile)
     try:
-        seen = None
-        while seen is None and time.monotonic() - start < 10:
-            if marker in processes():
-                seen = time.monotonic()
-            else:
-                time.sleep(0.05)
-        assert seen is not None, "no isolated child ever ran"
+        while worker is None and time.monotonic() - start < 10:
+            try:
+                with open(pidfile) as f:
+                    worker = int(f.read())
+            except (OSError, ValueError):
+                time.sleep(0.02)
+        assert worker is not None, "no isolated child ever started"
+        seen = time.monotonic()
         time.sleep(0.5)                                                   # (it has its question: it's backtracking)
         os.killpg(proc.pid, signal.SIGKILL)                               # the app, gone (its child: its own group)
         proc.wait(10)
-        assert marker in processes(), "the child ended with the app: this test shows nothing"
-        while marker in processes() and time.monotonic() - seen < 3.0 + 1 + 1 + SLACK + 2:
+        assert alive(worker), "the child ended with the app: this test shows nothing"
+        while alive(worker) and time.monotonic() - seen < 3.0 + 1 + 1 + SLACK + 2:
             time.sleep(0.1)
         took = round(time.monotonic() - seen, 3)
-        assert marker not in processes() and took < 3.0 + 1 + 1 + SLACK, took
+        assert not alive(worker) and took < 3.0 + 1 + 1 + SLACK, took
     finally:
         kill_group(proc)
+        if worker is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(worker, signal.SIGKILL)
         for line in processes().splitlines():                            # never leave one behind, whatever failed
             if marker in line:
                 with contextlib.suppress(ProcessLookupError):

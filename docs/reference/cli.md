@@ -8,8 +8,9 @@ Every `finance` command, with its `--help` exactly as the code prints it. Run th
 | Command | What it does |
 |---|---|
 | [`serve`](#finance-serve) | local budgeting dashboard; connect / reconnect banks |
-| [`sync`](#finance-sync) | pull transactions, balances, liabilities, holdings |
+| [`sync`](#finance-sync) | pull transactions, balances, liabilities, holdings (Plaid and SimpleFIN) |
 | [`status`](#finance-status) | items, accounts, balances, errors, slots used |
+| [`simplefin`](#finance-simplefin) | SimpleFIN Bridge: connection status, or claim a setup token |
 | [`query`](#finance-query) | read-only SQL against the database |
 | [`export`](#finance-export) | export transactions (JSON to stdout, or CSV) |
 | [`classify-apply`](#finance-classify-apply) | apply rules, then Plaid-mapped defaults (deterministic) |
@@ -46,22 +47,24 @@ Every `finance` command, with its `--help` exactly as the code prints it. Run th
 | [`doctor`](#finance-doctor) | every integration and what it's missing (offline, read-only; exit 1 if any) |
 | [`backup`](#finance-backup) | write a backup of the database, every credential taken out (as Settings > Backup) |
 | [`restore`](#finance-restore) | replace the database with a backup (checked first; the old one is moved aside) |
+| [`categories`](#finance-categories) | categories: list, add, rename, icon, hide, unhide, move, delete |
 | [`rules`](#finance-rules) | categorization rules: list, suggestions, delete |
 
 ## `finance` {#finance}
 
 ```text
 usage: finance [-h] [-v]
-               {serve,sync,status,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,rules}
+               {serve,sync,status,simplefin,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,categories,rules}
                ...
 
 Plaid -> local SQLite budgeting pipeline
 
 positional arguments:
-  {serve,sync,status,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,rules}
+  {serve,sync,status,simplefin,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,categories,rules}
     serve               local budgeting dashboard; connect / reconnect banks
-    sync                pull transactions, balances, liabilities, holdings
+    sync                pull transactions, balances, liabilities, holdings (Plaid and SimpleFIN)
     status              items, accounts, balances, errors, slots used
+    simplefin           SimpleFIN Bridge: connection status, or claim a setup token
     query               read-only SQL against the database
     export              export transactions (JSON to stdout, or CSV)
     classify-apply      apply rules, then Plaid-mapped defaults (deterministic)
@@ -108,6 +111,7 @@ positional arguments:
                         Backup)
     restore             replace the database with a backup (checked first; the old one is moved
                         aside)
+    categories          categories: list, add, rename, icon, hide, unhide, move, delete
     rules               categorization rules: list, suggestions, delete
 
 options:
@@ -135,11 +139,12 @@ options:
 ## `finance sync` {#finance-sync}
 
 ```text
-usage: finance sync [-h] [--item ITEM]
+usage: finance sync [-h] [--item ITEM] [--scheduled]
 
 options:
   -h, --help   show this help message and exit
   --item ITEM  only this item_id
+  --scheduled  the daily job's run: SimpleFIN's daily request, not one of the six manual syncs
 ```
 
 ## `finance status` {#finance-status}
@@ -149,6 +154,46 @@ usage: finance status [-h] [--json]
 
 options:
   -h, --help  show this help message and exit
+  --json
+```
+
+## `finance simplefin` {#finance-simplefin}
+
+```text
+usage: finance simplefin [-h] {status,claim} ...
+
+positional arguments:
+  {status,claim}
+    status        connection state, requests today, coverage, duplicates
+    claim         claim a setup token and confirm account types (writes)
+
+options:
+  -h, --help      show this help message and exit
+```
+
+### `finance simplefin status` {#finance-simplefin-status}
+
+```text
+usage: finance simplefin status [-h] [--json]
+
+options:
+  -h, --help  show this help message and exit
+  --json
+```
+
+### `finance simplefin claim` {#finance-simplefin-claim}
+
+```text
+usage: finance simplefin claim [-h] [--type KEY=TYPE] [--skip KEY] [--json] token
+
+positional arguments:
+  token            the one-time setup token from SimpleFIN Bridge
+
+options:
+  -h, --help       show this help message and exit
+  --type KEY=TYPE  KEY=<checking|savings|credit|loan|investment> for each account to add
+                   (repeatable)
+  --skip KEY       don't add this account (repeatable)
   --json
 ```
 
@@ -954,13 +999,15 @@ options:
 Serves the finance_* tools over the Model Context Protocol on stdin/stdout, for an MCP client that starts it
 (Claude Desktop, Cursor, Codex, ...). The same tools as the Hermes plugin and the same numbers as `finance <command>
 --json`: finance_spend, finance_budget_status, finance_transactions, finance_networth, finance_bills, finance_loans,
-finance_holdings, finance_cashflow, finance_status, finance_goals, finance_rules. Read-only (the database is opened read-only; never calls Plaid).
+finance_holdings, finance_cashflow, finance_status, finance_goals, finance_rules, finance_categories. Read-only (the
+database is opened read-only; never calls Plaid).
 `finance serve` also serves them over streamable HTTP at /mcp, behind its access gate.
 
 finance_sync syncs the banks now (Plaid, one sync a minute per bank) and says what changed; with refresh=true it
 first asks the banks for fresh data, only if Settings allows it, and on a paid Plaid plan as a pending action.
 
-The write tools (finance_set_category, finance_add_rule, finance_set_cap, finance_track_bill) are listed only after
+The write tools (finance_set_category, finance_add_rule, finance_set_cap, finance_track_bill,
+finance_create_category, finance_update_category, finance_delete_category) are listed only after
 `finance mcp allow-writes on`, and even then a call changes nothing: it is saved as a pending action for you to
 decide (Settings -> Connect other agents -> Approve / Decline). Needs the optional extra: uv sync --extra mcp
 ```
@@ -1166,6 +1213,153 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --force     replace a database that holds data (moved aside first)
+```
+
+## `finance categories` {#finance-categories}
+
+```text
+usage: finance categories [-h] [--json] {list,add,rename,icon,hide,unhide,move,delete} ...
+
+User-managed categories and the 100-icon set.
+
+positional arguments:
+  {list,add,rename,icon,hide,unhide,move,delete}
+    list                every category: group, name, icon, tags, spend this month (read-only)
+    add                 a new user spending category
+    rename              a user category's new name
+    icon                any category's icon (Income and Transfers included)
+    hide                hide it from new pickers and the chart (past totals stay)
+    unhide              show a hidden category again
+    move                a user category to another group
+    delete              move everything it references to --to, then delete it
+
+options:
+  -h, --help            show this help message and exit
+  --json                print the JSON described below
+
+Categories organise spending: each user-made one is spending-only and sits in one of the eight groups
+(Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc). The 36 built-in categories can be given a new icon or
+hidden, never renamed, deleted or moved; Income and Transfers stay outside the groups and stay visible.
+
+  finance categories [list] [--json]   every category: group, name, icon, built-in/yours, hidden, spend this month
+  finance categories add NAME [--group GROUP] [--icon ICON]   a new spending category (Misc and the group's icon by default)
+  finance categories rename OLD NEW    a user category's new name (saved filters and the chart follow it)
+  finance categories icon NAME ICON     any category's icon, from the 100 (GET /api/categories/icons)
+  finance categories hide NAME          hide it from new pickers and the chart; every past total keeps counting it
+  finance categories unhide NAME        show it again
+  finance categories move NAME --group GROUP   a user category to another group
+  finance categories delete NAME --to DESTINATION   move everything it references to DESTINATION, then delete it
+
+JSON: {"month", "groups": [{name, rgb, categories: [{name, is_income, is_transfer, spending, monthly_cap, group, icon,
+rgb, built_in, hidden, spend}]}], "ungrouped", "categories", "hidden", "counts": {total, builtin, user, hidden,
+spending}}. Writes print the resulting category (delete: plus "deleted" and "moved": {store: rows}).
+```
+
+### `finance categories list` {#finance-categories-list}
+
+```text
+usage: finance categories list [-h] [--json]
+
+options:
+  -h, --help  show this help message and exit
+  --json
+```
+
+### `finance categories add` {#finance-categories-add}
+
+```text
+usage: finance categories add [-h] [--group GROUP] [--icon ICON] [--json] name
+
+positional arguments:
+  name
+
+options:
+  -h, --help     show this help message and exit
+  --group GROUP  Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc (default Misc)
+  --icon ICON    one of the 100 icons (GET /api/categories/icons); default: the group's
+  --json
+```
+
+### `finance categories rename` {#finance-categories-rename}
+
+```text
+usage: finance categories rename [-h] [--json] old new
+
+positional arguments:
+  old
+  new
+
+options:
+  -h, --help  show this help message and exit
+  --json
+```
+
+### `finance categories icon` {#finance-categories-icon}
+
+```text
+usage: finance categories icon [-h] [--json] name icon
+
+positional arguments:
+  name
+  icon
+
+options:
+  -h, --help  show this help message and exit
+  --json
+```
+
+### `finance categories hide` {#finance-categories-hide}
+
+```text
+usage: finance categories hide [-h] [--json] name
+
+positional arguments:
+  name
+
+options:
+  -h, --help  show this help message and exit
+  --json
+```
+
+### `finance categories unhide` {#finance-categories-unhide}
+
+```text
+usage: finance categories unhide [-h] [--json] name
+
+positional arguments:
+  name
+
+options:
+  -h, --help  show this help message and exit
+  --json
+```
+
+### `finance categories move` {#finance-categories-move}
+
+```text
+usage: finance categories move [-h] --group GROUP [--json] name
+
+positional arguments:
+  name
+
+options:
+  -h, --help     show this help message and exit
+  --group GROUP  Home, Food, Transport, Shopping, Bills, Health, Leisure, Misc
+  --json
+```
+
+### `finance categories delete` {#finance-categories-delete}
+
+```text
+usage: finance categories delete [-h] --to DESTINATION [--json] name
+
+positional arguments:
+  name
+
+options:
+  -h, --help        show this help message and exit
+  --to DESTINATION  the visible spending category its transactions, rules and the rest move to
+  --json
 ```
 
 ## `finance rules` {#finance-rules}

@@ -865,8 +865,8 @@ def _effective_view(eff: dict[str, Any] | None) -> dict[str, Any] | None:
             "basis_label": BASIS_LABELS[eff["basis"]]}
 
 
-def _money(x: float) -> str:
-    return money(x)
+def _money(x: float, currency=None) -> str:
+    return money(x, currency=currency)
 
 
 def short_day(day: str | None) -> str:
@@ -989,11 +989,12 @@ def _one(conn: sqlite3.Connection, row: sqlite3.Row, today: date, trigger: str) 
                       now(), v.raw, json.dumps(v.details) if v.details is not None else None))
     if provider == "carfax":
         d = v.details or {}
-        extra = ", ".join(f"{k} {_money(d[f])}" for k, f in (("private sale", "private_sale"), ("dealer retail", "dealer_retail"))
+        cur = row["currency"]
+        extra = ", ".join(f"{k} {_money(d[f], cur)}" for k, f in (("private sale", "private_sale"), ("dealer retail", "dealer_retail"))
                           if d.get(f))
-        message = f"Trade-in {_money(v.value)} by Carfax" + (f" ({extra})" if extra else "")
+        message = f"Trade-in {_money(v.value, cur)} by Carfax" + (f" ({extra})" if extra else "")
     else:
-        message = f"Estimated {_money(v.value)} by Redfin"
+        message = f"Estimated {_money(v.value, row['currency'])} by Redfin"
     return Outcome(True, provider, message, called=True, value=v.value)
 
 
@@ -1230,7 +1231,7 @@ def revalue(conn: sqlite3.Connection, today: date, account_id: int | None = None
                 usage.check(conn, provider, today, row["id"], trigger)
                 eff = effective(conn, row)
                 out.append({**base, "action": "would_call", "message": f"would ask {usage.LABELS[provider]}"
-                            + (f" (last estimate {_money(eff['value'])} on {usage.local_day(eff['row']['fetched_at'])})"
+                            + (f" (last estimate {_money(eff['value'], row['currency'])} on {usage.local_day(eff['row']['fetched_at'])})"
                                if eff else " (no estimate yet)")})
             except usage.Refused as e:
                 out.append({**base, "action": "skipped", "message": str(e)})
@@ -1435,7 +1436,8 @@ def detail(conn: sqlite3.Connection, account_id: Any, today: date) -> dict[str, 
     else:
         line = ["Your value", f"set {short_day(row['balance_as_of'])}"]
         if eff:
-            line.append(f"{eff['source_label']} {BASIS_WORDS[eff['basis']]} {_money(eff['value'])} on {short_day(eff['date'])}")
+            line.append(f"{eff['source_label']} {BASIS_WORDS[eff['basis']]} {_money(eff['value'], row['currency'])} "
+                        f"on {short_day(eff['date'])}")
     value = {"amount": row["balance"], "following": following, "line": " · ".join(line),
              "change": ({"amount": round(main["value"] - prev["value"], 2), "since": usage.local_day(prev["fetched_at"])}
                         if main and prev and following else None),
@@ -1474,7 +1476,7 @@ def detail(conn: sqlite3.Connection, account_id: Any, today: date) -> dict[str, 
         "notes": {"odometer": v["odometer_hint"],
                   "blocked": src["note"] if src["blocked_until"] else None,
                   "no_estimate": (src["note"] if src["note"] and not src["blocked_until"] and not main else None),
-                  "your_value": (f"Your value {_money(row['balance'])} counts in net worth"
+                  "your_value": (f"Your value {_money(row['balance'], row['currency'])} counts in net worth"
                                  if not following and eff else None)},   # "Use the estimate" only when there is one
         "details": {"next_check": v["next_check"], "value_source": v["source"], "can_refresh": v["can_refresh"],
                     "refresh_note": v["refresh_note"], "provider_label": v["provider_label"], "enabled": v["enabled"]},

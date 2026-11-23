@@ -1,7 +1,8 @@
 # AI modes
 
-hermes-finance has 16 agent tools, defined once in `src/hermes_finance/tooldefs.py`: eleven reads, `finance_sync`, and
-four writes (`finance_set_category`, `finance_add_rule`, `finance_set_cap`, `finance_track_bill`). Three adapters
+hermes-finance has 20 agent tools, defined once in `src/hermes_finance/tooldefs.py`: twelve reads, `finance_sync`, and
+seven writes (`finance_set_category`, `finance_add_rule`, `finance_set_cap`, `finance_track_bill`, and the category
+set `finance_create_category`, `finance_update_category`, `finance_delete_category`). Three adapters
 expose them. The [agent tools reference](reference/tools.md) lists every argument.
 
 | | Hermes plugin | MCP server | API key (Ask panel) |
@@ -15,7 +16,7 @@ The dashboard and the `finance` CLI work without any of them.
 
 ## Hermes plugin
 
-Install it with [Getting started](getting-started.md#install-the-hermes-plugin). The plugin registers all 16 tools
+Install it with [Getting started](getting-started.md#install-the-hermes-plugin). The plugin registers all 20 tools
 (toolset `hermes-finance`), a `pre_tool_call` hook, the `hermes-finance:usage` skill, and the `hermes finance`
 command group.
 
@@ -138,8 +139,48 @@ too.
   leaves it.
 
 **Trade-off:** the app is the harness, so its limits are yours (6 rounds, 60 seconds, each answer arrives whole).
-Your provider key sits in the app's secrets file on disk. *Test connection* in Settings is not built yet: the button is
-disabled.
+Your provider key sits in the app's secrets file on disk.
+
+## CLI: a locally installed agent
+
+**Settings → AI provider → CLI** runs a Claude Code or Codex CLI already signed in on this computer. There is no key to
+paste: the app starts the CLI you choose (Claude Code by default) as one child process for each model request, in a
+fresh empty directory, with your login and none of the app's own environment.
+
+- **One decision per request.** The CLI is a plain text-completion endpoint with no tools of its own. The app sends the
+  instructions and the results of the reads it ran; the CLI replies with exactly one JSON decision (an answer, one read,
+  or one proposed change). The app owns the loop: it runs every read itself, up to 6 rounds, and every write becomes an
+  approval card in the panel. The CLI never touches the database.
+- **Claude Code and Codex.** Claude Code is tool-less by its own flags (no tools, no MCP configuration, its safe
+  mode), and every turn's stream must report `tools: []` and `mcp_servers: []` before its answer is used. Codex's
+  lockdown is feature flags plus a read-only sandbox, and its tools stay advertised, so each version is gated behind
+  the isolation check: one short adversarial request, in a throwaway directory, that forces four attempts (read a
+  canary file, write a file, fetch a URL, list MCP resources).
+- **What the Codex check reads.** It judges the runtime's evidence, not the model's own report. A pass needs all of:
+  exit 0; at least one stderr line from the tool router
+  (`codex_core::tools::router: error=` with `code-mode host is disabled` — that line does not name the tool); no
+  item other than `agent_message`, `reasoning` and the startup notice (an item error saying the code-mode host is
+  disabled and it will fail closed); that notice present; no canary in the stream; no file written; and a valid
+  decision. With no rejection line on stderr the check is inconclusive, never a pass — the model's text is not
+  matched for words. Any real tool item (`command_execution`, `mcp_tool_call`, `web_search`, ...) fails it, and a
+  Codex turn in Ask also refuses any item other than `agent_message`, `reasoning` and the startup notice.
+- **What that proof covers.** One locked and one unlocked run on Codex 0.162.1. The locked run carries five
+  tool-router rejection lines and no tool item; the unlocked positive control carries real `command_execution`,
+  `mcp_tool_call` and `web_search` items (its stderr has only a sandbox patch rejection, not a code-mode notice).
+  The check is stored per installed version and re-runs when the version changes. A version whose stderr or item
+  names differ fails closed as unsupported, never passes by absence. MCP and web have no side effect to check: their
+  evidence is the runtime's rejection plus the absence of any tool item in the stream.
+- **No monthly cap.** The CLI's own plan pays. Each request is recorded for the audit trail, but the monthly spend cap
+  in Settings does not apply; the plan's own limits do.
+- **Finding the CLI.** The app looks, in order, at the CLI's environment variable, a path saved in the card's
+  **Path to …** box, `PATH`, then `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin` and npm's
+  global bin, so a background service with a minimal `PATH` still finds it. **Not found** lists where it looked. The
+  card says **Signed in** only after a check passed on the installed version and **Signed out** after a login failure;
+  with no check yet for that version it shows no sign-in badge at all, and the Isolation check row's **Not checked**
+  plus its **Check again** button carry that state. It never runs the CLI just to draw the card, so a check happens
+  only when you ask for one.
+- **Fail closed, no fallback.** A missing CLI, an unchecked version, a version that changed since its check, or a failed
+  check refuses the turn with one line in Ask. Nothing silently falls back to Hermes or an API key.
 
 ## Off
 

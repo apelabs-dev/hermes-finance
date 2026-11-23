@@ -47,15 +47,28 @@ RECEIPT_RESTORED = "SynthReceiptRestored-000000000003"   # of a delete already u
 
 # What 15 adds to each lane's 14. Every other object and column is an original, compared as it was.
 ADDED_COLUMNS = {   # (table, column): (type, notnull, default as declared, the value every existing row gets)
-    "chat": {("classifications", "detached_by"): ("INTEGER", 0, None, None)},
+    "chat": {("classifications", "detached_by"): ("INTEGER", 0, None, None),
+             # v21 (SimpleFIN), the same on either lane
+             ("items", "provider"): ("TEXT", 1, "'plaid'", "plaid"),
+             ("accounts", "conn_id"): ("TEXT", 0, None, None),
+             ("manual_accounts", "currency"): ("TEXT", 0, None, "USD")},
     "rules": {("pending_actions", "origin"): ("TEXT", 1, "'mcp'", "mcp"),
-              ("pending_actions", "held_by"): ("TEXT", 0, None, None)},
+              ("pending_actions", "held_by"): ("TEXT", 0, None, None),
+              ("items", "provider"): ("TEXT", 1, "'plaid'", "plaid"),
+              ("accounts", "conn_id"): ("TEXT", 0, None, None),
+              ("manual_accounts", "currency"): ("TEXT", 0, None, "USD")},
 }
 ADDED_FOREIGN_KEYS = {"chat": {("rule_deletions", "detached_by", "id", "NO ACTION", "NO ACTION", "NONE")}, "rules": set()}
-ADDED_OBJECTS = {"chat": {("table", "rule_deletions"), ("trigger", "trg_classifications_detached_changed")},
-                 "rules": set()}
-CHANGED_OBJECTS = {"chat": {("table", "classifications")},
-                   "rules": {("table", "pending_actions")}}
+V21_OBJECTS = {("table", "simplefin_requests"), ("index", "idx_simplefin_requests_day"),
+               ("trigger", "trg_simplefin_requests_day_cap"), ("trigger", "trg_simplefin_requests_manual_cap")}
+V21_CHANGED = {("table", "items"), ("table", "accounts"), ("table", "transactions"), ("view", "v_items")}
+# v22 (multi-currency): manual_accounts gains currency (filled at the display currency); v_spend_lines exposes it
+V22_CHANGED = {("table", "manual_accounts"), ("view", "v_spend_lines")}
+V22_COLUMNS = {("manual_accounts", "currency"): ("TEXT", 0, None)}
+ADDED_OBJECTS = {"chat": {("table", "rule_deletions"), ("trigger", "trg_classifications_detached_changed")} | V21_OBJECTS,
+                 "rules": V21_OBJECTS}
+CHANGED_OBJECTS = {"chat": {("table", "classifications")} | V21_CHANGED,
+                   "rules": {("table", "pending_actions")} | V21_CHANGED}
 # v_transactions changed on both lanes: the chat lane reads receipts, the rules lane applies the account policy
 V20_OBJECTS = {("view", "v_transactions")}
 NONE = (set(), set(), set())
@@ -66,6 +79,10 @@ V16_OBJECTS = {("table", "category_groups")}
 V16_COLUMNS = {("categories", "group_id"): ("INTEGER", 0, None), ("categories", "icon"): ("TEXT", 0, None),
                ("categories", "sort"): ("INTEGER", 0, None)}
 V17_COLUMNS = {("goals", "icon"): ("TEXT", 0, None), ("goals", "colour"): ("TEXT", 0, None)}
+# v23 (categories): two flags at their 0 default; is_builtin is then set for the 36 seeded rows by the step.
+V23_COLUMNS = {("categories", "is_builtin"): ("INTEGER", 1, "0"), ("categories", "is_hidden"): ("INTEGER", 1, "0")}
+# v24 (category colour): one nullable column, NULL on every row (the icon follows its group).
+V24_COLUMNS = {("categories", "colour"): ("TEXT", 0, None)}
 V16_FOREIGN_KEYS = {("category_groups", "group_id", "id", "NO ACTION", "NO ACTION", "NONE")}
 # and on to 18 (polish P2e): two new tables, empty (no group budget, no kept group)
 V18_OBJECTS = {("table", "group_budgets"), ("table", "group_budget_kept")}
@@ -313,9 +330,13 @@ def _assert_kept(before: dict, after: dict, lane: str, where: str = "after the u
             kept = {c: v for c, v in row.items() if c not in moved}
             if table == "categories":
                 kept["name"] = ("str", V19_RENAMED.get(row["name"][1], row["name"][1]))
-            assert {c: now[c] for c in row if c not in moved} == kept, \
+            # v22 fills a missing transaction currency from its account; that one column is exempt here (its exact
+            # fill is covered by test_currency_v22)
+            empty_ccy = table == "transactions" and row.get("iso_currency", (None, None))[1] is None
+            assert {c: now[c] for c in row if c not in moved and not (empty_ccy and c == "iso_currency")} == \
+                {c: v for c, v in kept.items() if not (empty_ccy and c == "iso_currency")}, \
                 f"{where}: {table} rowid {rowid}: an original value changed"
-            assert {c: v for c, v in now.items() if c not in row and (table, c) not in V16_COLUMNS | V17_COLUMNS} == added, \
+            assert {c: v for c, v in now.items() if c not in row and (table, c) not in V16_COLUMNS | V17_COLUMNS | V23_COLUMNS | V24_COLUMNS} == added, \
                 f"{where}: {table} rowid {rowid}: the columns 15 adds are not at their defaults"
 
 
@@ -335,9 +356,10 @@ def _assert_converged(conn: sqlite3.Connection, lane: str, before: dict, fresh: 
     assert parents.changes(fresh, after) == NONE, "not a new database's schema: (extra, missing, different) objects"
     assert after == fresh
     assert parents.changes(before, after) == (ADDED_OBJECTS[lane] | V16_OBJECTS | V18_OBJECTS, set(),
-                                              CHANGED_OBJECTS[lane] | V20_OBJECTS | {("table", "categories"), ("table", "goals")})
-    columns = {**{k: v[:3] for k, v in ADDED_COLUMNS[lane].items()}, **V16_COLUMNS, **V17_COLUMNS}
-    for kind, table in CHANGED_OBJECTS[lane] | V20_OBJECTS | {("table", "categories"), ("table", "goals")}:
+                                              CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED
+                                              | {("table", "categories"), ("table", "goals")})
+    columns = {**{k: v[:3] for k, v in ADDED_COLUMNS[lane].items()}, **V16_COLUMNS, **V17_COLUMNS, **V22_COLUMNS, **V23_COLUMNS, **V24_COLUMNS}
+    for kind, table in CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED | {("table", "categories"), ("table", "goals")}:
         if kind != "table":
             continue
         old, new = before[(kind, table)], after[(kind, table)]

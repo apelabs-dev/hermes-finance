@@ -86,10 +86,18 @@ def known_platform(name: str) -> bool:
         from cron import scheduler
     except Exception as e:
         raise SchedulerUnavailable(f"Hermes's cron scheduler can't be imported ({type(e).__name__}: {e})") from None
-    check = getattr(scheduler, "_is_known_delivery_platform", None)
-    if callable(check):
-        return bool(check(name))
-    known = getattr(scheduler, "_KNOWN_DELIVERY_PLATFORMS", None)
+    # v0.23: the delivery helpers moved out of cron.scheduler into cron.scheduler_delivery (scheduler no longer
+    # re-exports them). Look there first, then on the scheduler itself (v0.22 and older).
+    try:
+        from cron import scheduler_delivery
+    except Exception:
+        scheduler_delivery = None
+    holders = [m for m in (scheduler_delivery, scheduler) if m is not None]
+    for holder in holders:
+        check = getattr(holder, "_is_known_delivery_platform", None)
+        if callable(check):
+            return bool(check(name))
+    known = next((k for k in (getattr(h, "_KNOWN_DELIVERY_PLATFORMS", None) for h in holders) if k is not None), None)
     if known is None:
         raise SchedulerUnavailable("can't tell which delivery platforms this Hermes knows")
     return name.lower() in known

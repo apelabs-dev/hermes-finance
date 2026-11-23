@@ -52,6 +52,7 @@ POSITIVES = {
     "email": J(["mail ", "jo.doe", "@", "realmail", ".com"]),
     "long-id": J(["channel ", "1472839016", "52837461"]),
     "hex-id": J(["job ", "a1b2c3", "d4e5f7"]),
+    "brand-name": J(["ported from ", "Fly", "Budget", " exports"]),
 }
 
 
@@ -213,6 +214,41 @@ def test_every_tracked_file_that_ships_is_clean():
     assert len(files) > 300                                    # it really looked
     hits = dehardcode.release_scan(ROOT, files, dehardcode.private_words())
     assert hits == [], "\n".join(dehardcode.format_release_hit(*h) for h in hits)
+
+
+def test_the_hook_blocks_a_staged_brand_name_and_passes_once_it_is_removed(tmp_path):
+    """The brand-name rule in the hook: a staged file that names the former product is refused, the refusal never echoes
+    the name, and the same commit goes through once the name is gone."""
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "hooks").mkdir(parents=True)
+    for rel in ("scripts/dehardcode.py", "scripts/hooks/pre-commit"):
+        (repo / rel).write_bytes((ROOT / rel).read_bytes())
+    (repo / "scripts" / "hooks" / "pre-commit").chmod(0o755)
+    assert _git(repo, "init", "-q").returncode == 0
+    assert _git(repo, "config", "core.hooksPath", "scripts/hooks").returncode == 0
+    brand = J(["Fly", "Budget"])
+    (repo / "docs").mkdir()
+    (repo / "docs" / "notes.md").write_text(f"the importer was ported from {brand}\n")
+    _git(repo, "add", "-A")
+    r = _git(repo, "commit", "-q", "-m", "x")
+    assert r.returncode != 0 and "docs/notes.md:1: brand-name" in r.stderr, r
+    assert brand not in r.stderr and brand.lower() not in r.stderr.lower()
+    (repo / "docs" / "notes.md").write_text("the importer was ported from the old tool\n")
+    _git(repo, "add", "-A")
+    assert _git(repo, "commit", "-q", "-m", "x").returncode == 0
+
+
+def test_no_tracked_path_or_file_names_the_former_product():
+    """Not only the shipping files: every tracked path and every tracked file's bytes (the export leaves some out, the
+    repository holds them all). The brand is not a private word, so the hit prints the path only."""
+    if not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    tracked = dehardcode.tracked_files(ROOT)
+    assert len(tracked) > 300                                    # it really looked
+    named = [rel for rel in tracked
+             if dehardcode.BRAND_RX.search(rel)
+             or dehardcode.BRAND_RX.search((ROOT / rel).read_bytes().decode("latin-1"))]
+    assert named == [], "\n".join(f"{rel}: brand-name" for rel in named)
 
 
 def test_the_exemption_paths_ship():

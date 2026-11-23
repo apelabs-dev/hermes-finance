@@ -1,0 +1,5 @@
+2026-11-16T00:20:27.402598Z ERROR codex_core::tools::router: error=code-mode host is disabled
+2026-11-16T00:20:29.575578Z ERROR codex_core::tools::router: error=code-mode host is disabled
+2026-11-16T00:20:32.105082Z ERROR codex_core::tools::router: error=code-mode host is disabled
+2026-11-16T00:20:33.963092Z ERROR codex_core::tools::router: error=code-mode host is disabled
+2026-11-16T00:20:35.939563Z ERROR codex_core::tools::router: error=code-mode host is disabled

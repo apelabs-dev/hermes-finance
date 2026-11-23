@@ -18,6 +18,7 @@ import pytest
 
 import factory as f
 import gate_dbs
+from offline_env import OFFLINE_SWITCHES
 from hermes_finance import api, config, db, insights, reads, rollover
 from hermes_finance.web import App
 
@@ -176,7 +177,7 @@ def dump(path: Path, pythonpath: Path) -> dict:
     code = DUMP if pythonpath == ROOT / "src" else V16_POLICY + DUMP
     r = subprocess.run([sys.executable, "-c", code, str(path), TODAY.isoformat()], capture_output=True, text=True, timeout=120,
                        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(pythonpath), "HERMES_ENV_FILE": str(path.parent / "none.env"),
-                            "HERMES_CHROME_DEVTOOLS": "off", "HERMES_ALPACA": "off",
+                            **OFFLINE_SWITCHES,
                             "HERMES_ALPACA_KEY_FILE": str(path.parent / "none-alpaca.env"), "FINANCE_DATA_DIR": str(path.parent),
                             "TZ": "America/Los_Angeles"})
     assert r.returncode == 0, r.stderr[-2000:]
@@ -203,19 +204,43 @@ def _no_task21(d):
 TASK22_KEYS = {"accounts": ("data_age",)}
 
 
+def _no_currency(d, path=""):
+    """v22 (multi-currency) additions: one code per amount, per-currency totals, and the Budgets "also" list. Every old
+    number is still compared; these keys did not exist before the card. A manual account's `currency` is kept: the
+    old code reads the upgraded row and leaks the new column into its own payload."""
+    if isinstance(d, list):
+        return [_no_currency(x, f"{path}[{i}]") for i, x in enumerate(d)]
+    if not isinstance(d, dict):
+        return d
+    drop = {"foreign", "sums", "totals_by_currency", "other_currencies", "foreign_count"}
+    keep_currency = "/accounts/manual[" in path
+    return {k: _no_currency(v, f"{path}/{k}") for k, v in d.items()
+            if k not in drop and not (k == "currency" and not keep_currency)}
+
+
 def strip_new(d: dict) -> dict:
     out = {k: ({kk: vv for kk, vv in v.items() if kk not in NEW_KEYS.get(k, ()) + TASK22_KEYS.get(k, ())} if isinstance(v, dict) else v)
            for k, v in d.items()}
+    out = _no_currency(out)
+    # the investment / debt account rows' `counted` flag is new too
+    for key in ("investments", "debt"):
+        blk = out.get(key)
+        if isinstance(blk, dict):
+            for field in ("accounts", "cards", "loans", "other"):
+                if isinstance(blk.get(field), list):
+                    blk[field] = [{k: v for k, v in row.items() if k != "counted"} if isinstance(row, dict) else row
+                                  for row in blk[field]]
     # polish x-amber: each row's `uncategorized` (the ?uncategorized=1 rule for one row) is new
     if isinstance(out.get("overview"), dict) and isinstance(out["overview"].get("recent"), list):
-        out["overview"] = {**out["overview"], "recent": [{k: v for k, v in r.items() if k != "uncategorized"}
+        out["overview"] = {**out["overview"], "recent": [{k: v for k, v in r.items()
+                                                          if k not in ("uncategorized", "iso_currency")}
                                                          for r in out["overview"]["recent"]]}
     # polish P1: the page's `days`, `sort` and `sum` are new. Time windows add `period`,
     # `coverage_month` and per-month totals. Set aside only these additions; every pre-existing
     # value still has to match. tests/test_transaction_windows.py checks the new metadata/totals.
     out["transactions"] = {k: v for k, v in out["transactions"].items()
                            if k not in ("days", "sort", "sum", "period", "coverage_month", "months")}
-    out["transactions"] = {**out["transactions"], "rows": [{k: v for k, v in r.items() if k not in ("split", "note", "tags", "bill_outlier", "uncategorized")}
+    out["transactions"] = {**out["transactions"], "rows": [{k: v for k, v in r.items() if k not in ("split", "note", "tags", "bill_outlier", "uncategorized", "iso_currency")}
                                                            for r in out["transactions"]["rows"]]}
     # polish P2a: Budgets' `groups` (per-group sums of the same rows) and each category's `group` / `starter` / `new` are
     # new; set aside. Every cap, spend, left, pct, status and suggested is still compared
@@ -235,6 +260,12 @@ def strip_new(d: dict) -> dict:
             del b["group_budgets"]
     if isinstance(out.get("budget_status"), dict) and out["budget_status"].get("groups") == []:
         del out["budget_status"]["groups"]
+    inv = out.get("investments")
+    if isinstance(inv, dict):
+        for a in inv.get("accounts") or []:
+            if isinstance(a, dict) and a.get("provider") == "plaid":
+                a.pop("provider", None)
+                a.pop("holdings_imported", None)
     # TASK-22: net worth carries `in_transit`, the card payments counted as paid. Set aside only when it is EMPTY: a test DB
     # with none must give every old number exactly; one with a payment in transit changes the net and must still fail here
     for blk in (out.get("networth"), (out.get("accounts") or {}).get("net_worth")):
@@ -250,6 +281,12 @@ def strip_new(d: dict) -> dict:
     if isinstance(acc, dict):
         acc.pop("networth_excluded", None)
         acc.pop("networth_presets", None)
+        # v21 (SimpleFIN): the status block and every row's provider are new metadata. They are set aside only while
+        # nothing is connected and every row is Plaid's; a connected SimpleFIN changes the totals and must still fail.
+        sf = acc.pop("simplefin", None)
+        if sf and (sf.get("connected") or sf.get("state") != "not_connected"):
+            acc["simplefin"] = sf
+        # (the old code reads the same, already-upgraded v_items view, so a row's provider is in both dumps)
         policy = acc.get("account_policy")
         if isinstance(policy, dict) and policy.get("configured_count") == 0:
             del acc["account_policy"]

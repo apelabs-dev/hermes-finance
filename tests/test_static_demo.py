@@ -12,6 +12,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import demo_parity
+sys.path.insert(0, str(ROOT / 'tests'))
+from offline_env import OFFLINE_SWITCHES
 
 # The weekly pipeline (scripts/demo_weekly.sh) runs these on each variant: its seed and its day.
 SEED, TODAY = os.environ.get('HF_DEMO_SEED', '0'), os.environ.get('HF_DEMO_TODAY', '2026-10-24')
@@ -22,9 +24,30 @@ MONTH = TODAY[:7]
 def built(tmp_path_factory):
     tmp = tmp_path_factory.mktemp('static-demo')
     dist = tmp / 'dist'
+    # conftest's offline switches are taken out of the build's environment on purpose: build_demo.py makes its own process
+    # safe (offline_env.OFFLINE_SWITCHES), and the demo must not depend on what the caller's shell or a test run sets
+    env = {k: v for k, v in os.environ.items() if k not in OFFLINE_SWITCHES}
     subprocess.run([sys.executable, str(ROOT / 'scripts/build_demo.py'), '--today', TODAY, '--seed', SEED,
-                    '--out', str(dist), '--no-canary'], check=True, capture_output=True)
+                    '--out', str(dist), '--no-canary'], check=True, capture_output=True, env=env)
     return tmp, dist
+
+
+def test_the_built_demo_carries_no_vendor_logo(built):
+    """Owner rule: no Plaid or SimpleFIN logo file anywhere. The app fetches both vendors' icons from their sites into
+    `institutions` (logos.VENDOR_LOGOS, source 'site') unless HERMES_PLAID / HERMES_SIMPLEFIN are off: a build that left a
+    switch out could ship those bytes as api/institutions/<id>/logo. The demo's own logos are the invented ones."""
+    from hermes_finance import logos
+    _, dist = built
+    vendor_ids = set(logos.VENDOR_LOGOS)
+    assert vendor_ids == {'ins_hf_plaid', 'ins_hf_simplefin'}
+    served = {p.parent.name for p in (dist / 'api/institutions').glob('*/logo')}
+    assert served and not served & vendor_ids
+    invented = {p.read_bytes() for p in (ROOT / 'demo/logos').glob('*.png')}
+    for p in (dist / 'api/institutions').glob('*/logo'):
+        assert p.read_bytes() in invented, f'{p.parent.name}: a logo that is not one of demo/logos'
+    for p in (dist / 'demo/data').rglob('*.json'):   # data only: static/*.js names the ids as code, with no image bytes
+        assert not any(i in p.read_text() for i in vendor_ids), p
+    assert not [p for p in dist.rglob('*') if p.is_file() and any(i in p.as_posix() for i in vendor_ids)]
 
 
 def route(built, posts=(), gets=()):
@@ -285,6 +308,36 @@ def test_pay_late_bills_pays_an_overdue_bill_but_not_one_due_today(monkeypatch, 
     rows = conn.execute('SELECT transaction_id, date FROM transactions ORDER BY transaction_id').fetchall()
     assert [(r['transaction_id'], r['date']) for r in rows] == [
         ('t1', '2026-10-01'), ('t1-paid-2026-11-01', '2026-11-01')]
+
+
+def test_extend_history_puts_every_account_on_one_weekly_grid():
+    """The net-worth line grew a 3-4 day series: extend_history walked each account back on its own seven-day grid, so an
+    account whose first snapshot came a few days after the earliest one (a month boundary) added points between the
+    weekly ones. Every backfilled row must lie on the earliest account's grid."""
+    import sqlite3
+    from datetime import date
+    import build_demo
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    conn.execute('CREATE TABLE accounts (account_id TEXT PRIMARY KEY, type TEXT)')
+    conn.execute('CREATE TABLE balance_snapshots (account_id TEXT, date TEXT, current REAL, available REAL, '
+                 'iso_currency TEXT, PRIMARY KEY (account_id, date))')
+    conn.execute('CREATE TABLE transactions (account_id TEXT, date TEXT, amount REAL, pending INTEGER, removed INTEGER)')
+    conn.execute('CREATE TABLE manual_balance_history (manual_account_id TEXT, date TEXT, balance REAL)')
+    conn.executemany('INSERT INTO accounts VALUES (?, ?)',
+                     [('acct-a', 'depository'), ('acct-b', 'depository')])
+    conn.executemany('INSERT INTO balance_snapshots VALUES (?, ?, ?, ?, ?)',
+                     [('acct-a', '2026-10-31', 1000.0, 1000.0, 'USD'),
+                      ('acct-b', '2026-11-03', 500.0, 500.0, 'USD')])
+    conn.execute("INSERT INTO transactions VALUES ('acct-a', '2026-10-20', -100.0, 0, 0)")
+    today = date(2026, 11, 10)
+    assert build_demo.extend_history(conn, today) > 0
+    anchor = date(2026, 10, 31)
+    for acc, first in (('acct-a', '2026-10-31'), ('acct-b', '2026-11-03')):
+        dates = [r[0] for r in conn.execute(
+            'SELECT date FROM balance_snapshots WHERE account_id = ? AND date < ?', (acc, first))]
+        assert dates, acc
+        assert sorted({(anchor - date.fromisoformat(d)).days % 7 for d in dates}) == [0], (acc, dates)
 
 
 def test_every_real_ticker_held_shows_its_logo(built):

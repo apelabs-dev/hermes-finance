@@ -15,8 +15,9 @@ atexit.register(shutil.rmtree, tmp, True)
 os.environ["FINANCE_DATA_DIR"] = str(tmp / "data")
 os.environ["HERMES_ENV_FILE"] = str(tmp / "none.env")
 os.environ["FINANCE_SECRETS_FILE"] = str(tmp / "none-secrets.env")
-os.environ["HERMES_PLAID"] = "off"
+os.environ.update(VENDOR_SWITCHES)   # no Plaid, no SimpleFIN
 
+from offline_env import VENDOR_SWITCHES  # noqa: E402
 from hermes_finance import config, db  # noqa: E402
 from hermes_finance.web import App  # noqa: E402
 import rules_scene  # noqa: E402

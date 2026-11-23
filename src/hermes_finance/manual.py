@@ -36,7 +36,7 @@ from datetime import date
 from typing import Any
 
 from . import insights
-from .db import account_policy_sql, now
+from .db import account_policy_sql, display_currency, now
 
 KINDS = ("bank", "credit_card", "investment", "loan", "vehicle", "property", "other_asset", "other_liability")
 LIABILITY_KINDS = frozenset({"credit_card", "loan", "other_liability"})
@@ -87,8 +87,10 @@ LABELS = {  # in form order, which is also the order missing fields are reported
     "mileage": "Mileage", "zip_code": "ZIP code", "vehicle_condition": "Condition", "interest_rate": "Interest rate",
     "original_amount": "Original amount", "credit_limit": "Credit limit", "balance": "Current balance",
     "monthly_payment": "Monthly payment", "match_pattern": "Match payments from", "balance_as_of": "Balance date",
-    "linked_loan_id": "Loan",
+    "linked_loan_id": "Loan", "currency": "Currency",
 }
+for _fields in ALLOWED.values():
+    _fields.add("currency")
 KIND_LABELS = {
     "institution": {"bank": "Bank name", "credit_card": "Card company", "investment": "Institution", "loan": "Provider"},
     "balance": {"loan": "Amount remaining", "vehicle": "Your value", "property": "Your value",
@@ -112,7 +114,7 @@ DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 COLUMNS = ("kind", "name", "institution", "subtype", "balance", "credit_limit", "interest_rate", "original_amount",
            "monthly_payment", "match_pattern", "vehicle_make", "vehicle_model", "vehicle_year", "balance_as_of",
            "vin", "vehicle_trim", "mileage", "mileage_as_of", "zip_code", "address", "vin_decoded", "value_source",
-           "vehicle_condition", "linked_loan_id")
+           "vehicle_condition", "linked_loan_id", "currency")
 MAX_MONTHS = 1200            # payoff projections stop here ("never" at this payment)
 
 
@@ -228,6 +230,10 @@ def _clean(kind: str, field: str, value: Any, today: date) -> Any:
         if not isinstance(value, str) or not ZIP_RE.fullmatch(value.strip()):
             raise ManualError("ZIP code must be 5 digits (or ZIP+4, like 94110-1234)", field)
         return value.strip()
+    if field == "currency":
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9]{1,12}", value.strip()):
+            raise ManualError("Currency must be a 3-letter code such as USD or EUR", field)
+        return value.strip().upper()
     text = _text(field, kind, value)
     if field == "address" and len(text) < ADDRESS_MIN:
         raise ManualError("Address needs the street, city and state (or ZIP) to be looked up", field)
@@ -547,6 +553,7 @@ def create(conn: sqlite3.Connection, data: dict[str, Any], today: date, estimate
     if kind == "vehicle" and not clean.get("name"):
         clean["name"] = vehicle_name(clean["vehicle_year"], clean["vehicle_make"], clean["vehicle_model"])
     clean.setdefault("balance_as_of", today.isoformat())
+    clean.setdefault("currency", display_currency(conn))
     if kind in VALUE_KINDS:
         clean["value_source"] = "user" if clean.get("balance") is not None else "estimate"
         if clean.get("balance") is None:
@@ -669,8 +676,10 @@ def rebuild_loan(conn: sqlite3.Connection, loan_id: int) -> float:
 
 
 def _payment_view(conn: sqlite3.Connection, txn_id: str) -> dict[str, Any]:
-    r = conn.execute("""SELECT p.*, t.date, t.name, t.merchant_name FROM loan_payments p
-                        JOIN transactions t USING (transaction_id) WHERE p.transaction_id = ?""", (txn_id,)).fetchone()
+    r = conn.execute("""SELECT p.*, t.date, t.name, t.merchant_name, t.iso_currency AS txn_currency,
+                               m.currency AS loan_currency
+                        FROM loan_payments p JOIN transactions t USING (transaction_id)
+                        JOIN manual_accounts m ON m.id = p.loan_id WHERE p.transaction_id = ?""", (txn_id,)).fetchone()
     return dict(r)
 
 
@@ -933,7 +942,12 @@ def summary(conn: sqlite3.Connection, today: date, include_archived: bool = Fals
         x["excluded"] = insights.manual_nw_id(x["id"]) in policy
     live = [x for x in items if not x["archived_at"]]
     counted = [x for x in live if not x["excluded"]]
-    assets = _r(sum(x["balance"] for x in counted if not x["liability"]))
-    debts = _r(sum(x["balance"] for x in counted if x["liability"]))
+    display = display_currency(conn)
+    # Totals are one currency: the display currency. A foreign account is listed with its own code and amount but is
+    # never added in (there is no conversion here).
+    shown = [x for x in counted if (x.get("currency") or display).strip().upper() == display]
+    assets = _r(sum(x["balance"] for x in shown if not x["liability"]))
+    debts = _r(sum(x["balance"] for x in shown if x["liability"]))
     return {"accounts": items, "assets": assets, "debts": debts, "net": _r(assets - debts), "count": len(live),
-            "excluded_count": sum(1 for x in live if x["excluded"])}
+            "excluded_count": sum(1 for x in live if x["excluded"]),
+            "foreign_count": sum(1 for x in counted if (x.get("currency") or display).strip().upper() != display)}

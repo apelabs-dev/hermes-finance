@@ -123,6 +123,53 @@
   const NF2 = new Intl.NumberFormat(LOC, {minimumFractionDigits: CUR.digits, maximumFractionDigits: CUR.digits});
   const withSym = (s) => (CUR.before ? `${CUR.sym}${CUR.gap}${s}` : `${s}${CUR.gap}${CUR.sym}`);
 
+  // ---- other currencies (multi-currency card) -------------------------------------------------
+  // No FX: a foreign amount is only written in its own code. The symbol map mirrors money.py; a code
+  // without one is written "KRW 1,200". Decimals are the code's official ISO 4217 exponent.
+  const CURRENCIES = (document.documentElement.dataset.currencies || 'USD').split(',').filter(Boolean);
+  const MONEY_SYMBOLS = {USD: '$', EUR: '€', GBP: '£'};
+  const CCY = new Map();
+  function currencyCode(code) {
+    return String(code || '').trim().toUpperCase();
+  }
+  function currencyDigits(code) {
+    const c = currencyCode(code) || 'USD';
+    if (!CCY.has(c)) {
+      let digits = 2;
+      try { digits = new Intl.NumberFormat(LOC, {style: 'currency', currency: c}).resolvedOptions().maximumFractionDigits; }
+      catch (e) { digits = 2; }
+      CCY.set(c, digits);
+    }
+    return CCY.get(c);
+  }
+  function currencyPrefix(code) {
+    const c = currencyCode(code) || CUR.code;
+    if (c === CUR.code) return CUR.sym;
+    return MONEY_SYMBOLS[c] || `${c} `;
+  }
+  function moneyIn(code, n, cents = false) {
+    const c = currencyCode(code);
+    if (!c || c === CUR.code) return money(n, cents);
+    const digits = currencyDigits(c);
+    const v = Number(n) || 0;
+    const scale = 10 ** digits;
+    const rounded = Math.round(Math.abs(v) * scale) / scale;
+    const places = cents || Math.abs(rounded - Math.round(rounded)) > 1e-9 ? digits : 0;
+    const nf = new Intl.NumberFormat(LOC, {minimumFractionDigits: places, maximumFractionDigits: places});
+    const sign = v < 0 && rounded > 0 ? '-' : '';
+    const prefix = MONEY_SYMBOLS[c] || `${c} `;
+    return sign + prefix + nf.format(rounded);
+  }
+  const signedIn = (code, amount) => (amount < 0 ? '+' + moneyIn(code, -amount, true) : moneyIn(code, amount, true));
+  const dayAmount = (day) => {
+    if (!day) return '';
+    const totals = day.totals && Object.keys(day.totals).length ? day.totals : (day.total == null ? null : {[CUR.code]: day.total});
+    if (!totals) return '';
+    const shown = Object.keys(totals).filter((c) => Math.round(totals[c] * 100))
+      .sort((a, b) => (currencyCode(a) === CUR.code ? -1 : 0) - (currencyCode(b) === CUR.code ? -1 : 0));
+    return shown.map((c) => (currencyCode(c) === CUR.code ? signed(totals[c]) : signedIn(c, totals[c]))).join(' \u00b7 ');
+  };
+
   // Shared numeric parts keep hero figures and ordinary amounts identical, including rounded zero.
   function moneyParts(n, cents = false) {
     const v = Number(n) || 0;
@@ -313,12 +360,15 @@
   const PALETTE = {'Income': '#4fd1a5', 'Transfers': '#8a93a8'};
   const CATI = {'Income': 'income', 'Transfers': 'swap'};
   const CATG = {};
+  // v23: stored metadata from /api/categories wins (a user category's icon/group, a built-in's edited icon); filled by
+  // ensureCategories(), so the first paint falls back to the taxonomy table above and a later redraw uses the truth.
+  const CATMETA = new Map();
   for (const [group, rgb, cats] of CAT_GROUPS) {
     for (const [name, ic] of Object.entries(cats)) { PALETTE[name] = hexOf(rgb); CATI[name] = ic; CATG[name] = group; }
   }
   // polish x-labels: format category name with group prefix using middle dot
   const catLabel = (name) => {
-    const group = CATG[name];
+    const group = (CATMETA.get(name) || {}).group || CATG[name];
     return group && group !== name ? `${group} · ${name}` : name;
   };
   const EXTRA = ['#e6a0c4', '#9fd8cb', '#d7b98e', '#b3c7f7', '#f0c987', '#a5d6a7'];
@@ -349,7 +399,12 @@
     for (const ch of String(s || '?')) x = (x * 31 + ch.codePointAt(0)) % 360;
     return x;
   }
-  const catColor = (name) => (has(PALETTE, name) ? PALETTE[name] : EXTRA[hue(name) % EXTRA.length]);
+  const rgbHex = (rgb) => `#${String(rgb).split(',').map((v) => Number(v).toString(16).padStart(2, '0')).join('')}`;
+  const catColor = (name) => {
+    const meta = CATMETA.get(name);
+    if (meta && meta.rgb) return rgbHex(meta.rgb);
+    return has(PALETTE, name) ? PALETTE[name] : EXTRA[hue(name) % EXTRA.length];
+  };
 
   function rgbOf(hex) {
     return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',');
@@ -419,6 +474,7 @@
     'American Express': ['#2e77bc', 'A'], 'Capital One': ['#1f4f7d', 'C'],
     'Bank of America': ['#c8252f', 'B'], 'Fidelity': ['#3b8a3e', 'F'], 'Vanguard': ['#96151d', 'V'],
     'Charles Schwab': ['#1b9ad6', 'S'], 'Ally Bank': ['#6b2c91', 'A'], 'Discover': ['#e36a18', 'D'],
+    'Plaid': ['#111111', 'P'], 'SimpleFIN': ['#0088cc', 'S'],
   };
   const instShort = (name) => (name === 'Citibank Online' ? 'Citi' : name || '');
   // Cached institutions (/api/accounts .institutions): a logo served by this server, else the bank's own colour.
@@ -468,7 +524,10 @@
   function ibadge(name, rgb, size = '') {
     return h('span', {class: `cb ${size}`, 'aria-hidden': 'true', style: {'--rgb': rgb}}, glyph(name));
   }
-  const badge = (category, size = '') => ibadge(CATI[category] || 'tag', rgbOf(catColor(category)), size);
+  const badge = (category, size = '') => {
+    const meta = CATMETA.get(category);
+    return ibadge((meta && meta.icon) || CATI[category] || 'tag', (meta && meta.rgb) || rgbOf(catColor(category)), size);
+  };
   const gbadge = (group, rgb, size = '') => ibadge(GROUP_ICON[group] || 'tag', rgb || RGB.grey, size);
 
   // A ring of arcs from 12 o'clock, each [ratio (0..1), colour, opacity], later ones drawn on top; `inner` in the middle.
@@ -649,6 +708,7 @@
     capEditorExtra: () => null, acctRow: () => null, investRow: () => null, bankRow: () => null, addOptions: [], addSteps: {},
     billSheet: () => {},    // TASK-21 (bills.js): a Recurring row opens its bill sheet
     // polish P0 (catpick.js: the grouped picker): a transaction's category control; onPick() once `.value` is the new one
+    catRgb: (c) => c.rgb,   // (catcolour.js): the "r,g,b" a category's tile is drawn in, an override of its group's if it has one
     catPick: ({value, names, cls = '', label, title}, onPick) => {
       const sel = h('select', {class: `cat${cls}`, 'aria-label': label, title: title || null},
         names.map((n) => h('option', {value: n, selected: n === value}, n)));
@@ -664,6 +724,7 @@
       return [f.category.map((c) => h('button', {class: 'fchip cat', type: 'button', title: 'Clear category filter',
         onclick: () => updateTx({category: f.category.filter((x) => x !== c)}, true)}, c, icon('x'))), bank];
     },
+    closeTx: () => {},      // (txmeta.js): a page change closes the transaction sheet too
     txLoaded: () => {}};
 
   // Explanations stay out of the main reading path. Short help supports hover/focus/tap;
@@ -678,7 +739,7 @@
     const button = h('button', {type: 'button', class: `help-trigger${text ? ' labelled' : ''}`,
       'aria-label': label, 'aria-expanded': 'false', 'aria-haspopup': long ? 'dialog' : null,
       dataset: key ? {help: key} : null}, text || icon('info'));
-    let panel = null, pinned = false, timer = null, returning = false;
+    let panel = null, pinned = false, timer = null, returning = false, stopWatch = null;
     const position = () => {
       if (!panel) return;
       const r = button.getBoundingClientRect();
@@ -697,12 +758,11 @@
       button.removeAttribute('aria-controls');
       button.removeAttribute('aria-describedby');
       old.remove();
-      window.removeEventListener('resize', position);
-      window.removeEventListener('scroll', position, true);
+      if (stopWatch) { stopWatch(); stopWatch = null; }
       if (activeHelp && activeHelp.button === button) activeHelp = null;
       if ((restore || inside) && button.isConnected) {
         returning = true;
-        button.focus({preventScroll: true});
+        HFPopClose.focus(button);
         returning = false;
       }
     };
@@ -726,8 +786,8 @@
       panel.addEventListener('pointerleave', () => { if (!pinned && document.activeElement !== button) timer = setTimeout(close, 150); });
       panel.showPopover();
       position();
-      window.addEventListener('resize', position);
-      window.addEventListener('scroll', position, true);
+      // the panel is placed once: when the page scrolls or resizes under it, it closes (popclose.js) instead of drifting
+      stopWatch = HFPopClose.watch({root: panel, trigger: button, close: (restore) => close(restore && long)});
       if (long) panel.querySelector('button').focus({preventScroll: true});
     };
     button.addEventListener('click', (e) => { e.stopPropagation(); if (panel && pinned) close(); else open(true); });
@@ -868,6 +928,7 @@
   let modalReturn = null;
   function openSheet(kids, opts = {}) {
     closeHelp();
+    clearLinkError();
     const sheet = $('sheet');
     const stale = sheetRelease;
     sheetRelease = opts.release || null;
@@ -887,13 +948,14 @@
   let sheetRelease = null;  // an open sheet's clean-up (listeners, inline styles): run when it closes or another replaces it
   function closeModal() {
     $('modal').classList.remove('on');
+    clearLinkError();
     const release = sheetRelease;
     sheetRelease = null;
     if (release) release();
     const done = sheetOnClose;
     sheetOnClose = null;
     if (done) done();
-    if (modalReturn && modalReturn.isConnected && modalReturn.focus) modalReturn.focus();
+    if (modalReturn && modalReturn.isConnected && modalReturn.focus) modalReturn.focus({preventScroll: true});
     modalReturn = null;
   }
   function modal(title, body, actions) {  // a simple question: title, body, buttons
@@ -1634,6 +1696,7 @@
     renderTop();
     closeDrawer();
     closePanel();
+    HOOKS.closeTx();
     if (!opts.keepToast) {
       hideToast();
       closeSyncPanel();   // (TASK-22f: a sync's own reload keeps its panel open)
@@ -1648,7 +1711,14 @@
     readInk();
     RENDER[page](tk).then(() => {  // the bars have filled: anything drawn later on this page doesn't animate them again
       if (tk === S.token) S.animate = false;   // nor its charts: a toggle or drill redrawn in place stays still
-      if (tk === S.token && !document.body.classList.contains('bars-done')) setTimeout(() => document.body.classList.add('bars-done'), 400);
+      if (tk !== S.token || document.body.classList.contains('bars-done')) return;
+      // the 400ms window opens once the drawn bars have had a frame to start mo-bar (a starved renderer must not let the
+      // timer add bars-done before their first paint: Nightly 43245845336 sampled bars 0) — two frames, because the first
+      // requestAnimationFrame callback runs before that frame's paint, so only the second is guaranteed to run after one
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (tk === S.token && !document.body.classList.contains('bars-done'))
+          setTimeout(() => { if (tk === S.token) document.body.classList.add('bars-done'); }, 400);
+      }));
     }).catch((e) => {
       if (tk === S.token) fill($('page'), errorCard(e, () => route()));
     });
@@ -1780,8 +1850,8 @@
     mask ? h('span', {class: 'mk'}, `••${mask}`) : null);
   const movedRow = (m) => h('div', {class: 'sprow'}, ia(m.bank, '', null, m.institution_id),
     h('span', {class: 'grow'}, bankLabel(m.bank, m.mask, m.name), h('span', {}, acctKind(m))),
-    h('span', {class: 'spmv v'}, h('span', {class: 'was'}, m.before == null ? 'new' : money2(m.before)),
-      h('span', {class: 'to', 'aria-label': 'to'}, '→'), h('b', {}, money2(m.after))));
+    h('span', {class: 'spmv v'}, h('span', {class: 'was'}, m.before == null ? 'new' : moneyIn(m.currency, m.before, true)),
+      h('span', {class: 'to', 'aria-label': 'to'}, '→'), h('b', {}, moneyIn(m.currency, m.after, true))));
   const spendRow = (t) => h('div', {class: 'sprow'}, avatar(t.merchant_name || t.name, t.logo_url, null, 32),
     h('span', {class: 'grow'}, h('b', {}, t.merchant_name || t.name),
       h('span', {}, `${instShort(t.bank)}${t.mask ? ` ••${t.mask}` : ''}${t.pending ? ' · pending' : ''}`)),
@@ -1829,6 +1899,12 @@
     if (r.unreachable) return unreachable();
     const c = r.changes;
     const bad = r.items.filter((it) => !it.ok);
+    const sf = r.simplefin && r.simplefin.connected ? r.simplefin : null;
+    const sfLine = () => (sf ? h('p', {class: `spsum${sf.ok ? '' : ' bad'}`}, sf.ok
+      ? `SimpleFIN: +${sf.added || 0} ~${sf.modified || 0} -${sf.removed || 0}`
+        + (sf.matched ? ` · ${plural(sf.matched, 'pending match')}` : '')
+        + (sf.ambiguous ? ` · ${plural(sf.ambiguous, 'to review')}` : '')
+      : `SimpleFIN: ${sf.message || 'not synced'}`) : null);
     const counts = changeCounts(c);
     // (HOTFIX-1) the banks this sync covered: one synced in the last minute waits (r.waiting), and isn't claimed
     const ran = (r.waiting || []).length ? r.items.length : r.banks;
@@ -1848,17 +1924,24 @@
           || (c.balances.length ? `${plural(c.balances.length, 'balance')} moved` : 'nothing new')}`));
         if (c.balances.length) kids.push(movedSec(c.balances));
       }
+      if (sf) kids.push(sfLine());
       return [kids, {}];
     }
     const kids = [spHead('ok', 'check', 'Synced just now', ran === r.banks ? banksWord(r.banks, (r.items[0] || {}).institution_name)
       : `${ran} of ${plural(r.banks, 'bank')}; the rest synced a moment ago`)];
+    if (sf && !sf.ok) {  // Plaid may have synced: say which provider failed, and what it changed
+      const failed = [spHead('warn', 'alert', 'Couldn’t sync SimpleFIN', sf.message), sfLine()];
+      if (counts) failed.push(h('p', {class: 'spsum'}, counts));
+      return [failed, {}];
+    }
+    if (sf) kids.push(sfLine());
     const spend = c.new_spend || [];
     const more = c.new_more || {};
-    if (!counts && !c.balances.length) {  // nothing new: it closes by itself
+    if (!counts && !c.balances.length && !(sf && (sf.added || sf.modified || sf.removed))) {  // nothing new: closes itself
       kids.push(h('p', {class: 'spsum'}, r.previous_sync ? `Nothing new since ${syncLabel(r.previous_sync)}.` : 'Nothing new.'));
       return [kids, {brief: true, foot: askFoot(r.refresh)}];
     }
-    kids.push(h('p', {class: 'spsum'}, counts || `${plural(c.balances.length, 'balance')} moved`));
+    if (counts || c.balances.length) kids.push(h('p', {class: 'spsum'}, counts || `${plural(c.balances.length, 'balance')} moved`));
     const cols = [c.balances.length ? movedSec(c.balances) : null,
       spend.length ? spSec('New spending', spend.map(spendRow), moreLine(more, '+ ')) : null].filter(Boolean);
     kids.push(cols.length > 1 ? h('div', {class: 'spcols'}, cols) : cols, spend.length ? null : moreLine(more, ''));
@@ -1989,7 +2072,13 @@
 
   async function ensureCategories() {
     if (!S.categories) S.categories = await api('/api/categories');
+    for (const c of S.categories) CATMETA.set(c.name, {icon: c.icon, rgb: HOOKS.catRgb(c), group: c.group});
     return S.categories;
+  }
+  // v23: after a category write, drop the cached list and tell the pickers' own caches to refetch on their next open.
+  function categoriesChanged() {
+    S.categories = null;
+    document.dispatchEvent(new CustomEvent('hf-categories-changed'));
   }
 
   async function loadCounts() {
@@ -2089,24 +2178,43 @@
   function manualRow(items) {
     const rows = items.map((m) => (['vehicle', 'property'].includes(m.kind)
       ? h('a', {class: 'ac', href: `#/asset/${m.id}`}, h('span', {}, acctName(m.name)), manualCountedTag(m),
-        h('span', {class: 'v'}, money(m.signed)))
+        h('span', {class: 'v'}, moneyIn(m.currency, m.signed)))
       : h('div', {class: 'ac'}, h('span', {}, acctName(m.name)), manualCountedTag(m),
-        h('span', {class: 'v'}, `${m.approx ? '≈ ' : ''}${money(m.signed)}`))));
+        h('span', {class: 'v'}, `${m.approx ? '≈ ' : ''}${moneyIn(m.currency, m.signed)}`))));
     rows.push(h('a', {class: 'go', href: '#/accounts'}, 'Accounts →'));
     return sideGroup('accts-manual', {
       label: 'Added by you',
       link: h('a', {class: 'link', href: '#/accounts'}, ibadge('pencil', RGB.warn, 'xs'), h('span', {class: 'nm'}, 'Added by you'),
-        h('span', {class: 'v'}, money(sum(items.filter((m) => !m.excluded), (m) => m.signed)))),
+        h('span', {class: 'v'}, money(sum(items.filter((m) => !m.excluded && (m.currency || CUR.code) === CUR.code), (m) => m.signed)))),
     }, rows, false);
   }
 
   // ---------- Plaid Link: connect + update-mode reconnect --------------------------------------
+  // The message goes where the user is looking: #msg is hidden while the set-up wizard or a sheet is open.
+  // It lives in the sheet or wizard that was open, and nowhere else: a page banner would stay pinned to the Accounts page
+  // after the sheet closed and show through under every later sheet (SimpleFIN's included). Only with nothing open does
+  // it go to #msg, and clearLinkError() takes it back at the next sheet, when one closes, and on a connect that works.
+  let linkMsg = '';
+  function clearLinkError() {
+    if (linkMsg && $('msg').textContent === linkMsg) show('', '');
+    linkMsg = '';
+    document.querySelectorAll('.linkerr').forEach((n) => n.remove());
+  }
+  function linkFail(text) {
+    clearLinkError();
+    const box = $('modal').classList.contains('on') ? $('sheet') : document.querySelector('#page .sheet');
+    if (!box) { show(text, 'error'); linkMsg = text; return; }
+    box.appendChild(h('p', {class: 'nc warn linkerr', role: 'alert'}, text));
+  }
+
   async function connectBank() {
     let blocked = null;
     try {
       await loadAccounts();  // fresh connected-institution list for the duplicate guard
       if (typeof Plaid === 'undefined') throw new Error('Plaid Link has not loaded yet (or was blocked). Try again in a moment.');
       const {link_token} = await post('/api/link_token');
+      clearLinkError();                                         // a connect that gets this far leaves no failure note behind
+      if ($('modal').classList.contains('on')) closeModal();   // the Link sheet stays up until there is a token
       const handler = Plaid.create({
         token: link_token,
         onEvent: (name, meta) => {
@@ -2131,7 +2239,7 @@
         },
       });
       handler.open();
-    } catch (e) { show(e.message, 'error'); }
+    } catch (e) { linkFail(e.message); }
   }
 
   async function reconnect(itemId) {
@@ -2164,26 +2272,27 @@
   const TXT = (key, label, ph, o = {}) => ({key, label, type: 'text', ph, max: key === 'subtype' ? 40 : key.startsWith('vehicle') ? 40 : 80, ...o});
   const MONEY = (key, label, o = {}) => ({key, label, type: 'money', ph: '0.00', ...o});
   const CHIPS = (key, label, opts) => ({key, label, type: 'chips', opts});
+  const CURRENCY = {key: 'currency', label: 'Currency', type: 'currency'};
   const FORMS = {
     bank: {kind: 'bank', t: 'Bank account', title: 'Add a bank account', s: 'Checking, savings, money market or CD', save: 'Add bank account',
       f: [TXT('name', 'Nickname', 'e.g. Joint savings'), TXT('institution', 'Bank name', 'e.g. Ally Bank'),
         CHIPS('subtype', 'Account type', [['checking', 'Checking'], ['savings', 'Savings'], ['money_market', 'Money market'], ['cd', 'CD']]),
-        MONEY('balance', 'Current balance')]},
+        CURRENCY, MONEY('balance', 'Current balance')]},
     card: {kind: 'credit_card', t: 'Credit card', title: 'Add a credit card', s: 'Balance and credit limit', save: 'Add credit card',
       f: [TXT('name', 'Nickname', 'e.g. Travel card'), TXT('institution', 'Card company', 'e.g. American Express'),
-        MONEY('credit_limit', 'Credit limit', {half: true, positive: true}), MONEY('balance', 'Current balance', {half: true}),
+        CURRENCY, MONEY('credit_limit', 'Credit limit', {half: true, positive: true}), MONEY('balance', 'Current balance', {half: true}),
         {key: 'match_pattern', label: 'Match payments from', type: 'match', ph: 'Name on your bank statement', optional: true, max: 60}]},
     invest: {kind: 'investment', t: 'Investment or retirement account', title: 'Add an investment account', s: '401(k), IRA, brokerage, HSA or crypto',
       save: 'Add account',
       f: [TXT('name', 'Nickname', 'e.g. Work 401(k)'), TXT('institution', 'Institution', 'e.g. Fidelity'),
         CHIPS('subtype', 'Account type', [['brokerage', 'Brokerage'], ['401k', '401(k)'], ['roth_ira', 'Roth IRA'],
           ['traditional_ira', 'Traditional IRA'], ['hsa', 'HSA'], ['crypto', 'Crypto'], ['other', 'Other']]),
-        MONEY('balance', 'Current balance')]},
+        CURRENCY, MONEY('balance', 'Current balance')]},
     loan: {kind: 'loan', t: 'Loan', title: 'Add a loan', s: 'Auto, student, personal, mortgage or BNPL', save: 'Add loan',
       f: [TXT('name', 'Nickname', 'e.g. Car loan'), TXT('institution', 'Provider', 'e.g. Ally Auto'),
         CHIPS('subtype', 'Loan type', [['auto', 'Auto'], ['student', 'Student'], ['personal', 'Personal'], ['mortgage', 'Mortgage'],
           ['bnpl', 'BNPL'], ['other', 'Other']]),
-        {key: 'interest_rate', label: 'Interest rate', type: 'pct', ph: 'e.g. 4.9', half: true, optional: true},
+        CURRENCY, {key: 'interest_rate', label: 'Interest rate', type: 'pct', ph: 'e.g. 4.9', half: true, optional: true},
         MONEY('original_amount', 'Original amount', {half: true, positive: true}), MONEY('balance', 'Amount remaining', {half: true}),
         MONEY('monthly_payment', 'Monthly payment', {half: true, positive: true}),
         {key: 'match_pattern', label: 'Match payments from', type: 'match', ph: 'Name on your bank statement', optional: true, max: 60}]},
@@ -2194,16 +2303,18 @@
         TXT('vehicle_trim', 'Trim', 'e.g. EX', {half: true, optional: true}),
         {key: 'mileage', label: 'Mileage', type: 'miles', ph: 'e.g. 42,000', half: true, optional: true},
         {key: 'zip_code', label: 'ZIP code', type: 'zip', ph: 'e.g. 94110', half: true, optional: true, max: 10},
-        {key: 'linked_loan_id', label: 'Loan', type: 'loan', optional: true},
+        CURRENCY, {key: 'linked_loan_id', label: 'Loan', type: 'loan', optional: true},
         MONEY('balance', 'Your value')]},
     property: {kind: 'property', t: 'Property', title: 'Add a property', s: "Your home's value", save: 'Add property',
       f: [TXT('name', 'Nickname', 'e.g. Home'),
         TXT('address', 'Address', 'Street, city, state and ZIP', {optional: true, max: 160}),
-        {key: 'linked_loan_id', label: 'Mortgage', type: 'loan', optional: true}, MONEY('balance', 'Your value')]},
+        CURRENCY, {key: 'linked_loan_id', label: 'Mortgage', type: 'loan', optional: true}, MONEY('balance', 'Your value')]},
     asset: {kind: 'other_asset', t: 'Other asset', title: 'Add another asset', s: 'Anything else you own', save: 'Add asset',
-      f: [TXT('name', 'Name', 'e.g. Watch'), TXT('subtype', 'Type', 'e.g. Collectible'), MONEY('balance', 'Value')]},
+      f: [TXT('name', 'Name', 'e.g. Watch'), TXT('subtype', 'Type', 'e.g. Collectible'), CURRENCY,
+        MONEY('balance', 'Value')]},
     liab: {kind: 'other_liability', t: 'Other liability', title: 'Add another liability', s: 'Anything else you owe', save: 'Add liability',
-      f: [TXT('name', 'Name', 'e.g. Loan from family'), TXT('subtype', 'Type', 'e.g. Personal IOU'), MONEY('balance', 'Amount left')]},
+      f: [TXT('name', 'Name', 'e.g. Loan from family'), TXT('subtype', 'Type', 'e.g. Personal IOU'), CURRENCY,
+        MONEY('balance', 'Amount left')]},
   };
   const FORM_OF = {bank: 'bank', credit_card: 'card', investment: 'invest', loan: 'loan', vehicle: 'car', property: 'property',
     other_asset: 'asset', other_liability: 'liab'};
@@ -2231,16 +2342,39 @@
       return;
     }
     const {used, limit, full} = slotInfo();
-    const meter = h('span', {class: 'slotm'}, `${used} of ${limit} used`, h('span', {class: 'meter'}, h('i', {style: {width: pct(used / limit)}})));
     if (step === 'home') {
       openSheet([h('div', {class: 'shd'}, h('h2', {id: 'sheet-title'}, 'Add account'), closeBtn()),
         h('div', {class: 'opts'},
-          opt('link', RGB.acc, 'Link a bank or card', full ? `All ${limit} connections are used` : 'Connect securely with Plaid',
-            () => openAdd('plaid'), meter),
+          opt('link', RGB.acc, 'Link a bank or card', 'Choose Plaid or SimpleFIN', () => openAdd('choose')),
           opt('house', RGB.purple, 'Add a property', "Track your home's value", () => openAdd('form:property')),
           opt('car', RGB.cyan, 'Add a vehicle', "Track your car's value", () => openAdd('form:car')),
           opt('pencil', RGB.warn, 'Add manually', "Loans, cards and accounts Plaid can't reach", () => openAdd('manual')),
           HOOKS.addOptions.map((f) => f()))]);
+    } else if (step === 'choose') {
+      // Both cards are the same four rows (head, strengths, drawbacks, button), so a grid with subgrid lines the
+      // sections up. The Plaid slot meter is not here: it lives in Settings -> Connections. Only when no Plaid
+      // connection is left, one line above the cards says so and the Plaid button is off; SimpleFIN stays open.
+      const list = (kind, title, iconName, items) => h('div', {class: `way-${kind}`}, h('h4', {}, icon(iconName), title),
+        h('ul', {}, items.map((t) => h('li', {}, t))));
+      const way = (title, text, strengths, drawbacks, onContinue, off) => h('div', {class: 'way'},
+        h('div', {class: 'way-h'}, title.kind === 'plaid' ? ia('Plaid', 'l', null, 'ins_hf_plaid') : ia('SimpleFIN', 'l', null, 'ins_hf_simplefin'),
+          h('span', {class: 'grow'}, h('b', {}, title.name), h('span', {}, text))),
+        list('pro', 'Strengths', 'check', strengths), list('con', 'Drawbacks', 'alert', drawbacks),
+        h('button', {class: 'btn w', type: 'button', onclick: onContinue, disabled: off || null,
+          'aria-describedby': off ? 'way-full-note' : null}, `Continue with ${title.name}`));
+      openSheet([
+        h('div', {class: 'shd'}, backBtn(() => openAdd('home')), h('h2', {id: 'sheet-title'}, 'Link a bank or card'), closeBtn()),
+        h('p', {}, 'Pick how this bank connects. You can use both.'),
+        full ? h('div', {class: 'way-full', id: 'way-full-note', role: 'status'}, icon('alert'),
+          h('span', {}, "Plaid is full. SimpleFIN doesn't use a Plaid connection.")) : null,
+        h('div', {class: 'ways'}, way({kind: 'plaid', name: 'Plaid'}, 'Sign in at your bank in a Plaid window',
+          ['Most US banks, cards and brokerages', 'Syncs daily, plus Refresh on demand', 'Your bank password stays with Plaid'],
+          ['Limited connections per install', "Removing a bank doesn't free one", 'Needs your Plaid keys'],
+          () => openAdd('plaid'), full),
+          way({kind: 'simplefin', name: 'SimpleFIN'}, 'Paste a setup token from SimpleFIN Bridge',
+            ['No Plaid connection or keys needed', 'Read-only, through your Bridge account', 'Accounts already on Plaid are skipped'],
+            ['Bridge is a paid service', '24 requests a day, shared with Sync now', 'You confirm each account type once'],
+            () => openAdd('simplefin')))], {cls: 'wide'});
     } else if (step === 'plaid') {
       // Duplicate guard that actually saves the slot: Plaid creates the Item the moment its login finishes, and Link's
       // SELECT_INSTITUTION event only reaches us at the end of the flow, so nothing inside Link can stop it in time.
@@ -2254,7 +2388,7 @@
             'aria-label': `Update ${instShort(name)} accounts`}, 'Update'));
       };
       const go = h('button', {class: 'btn w', type: 'button', disabled: full,
-        onclick: () => { closeModal(); connectBank(); }}, conns.length ? 'Connect a different bank' : 'Continue to Plaid');
+        onclick: () => connectBank()}, conns.length ? 'Connect a different bank' : 'Continue to Plaid');
       openSheet([h('div', {class: 'shd'}, backBtn(() => openAdd('home')), h('h2', {id: 'sheet-title'}, 'Link a bank or card'), closeBtn()),
         h('div', {class: 'prev'}, ring(used / limit, ACC, 62, 7, h('b', {class: 'v', style: {'font-size': '15px'}}, String(used))),
           h('div', {}, h('b', {}, `${limit - used} of ${limit} connections left`),
@@ -2289,8 +2423,8 @@
     addForm(FORM_OF[m.kind], m, null);
   }
 
-  function parseAmount(raw) {  // "30,947.00", "$465.10" -> number; "" -> null; junk -> NaN (a "," decimal locale: "1.234,56")
-    let s = String(raw).split(CUR.sym).join('').replace(/[$\s\u00a0\u202f]/g, '');
+  function parseAmount(raw) {  // "30,947.00", "$465.10", "KRW 1,200" -> number; "" -> null; junk -> NaN
+    let s = String(raw).replace(/\b[A-Z]{3}\b/g, '').replace(/[€£¥₹$\s\u00a0\u202f]/g, '');
     s = CUR.dec === ',' ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
     if (!s) return null;
     return /^\d*\.?\d+$|^\d+\.$/.test(s) ? Number(s) : NaN;
@@ -2331,13 +2465,26 @@
       const sel = h('select', {id, name: f.key, 'aria-describedby': eid},
         h('option', {value: ''}, loans.length ? 'None' : 'None (add the loan first)'),
         loans.map((l) => h('option', {value: String(l.id), selected: value === l.id},
-          `${l.name}${l.institution ? ` · ${l.institution}` : ''} · ${money2(l.balance)} left`)));
+          `${l.name}${l.institution ? ` · ${l.institution}` : ''} · ${moneyIn(l.currency, l.balance, true)} left`)));
       const wrap = h('div', {class: `fld${f.half ? ' h' : ''}`, dataset: {key: f.key}}, h('label', {for: id}, lab),
         h('div', {class: 'inp sel'}, sel), err, h('div', {class: 'hint'}, 'Its balance comes off the value as your equity.'));
       sel.addEventListener('change', () => wrap.dispatchEvent(new Event('input', {bubbles: true})));
       wrap.getValue = () => sel.value;
       wrap.input = sel;
       wrap.focusFirst = () => sel.focus();
+      return wrap;
+    }
+    if (f.type === 'currency') {
+      const chosen = currencyCode(value) || CUR.code;
+      const sel = h('select', {id, name: f.key, 'aria-describedby': eid},
+        CURRENCIES.map((c) => h('option', {value: c, selected: c === chosen}, c)));
+      const wrap = h('div', {class: `fld${f.half ? ' h' : ''}`, dataset: {key: f.key}}, h('label', {for: id}, lab),
+        h('div', {class: 'inp sel'}, sel), err,
+        h('div', {class: 'hint'}, 'Amounts stay in this currency: nothing is converted.'));
+      wrap.getValue = () => sel.value;
+      wrap.input = sel;
+      wrap.focusFirst = () => sel.focus();
+      wrap.dispatchEvent(new Event('input', {bubbles: true}));
       return wrap;
     }
     if (f.type === 'chips') {
@@ -2378,7 +2525,8 @@
       autocomplete: 'off', inputmode: money || f.type === 'pct' ? 'decimal' : ['year', 'miles', 'zip'].includes(f.type) ? 'numeric' : 'text',
       'aria-describedby': eid, 'aria-required': f.optional ? null : 'true', maxlength: f.max ? String(f.max + (f.type === 'vin' ? 4 : 0)) : null,
       spellcheck: ['match', 'vin'].includes(f.type) ? 'false' : null, autocapitalize: f.type === 'vin' ? 'characters' : null});
-    control = h('div', {class: `inp${['match', 'vin'].includes(f.type) ? ' code' : ''}`}, money ? h('span', {class: 'pre', 'aria-hidden': 'true'}, CUR.sym) : null, input,
+    control = h('div', {class: `inp${['match', 'vin'].includes(f.type) ? ' code' : ''}`},
+      money ? h('span', {class: 'pre', 'aria-hidden': 'true', dataset: {moneyPrefix: '1'}}, CUR.sym) : null, input,
       f.type === 'miles' ? h('span', {class: 'suf', 'aria-hidden': 'true'}, 'mi') : null,
       f.type === 'pct' ? h('span', {class: 'suf', 'aria-hidden': 'true'}, '%') : null);
     const wrap = h('div', {class: `fld${f.half ? ' h' : ''}`, dataset: {key: f.key}}, h('label', {for: id}, lab), control, err);
@@ -2412,6 +2560,10 @@
   function checkField(f, raw, kind) {
     const year = new Date().getFullYear();
     if (f.type === 'chips') return raw ? [raw, null] : [null, `Pick a ${f.label.toLowerCase()}`];
+    if (f.type === 'currency') {
+      const c = String(raw || '').trim().toUpperCase();
+      return /^[A-Z0-9]{1,12}$/.test(c) ? [c, null] : [null, 'Pick a currency'];
+    }
     if (f.type === 'loan') return [raw ? Number(raw) : null, null];
     const text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
     if (!text) return f.optional ? [null, null] : [null, `${f.label} is required`];
@@ -2456,8 +2608,21 @@
     if (!F) return;
     const K = KIND[F.kind];
     const edit = Boolean(existing);
-    const fields = F.f.map((f) => field(f, existing ? existing[f.key] : null, F.kind));
+    const fields = F.f.map((f) => field(f, existing ? existing[f.key] : (f.type === 'currency' ? CUR.code : null), F.kind));
     const byKey = Object.fromEntries(F.f.map((f, i) => [f.key, fields[i]]));
+    const currencyField = byKey.currency;
+    const repaintMoney = () => {
+      const c = currencyField ? currencyField.getValue() : CUR.code;
+      for (const f of F.f) {
+        if (f.type !== 'money' || !byKey[f.key]) continue;
+        const pre = byKey[f.key].querySelector('[data-money-prefix]');
+        if (pre) pre.textContent = currencyPrefix(c);
+      }
+    };
+    if (currencyField) {
+      currencyField.input.addEventListener('change', repaintMoney);
+      repaintMoney();
+    }
     const formErr = h('div', {class: 'formerr', role: 'alert'});
     const preview = h('div', {class: 'prev', hidden: true});
     if (edit) {
@@ -2465,7 +2630,7 @@
       bal.append(h('div', {class: 'hint'}, F.kind === 'loan' && existing.applied_count
         ? `Payments after ${fmtDate(existing.balance_as_of, true)} are already taken off. A new amount here counts from today.`
         : F.kind === 'credit_card' && existing.matched_count
-          ? `Last set ${money2(existing.entered_balance)} on ${fmtDate(existing.balance_as_of, true)}, minus ${money2(existing.matched_total)} in ${plural(existing.matched_count, 'matched payment')}. Purchases don't show up here: enter your latest statement balance and it counts from today.`
+          ? `Last set ${moneyIn(existing.currency, existing.entered_balance, true)} on ${fmtDate(existing.balance_as_of, true)}, minus ${moneyIn(existing.currency, existing.matched_total, true)} in ${plural(existing.matched_count, 'matched payment')}. Purchases don't show up here: enter your latest statement balance and it counts from today.`
           : `Last set ${fmtDate(existing.balance_as_of, true)}. Changing it saves a new balance as of today.`));
     }
     if (F.kind === 'loan') loanHelpers(byKey, preview, existing);
@@ -2595,7 +2760,7 @@
       }
     }}, label);
     const use = e && v.source === 'user' ? act('Use estimate again', `/api/manual/${m.id}/use-estimate`,
-      (res) => toast(['Now using the ', h('b', {}, `${v.provider_label} estimate`), ` for ${res.name}: ${money(res.balance)}.`], [], {timeout: 4500})) : null;
+      (res) => toast(['Now using the ', h('b', {}, `${v.provider_label} estimate`), ` for ${res.name}: ${moneyIn(res.currency || m.currency, res.balance)}.`], [], {timeout: 4500})) : null;
     const again = v.can_refresh ? act('Refresh estimate', `/api/manual/${m.id}/refresh`, (res) => {
       const r = res.estimate_result;
       toast(r.ok ? [`${r.message}.`, r.applied ? '' : ' Your value still counts.'] : `No estimate: ${r.message}.`, [],
@@ -2603,9 +2768,9 @@
     }) : null;
     if (!e && !v.enabled) return null;
     return h('div', {class: 'valbox'},
-      h('div', {class: 'vl'}, e ? [h('b', {class: 'v'}, `${e.basis_label} ${money(e.value)}`), ` · ${e.source_label} · ${fmtDate(e.date)}`]
+      h('div', {class: 'vl'}, e ? [h('b', {class: 'v'}, `${e.basis_label} ${moneyIn(m.currency, e.value)}`), ` · ${e.source_label} · ${fmtDate(e.date)}`]
         : h('b', {}, 'No estimate yet')),
-      h('div', {class: 'mut'}, v.source === 'user' ? `Your value (${money2(m.balance)}) counts in your net worth.`
+      h('div', {class: 'mut'}, v.source === 'user' ? `Your value (${moneyIn(m.currency, m.balance, true)}) counts in your net worth.`
         : e ? 'Your net worth uses this estimate.' : 'Your net worth counts it at $0 until there is an estimate or a value.'),
       v.last_error ? h('div', {class: 'warn'}, `Last try ${fmtDate(v.last_error.date)}: ${v.last_error.message}.`) : null,
       use || again ? h('div', {class: 'row'}, use, again) : null,
@@ -3234,10 +3399,11 @@
   let windowPicker = null;
   function closeTxWindow() {
     if (!windowPicker) return;
-    const {root, scrim} = windowPicker;
+    const {root, scrim, stop} = windowPicker;
+    stop();
     root.remove(); scrim.remove(); windowPicker = null;
     $('monl').setAttribute('aria-expanded', 'false');
-    $('monl').focus();
+    HFPopClose.focus($('monl'));   // (without moving the page)
   }
   function renderTxWindowControl() {
     const tx = S.page === 'transactions';
@@ -3322,7 +3488,8 @@
     root.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeTxWindow(); } else trapFocus(e, root); });
     const scrim = h('div', {class: 'rgscrim', onclick: closeTxWindow});
     document.body.append(scrim, root);
-    windowPicker = {root, scrim};
+    // placed once under the button: the page scrolling or resizing under it closes it (popclose.js)
+    windowPicker = {root, scrim, stop: HFPopClose.watch({root, trigger: () => $('monl'), close: closeTxWindow})};
     $('monl').setAttribute('aria-expanded', 'true');
     drawMonths(); root.focus();
   }
@@ -3452,11 +3619,12 @@
     const label = k === 0 ? 'Today' : k === -1 ? 'Yesterday'
       : `${asDate(iso).toLocaleDateString(LOC, {weekday: 'short'})}, ${fmtDate(iso)}`;
     return h('tr', {class: 'day'}, h('th', {colspan: '2', scope: 'rowgroup'}, label), h('td', {class: 'c-acct'}), h('td', {class: 'c-cat'}),
-      h('td', {class: `num${day && day.total < 0 ? ' in' : ''}`}, day ? signed(day.total) : ''));
+      h('td', {class: `num${day && day.total < 0 ? ' in' : ''}`, title: day && day.totals ? Object.keys(day.totals).sort().map((c) => moneyIn(c, day.totals[c], true)).join(' · ') : null},
+        dayAmount(day)));
   }
 
   function txRow(t) {
-    return h('tr', {class: t.is_transfer ? 'xfer' : '', dataset: {tid: t.transaction_id}},
+    return h('tr', {class: t.is_transfer ? 'xfer' : '', dataset: {tid: t.transaction_id}, tabindex: '0'},
       h('td', {class: 'c-date mut'}, fmtDate(t.date)),
       h('td', {class: 'c-m'}, h('div', {class: 'm'}, avatar(t.seed, t.logo_url, t.icon_url, 24),
         h('div', {class: 'mt'},
@@ -3467,7 +3635,8 @@
         nameMask(instShort(t.institution_name), t.account_mask || '----', {fallback: '',
           title: `${acctName(t.account_name) || instShort(t.institution_name)} ••${t.account_mask || '----'}`}))),
       h('td', {class: 'c-cat'}, HOOKS.txCat(t) || h('span', {class: 'catc'}, badge(t.category, 'xs'), categorySelect(t))),
-      h('td', {class: `num v${t.amount < 0 ? ' in' : ''}`}, signed(t.amount)));
+      h('td', {class: `num v${t.amount < 0 ? ' in' : ''}`},
+        (t.iso_currency || CUR.code) === CUR.code ? signed(t.amount) : signedIn(t.iso_currency, t.amount)));
   }
 
   function categorySelect(t) {
@@ -4051,7 +4220,10 @@
       }
     }
     const manualBy = {};
-    for (const m of d.manual) (manualBy[m.group] = manualBy[m.group] || []).push(m);
+    for (const m of d.manual) {
+      if ((m.currency || CUR.code) !== CUR.code) continue;   // the Other currencies card, never a display total
+      (manualBy[m.group] = manualBy[m.group] || []).push(m);
+    }
     const emptyAdd = {property: 'form:property', vehicles: 'form:car', loans: 'form:loan'};
     const cards = nw.breakdown.map((g) => {
       const G = GROUP[g.key];
@@ -4097,6 +4269,25 @@
       sec.querySelector('h3').append(fold, off);
       return sec;
     }).filter(Boolean);
+    const foreign = nw.foreign || [];
+    if (foreign.length) {
+      const totals = {};
+      for (const a of foreign) totals[a.currency] = (totals[a.currency] || 0) + (a.signed || 0);
+      const rows = foreign.map((a) => h('div', {class: 'account-entry'}, h('div', {class: 'li acct r2'},
+        ia(a.institution || a.name, 's'),
+        h('span', {class: 'grow'}, h('b', {class: 'nmrow'},
+          h('span', {class: 'nm', title: a.name || ''}, acctName(a.name) || 'Account'),
+          h('span', {class: 'tag'}, a.currency)),
+          h('span', {class: 'meta2'}, h('span', {class: 'mt'},
+            [a.mask ? `••${a.mask}` : null, a.subtype, a.institution].filter(Boolean).join(' · ')))),
+        h('span', {class: 'rt'}, h('span', {class: 'amt v'},
+          moneyIn(a.currency, a.signed == null ? a.balance : a.signed, true))))));
+      const sec = card({cls: 'acctgrp', title: 'Other currencies', icon: 'globe', rgb: '155,162,182',
+        extra: h('small', {}, `${foreign.length} · `, h('b', {class: 'v', style: {color: 'var(--fg)'}},
+          Object.keys(totals).sort().map((c) => moneyIn(c, totals[c], true)).join(' · ')))}, rows);
+      sec.querySelector('h3').append(h('span', {class: 'offtag'}, 'Not counted'));
+      cards.push(sec);
+    }
     const grid2 = h('div', {class: 'grid two'}, cards);
     fill($('page'), grid, grid2, ghostRow('plus', RGB.warn, 'Add an account or asset',
       'A card, loan, property or vehicle Plaid can’t see', null, {add: 'home'}));
@@ -4269,7 +4460,27 @@
     const apiBad = api.filter((it) => it.status !== 'active' || it.error_code);
     const left = d.slot_limit - d.slots_used;
     const full = left <= 0;
-    const line = (it) => {
+    const simplefinLine = (it) => {
+      const name = it.institution_name || it.item_id;
+      const sf = d.simplefin || {};
+      const revoked = it.error_code === 'SIMPLEFIN_REVOKED' || it.status === 'login_required';
+      const quota = it.error_code === 'SIMPLEFIN_QUOTA';
+      const subscription = it.error_code === 'SIMPLEFIN_SUBSCRIPTION';
+      const bad = !it.removed_at && (revoked || quota || subscription || it.status !== 'active');
+      const state = it.removed_at ? 'Removed'
+        : revoked ? `Bridge lost its login${sf.as_of ? ` on ${fmtDate(sf.as_of)}` : ''}`
+          : subscription ? 'SimpleFIN subscription needed'
+            : quota ? 'Daily request budget used up'
+              : `Synced ${it.last_sync_at ? syncLabel(it.last_sync_at) : 'never'}`;
+      const action = it.removed_at ? null
+        : revoked || subscription ? h('button', {class: 'rc', type: 'button', dataset: {fixbridge: '1'}}, 'Fix at Bridge')
+          : h('button', {class: 'btn sm ghost', type: 'button', dataset: {sfsync: '1'},
+            'aria-label': `Update ${instShort(name)} with SimpleFIN`}, 'Update');
+      return h('div', {class: `conn${it.removed_at ? ' removed' : ''}`}, ia(name, 's', it.removed_at ? null : bad ? 'bad' : 'ok', it.institution_id),
+        h('span', {class: 'grow'}, h('b', {title: name}, instShort(name), tag('SimpleFIN', 'sf', 'Connected through SimpleFIN Bridge')),
+          h('span', {}, state)), action);
+    };
+    const line = (it) => it.provider === 'simplefin' ? simplefinLine(it) : (() => {
       const bad = !it.removed_at && (it.status !== 'active' || it.error_code);
       const name = it.institution_name || it.institution_id || it.item_id;
       return h('div', {class: `conn${it.removed_at ? ' removed' : ''}`}, ia(name, 's', it.removed_at ? null : bad ? 'bad' : 'ok', it.institution_id),
@@ -4277,7 +4488,7 @@
           h('span', {}, it.removed_at ? 'Removed · still uses a slot' : bad ? `${it.error_code === 'ITEM_LOGIN_REQUIRED' || it.status === 'login_required'
             ? 'Needs a re-login' : `Problem: ${it.error_code || it.status}`}` : `Synced ${it.last_sync_at ? syncLabel(it.last_sync_at) : 'never'}`)),
         it.removed_at ? null : bad ? reconnectBtn(it.item_id) : updateBtn(it.item_id, instShort(name)));
-    };
+    })();
     return card({title: 'Bank connections', icon: 'link', rgb: RGB.acc},
       h('div', {class: 'slotbig'}, ring(d.slots_used / d.slot_limit, ACC, 78, 8, h('b', {class: 'v', style: {'font-size': '18px'}}, String(d.slots_used)),
         h('small', {}, `of ${d.slot_limit}`)),
@@ -4635,14 +4846,18 @@
 
   function investAccountsCard(d) {
     const byGroup = {General: [], Retirement: [], Crypto: []};
-    d.accounts.forEach((a) => byGroup[a.group].push(a));
+    // (t_3f83e261) an account in another currency is listed apart, in its own currency, like Accounts' Other currencies
+    const foreign = d.accounts.filter((a) => a.counted === false);
+    d.accounts.filter((a) => a.counted !== false).forEach((a) => byGroup[a.group].push(a));
     const row = (a) => HOOKS.investRow(a) || h(a.manual ? 'button' : 'div', {class: 'li wrap', type: a.manual ? 'button' : null, dataset: a.manual ? {edit: String(a.manual_id)} : null},
       a.manual ? manualChip(a.institution, 'l') || ibadge(KIND.investment.i, KIND.investment.c) : ia(a.institution, 'l', null, a.institution_id),
       h('span', {class: 'grow'}, h('b', {class: 'nmrow', title: acctName(a.name)}, h('span', {class: 'nm'}, acctName(a.name) || 'Account'),
         a.mask ? h('span', {class: 'dim mk'}, `••${a.mask}`) : null,
-        a.manual ? manualTag() : null, a.manual ? staleTag({...a, balance_as_of: a.as_of}) : null),
+        a.holdings_imported === false ? tag('holdings not imported', 'sf', 'SimpleFIN carries this balance only: its holdings are not imported') : null,
+        a.manual ? manualTag() : null, a.manual ? staleTag({...a, balance_as_of: a.as_of}) : null,
+        a.counted === false ? h('span', {class: 'offtag'}, 'Not counted') : null),
       h('span', {}, [a.manual ? a.subtype_label : a.type, a.institution ? instShort(a.institution) : null].filter(Boolean).join(' · '))),
-      h('span', {class: 'rt'}, h('span', {class: 'amt v'}, money2(a.value)),
+      h('span', {class: 'rt'}, h('span', {class: 'amt v'}, moneyIn(a.currency, a.value, true)),
         h('span', {}, a.manual ? `updated ${daysAgo(a.as_of)}` : a.updated_at ? ago(a.updated_at) : '')));
     const gh = (label) => h('div', {class: 'gh'}, label, h('span', {class: 'ln'}));
     return card({title: 'Accounts', icon: 'landmark', rgb: RGB.acc, extra: small(`${plural(d.accounts.length, 'account')}`)},
@@ -4651,7 +4866,8 @@
       gh('Retirement'), byGroup.Retirement.length ? byGroup.Retirement.map(row)
         : ghostRow('briefcase', RGB.purple, 'Have a 401(k) or IRA?', 'Add it by hand. It shows up here with a manual tag.', null, {add: 'form:invest'}),
       gh('Crypto'), byGroup.Crypto.length ? byGroup.Crypto.map(row)
-        : ghostRow('bitcoin', RGB.warn, 'No crypto accounts', 'Add a wallet or exchange balance by hand', null, {add: 'form:invest'}));
+        : ghostRow('bitcoin', RGB.warn, 'No crypto accounts', 'Add a wallet or exchange balance by hand', null, {add: 'form:invest'}),
+      foreign.length ? [gh(`Other currencies · ${foreign.length}`), foreign.map(row)] : null);
   }
 
   function holdingsCard(d) {
@@ -4659,7 +4875,7 @@
     const stocks = d.holdings.filter((x) => !x.is_cash);
     const cash = d.holdings.filter((x) => x.is_cash);
     const cashT = sum(cash, (x) => x.value);
-    const manual = d.accounts.filter((a) => a.manual);
+    const manual = d.accounts.filter((a) => a.manual && a.counted !== false);
     const gh = (label) => h('div', {class: 'gh'}, label, h('span', {class: 'ln'}));
     const pctOfTotal = (v) => (total ? `${((v / total) * 100).toFixed(1)}% of portfolio` : '');
     const letters = (x) => h('span', {class: 'tick', 'aria-hidden': 'true', style: {background: `hsl(${hue(x.ticker || x.name)} 42% 36%)`}},
@@ -4742,7 +4958,7 @@
     if (g.key === 'cards') {
       const u = (g.util || 0) / 100;
       const uc = u < 0.3 ? OK : u < 0.5 ? WARN : BAD;
-      const cards = d.cards.slice().sort((a, b) => b.balance - a.balance);
+      const cards = d.cards.filter((c) => c.counted !== false).sort((a, b) => b.balance - a.balance);
       const wrap = h('div', {class: 'dg'});
       const hd = h('button', {class: 'hd', type: 'button', 'aria-expanded': 'false', onclick: () => {
         hd.setAttribute('aria-expanded', String(wrap.classList.toggle('open')));
@@ -4849,21 +5065,25 @@
   function allDebtsCard(d) {
     const items = [
       ...d.cards.map((c) => ({kind: 'card', id: c.id, manual: c.manual, name: c.name, inst: c.institution, instId: c.institution_id, mask: c.mask, bal: c.balance, apr: c.apr,
-        monthly: c.min_payment, months: null, approx: c.approx,
+        monthly: c.min_payment, months: null, approx: c.approx, currency: c.currency, counted: c.counted,
         sub: `Card${c.mask ? ` ••${c.mask}` : ''}${c.limit ? ` · ${Math.round(c.util)}% of limit` : ''}${c.approx ? ` · last set ${fmtDate(c.balance_as_of)}` : ''}`})),
       ...d.loans.map((l) => ({kind: 'loan', id: l.id, manual: l.manual, name: l.name, inst: l.institution, instId: l.institution_id, sub_kind: l.subtype, bal: l.balance, apr: l.apr,
         monthly: l.paid_off ? null : l.monthly_payment, months: l.paid_off ? 0 : l.payoff.payments_left, paid: l.paid_off,
+        currency: l.currency, counted: l.counted,
         sub: l.paid_off ? 'Paid off' : `${l.type_label}${l.paid_pct != null ? ` · ${Math.round(l.paid_pct)}% paid off` : ''}`})),
       ...d.other.map((o) => ({kind: 'other', id: o.id, manual: true, name: o.name, inst: null, bal: o.balance, apr: null, monthly: null,
-        months: null, sub: o.subtype || 'Other debt'})),
+        months: null, sub: o.subtype || 'Other debt', currency: o.currency, counted: o.counted})),
     ];
     const tabs = h('div', {class: 'sorttabs', role: 'group', 'aria-label': 'Sort by'});
     const tip = h('div', {class: 'tip'});
     const list = h('div');
     const draw = () => {
       const [, cmp, text] = SORTS[dsort];
-      const live = items.filter((x) => x.bal > 0).sort(cmp);
-      const zero = items.filter((x) => x.bal <= 0);
+      // (t_3f83e261) a debt in another currency is in no total: listed apart, in its own currency
+      const counted = items.filter((x) => x.counted !== false);
+      const foreign = items.filter((x) => x.counted === false);
+      const live = counted.filter((x) => x.bal > 0).sort(cmp);
+      const zero = counted.filter((x) => x.bal <= 0);
       fill(tip, icon('bulb'), h('span', {}, text));
       const on = (k) => (k === dsort ? 'on' : '');
       const apr = (x) => (x.apr == null ? (x.kind === 'loan' && x.manual && !x.paid ? tag('not set', '', 'APR not set') : '—') : `${x.apr}%`);
@@ -4875,16 +5095,18 @@
           h('span', {class: 'nmc'}, x.paid ? ibadge('party', RGB.acc, 's') : !x.manual && x.inst ? ia(x.inst, '', null, x.instId)
             : manualChip(x.inst) || ibadge(x.kind === 'card' ? KIND.credit_card.i : x.kind === 'loan' ? LOAN_ICON[x.sub_kind] || 'handcoins' : 'fileminus',
               x.kind === 'loan' ? RGB.warn : RGB.bad, 's'),
-            h('span', {class: 'grow'}, h('b', {}, acctName(x.name), x.manual ? manualTag() : null), h('span', {}, x.sub))),
+            h('span', {class: 'grow'}, h('b', {}, acctName(x.name), x.manual ? manualTag() : null,
+              x.counted === false ? h('span', {class: 'offtag'}, 'Not counted') : null), h('span', {}, x.sub))),
           h('span', {class: `c ${on('apr')}`, 'data-l': 'APR'}, apr(x)),
-          h('span', {class: `c v ${on('pay')}`, 'data-l': 'Monthly'}, x.monthly ? money2(x.monthly) : '—'),
+          h('span', {class: `c v ${on('pay')}`, 'data-l': 'Monthly'}, x.monthly ? moneyIn(x.currency, x.monthly, true) : '—'),
           h('span', {class: `c ${on('time')}`, 'data-l': 'Time left'}, tl(x)),
-          h('span', {class: `bal v${x.paid ? ' pos' : ''}`}, `${x.approx ? '≈ ' : ''}${money2(x.bal)}`));
+          h('span', {class: `bal v${x.paid ? ' pos' : ''}`}, `${x.approx ? '≈ ' : ''}${moneyIn(x.currency, x.bal, true)}`));
       };
       fill(list, h('div', {class: 'dl hdr'}, h('span', {}, 'Account'), h('span', {class: `c ${on('apr')}`}, 'Interest'),
         h('span', {class: `c ${on('pay')}`}, 'Monthly'), h('span', {class: `c ${on('time')}`}, 'Time left'),
         h('span', {class: `c ${on('bal')}`, style: {'text-align': 'right'}}, 'Balance')),
-      live.map(row), zero.length ? [h('div', {class: 'zero-h'}, `Paid off or $0 · ${zero.length}`), zero.map(row)] : null);
+      live.map(row), zero.length ? [h('div', {class: 'zero-h'}, `Paid off or $0 · ${zero.length}`), zero.map(row)] : null,
+      foreign.length ? [h('div', {class: 'zero-h'}, `Other currencies · ${foreign.length}`), foreign.map(row)] : null);
       tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.s === dsort)));
     };
     Object.entries(SORTS).forEach(([k, [label]]) => tabs.append(h('button', {type: 'button', 'aria-pressed': String(k === dsort), dataset: {s: k},
@@ -4968,6 +5190,9 @@
     loadAccounts().catch((e) => {
       fill($('banks'), h('p', {class: 'nc warn'}, `Could not load accounts: ${e.message}`));
     });
+    // v23: the category metadata, non-blocking; a page drawn before it lands is redrawn once so a user category's icon
+    // and group are right on a normal page load (no spinner, no blocked first paint)
+    ensureCategories().then(() => { if (S.page) route({keepToast: true}); }).catch(() => {});
     loadCounts();
     if (!location.hash) history.replaceState(null, '', '#/overview');
     // Charts draw text on a canvas once, so wait (briefly) for Inter before the first page.
@@ -4981,14 +5206,15 @@
   // txmeta.js, billcal.js, rollover.js, alpaca.js) live in their own files, loaded before this one. Each pushes a function
   // onto window.HF_EXT; it's called once here with the building blocks below and fills in its pages (PAGES / RENDER),
   // HOOKS and board pages (BOARDS) before the first page is drawn. One that throws is logged and skipped.
-  const HF = {$, h, add, fill, sv, icon, glyph, has, plural, clamp, sum, money, money2, signed, splitMoney, bigMoney, kf, pct,
+  const HF = {$, h, add, fill, sv, icon, glyph, has, plural, clamp, sum, money, money2, moneyIn, signed, signedIn, splitMoney, bigMoney, kf, pct,
+    CURRENCIES, currencyCode, currencyDigits, currencyPrefix, dayAmount,
     billAmt, usualText, billTag, CHART, catChart, chartBox, destroyCharts,
     pctOf, pad, asDate, monthName, monthShort, monthLabel, monthYear, todayISO, thisMonth, addMonths, fmtDate, daysFrom, relDay,
     daysAgo, ago, syncLabel, hue, CAT_GROUPS, PALETTE, CATI, CATG, catLabel, catColor, rgbOf, RGB, ACC, OK, WARN, BAD, SC, CUR, LOC, CINK, readInk,
     capStatus, avatar, ia, instShort, acctName, nameMask, ibadge, badge, gbadge, GROUP_ICON, ringOf, ring, ringPctOf, budgetRing, hairline, cal, pill, tag, track,
     api, post, show, PAGES, S, RENDER, BOARDS, HOOKS, TX, KIND, openSheet, closeModal, closeBtn, backBtn, modal, trapFocus,
     help, helpBills, toast, hideToast, card, small, msgBox, emptyNote, ghostRow, skel, skeleton, errorCard, pack, lnk, hashFor, parseHash,
-    route, refresh, syncNow, ensureAccounts, ensureCategories, loadAccounts, loadCounts, parseAmount, reloadBudgets, updateTx, loadTx,
+    route, refresh, syncNow, ensureAccounts, ensureCategories, categoriesChanged, loadAccounts, loadCounts, parseAmount, reloadBudgets, updateTx, loadTx,
     txParams, txWindowParams, txFiltered, slotInfo, opt, openAdd, connectBank, notCounted, leftOut, worthOf, customMode, applyCap, capEditor,
     field: (...a) => field(...a), checkField: (...a) => checkField(...a)};
   for (const ext of window.HF_EXT || []) {

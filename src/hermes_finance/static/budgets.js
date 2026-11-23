@@ -19,7 +19,7 @@
  * Keep category budgets). "Not now" hides it until next month, on this device. */
 (window.HF_EXT = window.HF_EXT || []).push((X) => {
   'use strict';
-  const {h, fill, icon, ibadge, badge, gbadge, money, money2, plural, clamp, capStatus, ringPctOf, help, helpBills, hashFor, toast, card,
+  const {h, fill, icon, ibadge, badge, gbadge, money, money2, moneyIn, plural, clamp, capStatus, ringPctOf, help, helpBills, hashFor, toast, card,
     applyCap, capEditor, monthName, monthShort, monthLabel, addMonths, rgbOf, catColor, HOOKS, RGB, GROUP_ICON, post, reloadBudgets,
     openSheet, closeModal, closeBtn, parseAmount, thisMonth, CUR} = X;
 
@@ -169,6 +169,12 @@
       {badge: badge(c.category), sub: catSub(c.category), again: againCat(c.category)});
   }
 
+  const alsoLine = (c) => {
+    const items = (c.foreign || []).filter((f) => Math.round(f.spend * 100));
+    return items.length ? h('span', {class: 'also'},
+      'also ' + items.map((f) => moneyIn(f.currency, f.spend, true)).join(' · ')) : null;
+  };
+
   function categoryRow(c, d) {
     const f = figures(c);
     const rolled = c.rollover && c.rollover.amount > 0 ? c.rollover.amount : 0;
@@ -187,7 +193,7 @@
         details(c, d, f)),
       hairline(c, f))),
     h('td', {class: 'p', role: 'cell'}, plan),
-    h('td', {class: 'a', role: 'cell'}, h('span', {class: 'act'}, money(c.spend))),
+    h('td', {class: 'a', role: 'cell'}, h('span', {class: 'act'}, money(c.spend)), alsoLine(c)),
     h('td', {class: 'r', role: 'cell'}, h('span', {class: `rp${f.left === 0 ? ' z' : TONE[f.status]}`,
       'aria-label': f.left < 0 ? `${money(-f.left)} over budget` : `${money(f.left)} left`}, money(f.left))));
     plan.addEventListener('click', () => openEditor(c, plan));
@@ -206,7 +212,7 @@
         h('a', {class: 'nml', href: hashFor('transactions', {category: c.category}), title: `See ${c.category} transactions`}, c.category)))),
       h('td', {class: 'p', role: 'cell'}, set), h('td', {class: 'a', role: 'cell'},
         c.spend === 0 && c.due > 0 ? h('span', {class: 'act udue', title: 'A bill still due this month: it counts in the group'}, `${money(c.due)} due`)
-          : h('span', {class: 'act'}, money(c.spend))),
+          : h('span', {class: 'act'}, money(c.spend)), alsoLine(c)),
       h('td', {class: 'r', role: 'cell'}));
     set.addEventListener('click', () => openEditor(c, set));
     return tr;

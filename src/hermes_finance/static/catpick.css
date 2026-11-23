@@ -43,3 +43,9 @@ button.catb[aria-expanded=true] { border-color: var(--acc); }
 @media (max-width: 1023.98px) {
   .tx button.catb { max-width: none; min-width: 150px; }
 }
+
+/* v23: "+ New category" is a row at the bottom of the list, aligned with the rows above, above the hairline. */
+.cpkadd { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; }
+.cpkadd .cpko { cursor: pointer; }
+.cpkadd .cpkt { font-weight: 600; }
+.cpkn .cpkc { margin-left: 2px; }

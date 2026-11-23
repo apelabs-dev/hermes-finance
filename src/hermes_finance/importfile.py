@@ -91,6 +91,7 @@ class Row:
     fitid: str | None    # OFX FITID (None for CSV)
     line: int            # 1-based data row number (CSV) / transaction index in its statement (OFX)
     trntype: str | None = None  # OFX TRNTYPE, upper-case ("DIRECTDEP", "DEBIT", ...); None for CSV
+    currency: str | None = None  # the row's own ISO code / provider id; never converted
 
 
 @dataclass
@@ -104,6 +105,7 @@ class CsvPreview:
     date_formats: list[str]          # every candidate that does (2+ when ambiguous, e.g. %m/%d/%Y and %d/%m/%Y)
     sign: str                        # "minus_out" | "minus_in" | "split"
     accounts: list[tuple[str, int]]  # (account label, rows) when an account column is guessed, in first-seen order
+    currencies: list[str]            # explicit codes/symbols seen in the amount cells ([]: none)
 
 
 @dataclass
@@ -270,6 +272,8 @@ def _date_formats(values: list[str], dayfirst: bool, today: date) -> list[str]:
 _CR_DR = re.compile(r"(?<![A-Za-z])(CR|DR)\.?$", re.I)
 _CURRENCY_SIGN = re.compile(r"[A-Z]{0,2}\$|[€£¥₹]")
 _CURRENCY_CODE = re.compile(r"^[A-Za-z]{3}\s*(?=[-+(\d.,])|(?<=[\d).])\s*[A-Za-z]{3}$")
+_CURRENCY_LEAD = re.compile(r"^\s*([A-Za-z]{3})\s*(?=[-+(\d.,])")
+_CURRENCY_TAIL = re.compile(r"(?<=[\d).])\s*([A-Za-z]{3})\s*$")
 _BLANK_AMOUNTS = frozenset({"", "-", "--", "\u2013", "\u2014"})
 
 
@@ -326,6 +330,17 @@ def _parse_amount(text: str, decimal_comma: bool = False) -> tuple[Decimal | Non
         negative, s = True, s[:-1].strip()
     value = _number(s, decimal_comma)
     return (-value if negative else value), override
+
+
+def _currency_in(cell: str) -> tuple[str | None, str | None]:
+    """(explicit code, symbol) written in an amount cell: 'EUR 12.00', '12.00 EUR', '€12.00'. A cell naming two
+    different codes is ambiguous and refused rather than guessed."""
+    text = (cell or "").strip()
+    codes = {m.group(1).upper() for m in (_CURRENCY_LEAD.search(text), _CURRENCY_TAIL.search(text)) if m}
+    if len(codes) > 1:
+        raise ImportFileError(f"'{cell}' names more than one currency; one amount can't be two currencies", field="amount")
+    symbol = _CURRENCY_SIGN.search(text)
+    return (next(iter(codes)) if codes else None), (symbol.group(0) if symbol else None)
 
 
 def _cents(value: Decimal) -> float:
@@ -553,6 +568,20 @@ def csv_preview(data: bytes, *, today: date | None = None) -> CsvPreview:
             if label:
                 label = " ".join(label.split())
                 accounts[label] = accounts.get(label, 0) + 1
+    seen: set[str] = set()
+    for cells in table.rows:
+        for i in (guess["amount"], guess["debit"], guess["credit"]):
+            if i is None:
+                continue
+            try:
+                explicit, symbol = _currency_in(cells[i])
+            except ImportFileError:
+                raise
+            if explicit:
+                seen.add(explicit)
+            elif symbol:
+                seen.add(symbol)
+    currencies = sorted(seen)
     return CsvPreview(
         headers=table.headers,
         sample=[list(r) for r in table.rows[:SAMPLE_ROWS]],
@@ -563,6 +592,7 @@ def csv_preview(data: bytes, *, today: date | None = None) -> CsvPreview:
         date_formats=formats,
         sign=_guess_sign(table, guess),
         accounts=list(accounts.items()),
+        currencies=currencies,
     )
 
 
@@ -571,7 +601,7 @@ _FIELD_WORDS = {"date": "dates", "description": "descriptions", "amount": "amoun
 
 
 def csv_rows(data: bytes, mapping: dict[str, int | None], date_format: str, sign: str, *,
-             today: date | None = None) -> list[Row]:
+             today: date | None = None, currency: str | None = None) -> list[Row]:
     """Every data row under the mapping the user confirmed, in the app's sign. The first bad row raises; a row with
     no amount at all (a balance line) is skipped, so Row.line can jump."""
     table = _read_table(_text(data))
@@ -625,8 +655,17 @@ def csv_rows(data: bytes, mapping: dict[str, int | None], date_format: str, sign
             raise ImportFileError(f"Row {n}: '{raw}' is in the future. Is the date format right?", field="date",
                                   row=n)
         account = " ".join(cells[col["account"]].split()) if col["account"] is not None else ""
+        # The picked currency is the default; an explicit code in the amount wins, a bare symbol follows the pick
+        # (a '$' is not necessarily USD). One row can't be two codes; no magnitude conversion anywhere.
+        amount_cells = [cells[i] for i in (col["amount"], col["debit"], col["credit"]) if i is not None and cells[i]]
+        explicit_codes = {code for code in (_currency_in(cell)[0] for cell in amount_cells) if code}
+        if len(explicit_codes) > 1:
+            raise ImportFileError(f"Row {n}: the amount cells name more than one currency "
+                                  f"({', '.join(sorted(explicit_codes))}); one row can only be one currency.",
+                                  field="currency", row=n)
+        row_currency = next(iter(explicit_codes), currency)
         out.append(Row(day.isoformat(), " ".join(cells[col["description"]].split()), _cents(amount),
-                       account or None, None, n))
+                       account or None, None, n, currency=row_currency))
     if not out:
         field = "amount" if not split else "debit" if col["debit"] is not None else "credit"
         raise ImportFileError("No row has an amount in the column chosen for the amounts.", field=field)
@@ -816,8 +855,22 @@ def _statement(stmt: ET.Element) -> OfxStatement:
         description = next((v for v in (values.get("NAME"), values.get("PAYEE/NAME"), values.get("MEMO")) if v), "")
         fitid = values.get("FITID")
         trntype = values.get("TRNTYPE", "").strip().upper() or None
+        codes = set()
+        for block in _find_all(trn, frozenset({"CURRENCY", "ORIGCURRENCY"})):
+            sym = next((text for _, tag, text in _leaves(block, frozenset()) if tag == "CURSYM"), None)
+            if not sym:
+                raise ImportFileError(
+                    f"Transaction {i} of {label} has a currency block without a CURSYM code. Download the file "
+                    "again, or use its CSV export instead.", row=i)
+            codes.add(_unescape(sym).strip().upper())
+        if len(codes) > 1:
+            raise ImportFileError(
+                f"Transaction {i} of {label} carries more than one currency ({', '.join(sorted(codes))}); this app "
+                "never converts between currencies, so import a statement with one currency per transaction.",
+                row=i)
+        tx_currency = next(iter(codes), None)   # no block: the statement/account currency applies at import
         rows.append(Row(posted, " ".join(_unescape(description).split()), _cents(-amount), label,
-                        _unescape(fitid) if fitid else None, i, trntype))   # OFX TRNAMT is negative for money out
+                        _unescape(fitid) if fitid else None, i, trntype, tx_currency))   # OFX TRNAMT is negative for money out
     return OfxStatement(label, last4, "credit_card" if cc else "bank", card, subtype, currency,
                         None if balance is None else _cents(balance), _ofx_date(dtasof), rows)
 
