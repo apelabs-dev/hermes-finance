@@ -98,9 +98,10 @@ database and refuses an old one with a clear message.
 
 ## Verification at the release head
 
-The figures below come from GitHub Actions run 44868442415 of the manual Nightly workflow (macOS runner, four
-headless Chromes), which ran on commit `c49b7fa`; only this page changed after that commit, so a checkout of
-`c49b7fa` reproduces them with:
+The figures below come from GitHub Actions run 45078494839 of the manual Nightly workflow (macOS runner, four
+headless Chromes), which ran on commit `dd317ef`. The commit after it changes one expected count in a browser test
+(see the end of this section), one code comment and this page, and no app code, so a checkout of `dd317ef`
+reproduces them with:
 
 ```
 uv run python scripts/check.py full --part 1   # every test but the gates; the browser files run with it
@@ -108,7 +109,7 @@ uv run python scripts/check.py full --part 2   # tests/test_gates.py: the number
 python3 scripts/dehardcode.py --release-tracked
 ```
 
-`full --part 1` took 32 minutes and `full --part 2` 51 minutes on the CI runner. Both run from the manual Nightly
+`full --part 1` took 32 minutes and `full --part 2` 53 minutes on the CI runner. Both run from the manual Nightly
 workflow (Actions, Nightly, Run workflow, on macOS).
 
 **The three gates** (`full --part 2`: 16 gate tests, 0 failed; all on synthetic databases built by
@@ -125,7 +126,9 @@ workflow (Actions, Nightly, Run workflow, on macOS).
   when clicked, at 1440 and 390 px): passed on the full and nocaps databases, and the planted dead controls were
   caught on both (self-test ok).
 
-**The rest of the suite** (`full --part 1`): 4,373 tests, 0 failed, 94 skipped: 3,503 without a browser and 870
-browser tests. Among them is the migration proof test above (`tests/test_release_040_migration.py`). The release scan
+**The rest of the suite** (`full --part 1`): 4,489 tests, 94 skipped: 3,564 without a browser (0 failed) and 925
+browser tests (1 failed). The one failure was a stale expected count, not an app fault:
+`tests/test_browser_task20.py::test_every_extension_runs_once` expected 16 front-end extensions, and the v24 Colour
+row (`catcolour.js`) is the 17th, one file and one run each. The next commit sets the count to 17. Among them is the migration proof test above (`tests/test_release_040_migration.py`). The release scan
 (`scripts/dehardcode.py --release-tracked`) is clean, and a case-insensitive search of the tracked tree for the former
 product's name finds nothing.

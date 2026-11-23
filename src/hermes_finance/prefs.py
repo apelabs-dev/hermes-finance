@@ -141,7 +141,8 @@ CLI_BINS = ("claude", "codex")      # clibrain.CLIS' ids, which are also the bin
 
 def _cli_path(binary):
     """A path the owner saved for a CLI: empty (unset), or an absolute (after ~) existing executable file whose name is
-    the CLI's own binary. It is only ever run with --version and the isolation self-test."""
+    the CLI's own binary. It is the executable the CLI brain runs: for --version, the isolation self-test and every
+    Ask turn."""
     def check(v):
         refusal = PrefError(f"That isn't an executable file named {binary}.", plain=True)
         if not isinstance(v, str):
