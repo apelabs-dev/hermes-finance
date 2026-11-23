@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.3.0...v0.4.0) (2026-11-23)
+
+
+### Features
+
+* 0.4.0 - SimpleFIN, multi-currency accounts, user-managed categories and CLI brains ([#25](https://github.com/apelabs-dev/hermes-finance/issues/25)) ([41283d0](https://github.com/apelabs-dev/hermes-finance/commit/41283d0feb2e6c6079b7f4ecfca5cc6c5ecb3d29))
+
 ## [0.3.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.2.6...v0.3.0) (2026-11-15)
 
 
