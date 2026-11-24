@@ -248,8 +248,8 @@ A second, read-only bank connection for people who have used their Plaid connect
 a setup token at SimpleFIN Bridge, then **Add account → Link a bank or card → Continue with SimpleFIN** and paste it.
 The app keeps the private access link in the secrets file (never the database), guesses each account's type and asks
 you to confirm it, and imports balances and transactions (pending included; no holdings or liability detail). SimpleFIN
-allows 24 requests a day and 6 manual syncs; the app counts them across the app, the CLI and the Hermes jobs. This
-release writes schema v21, which a 0.3.0 binary cannot read, so back up and do not downgrade ([Database
+allows 24 requests a day and 6 manual syncs; the app counts them across the app, the CLI and the Hermes jobs. The
+SimpleFIN step is schema v21, which a 0.3.0 binary cannot read, so back up and do not downgrade ([Database
 version](docs/simplefin.md#database-version)). Details: [SimpleFIN setup](docs/simplefin.md). Check:
 `finance simplefin status`.
 

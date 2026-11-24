@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-from . import api, insights, manual, portfolio, report, txmeta, usage, valuation
+from . import api, insights, manual, portfolio, report, reports, txmeta, usage, valuation
 from .db import account_policy_sql, display_currency
 from .money import money, money2
 
@@ -622,6 +622,114 @@ def cashflow(conn: sqlite3.Connection, today: date, months: int = 6) -> dict[str
     flow = insights.cashflow(conn, months, today)
     return {"today": today.isoformat(), "currency": display_currency(conn), "months": flow["months"],
             "first_dates": flow["first_dates"]}
+
+
+# --- reports (0.5, B1): the Reports numbers, one function each in reports.py --------------------------------------
+
+def spending_report(conn: sqlite3.Connection, period: Period, today: date) -> dict[str, Any]:
+    """`finance reports-spending`: Gross / Refunds / Net per category for the period, the categories below zero as
+    "Refunds over spending" sources, and another currency per currency (never added to the display one)."""
+    try:
+        payload = reports.category_totals(conn, period.start, period.end)
+    except reports.ReportError as e:
+        raise ReadError(str(e)) from None
+    return {"today": today.isoformat(), "period": period.json(), **payload}
+
+
+def cashflow_report(conn: sqlite3.Connection, period: Period, today: date) -> dict[str, Any]:
+    """`finance reports-cashflow`: income by source, spending groups, what is left after spending (q2), and the moves
+    between accounts, for the period."""
+    try:
+        payload = reports.money_flow(conn, period.start, period.end)
+    except reports.ReportError as e:
+        raise ReadError(str(e)) from None
+    return {"today": today.isoformat(), "period": period.json(), **payload}
+
+
+def forecast_report(conn: sqlite3.Connection, today: date, days: int = reports.FORECAST_DAYS) -> dict[str, Any]:
+    """`finance reports-forecast`: the next `days` days of available balance on the chosen cash accounts, with the
+    bills, the paychecks the owner added (q5), and the lower / higher everyday-spending lines (q6)."""
+    try:
+        return reports.forecast(conn, today, days)
+    except reports.ReportError as e:
+        raise ReadError(str(e)) from None
+
+
+def spending_report_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
+    lines = []
+    if p["categories"]:
+        lines.append(_table(["category", "gross", "refunds", "net", "count"],
+                            [[c["category"], q(c["gross"]), q(c["refunds"]), q(c["net"]), c["count"]]
+                             for c in p["categories"]]))
+    else:
+        lines.append("(no spending)")
+    t = p["totals"]
+    lines.append(f"Spending {_period_text(p['period'])}: gross {q(t['gross'])}, refunds {q(t['refunds'])}, "
+                 f"net {q(t['net'])} in {t['count']} transaction(s)")
+    for r in p["refunds_over"]:
+        lines.append(f"Refunds over spending · {r['category']}: {q(r['amount'])} ({r['group']})")
+    for f in p["foreign"]:
+        lines.append(f"{f['currency']} (not added to {p['currency']}): " + ", ".join(
+            f"{c['category']} {money(c['net'], currency=f['currency'])}" for c in f["categories"])
+            + f" · total {money(f['totals']['net'], currency=f['currency'])}")
+    lines.append("(refunds net against their category and are never income; a tax refund stays income)")
+    return "\n".join(lines)
+
+
+def cashflow_report_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
+    lines = []
+    if p["income"]["sources"]:
+        lines.append(_table(["money in", "amount", "share", "count"],
+                            [[s["label"], q(s["amount"]), _pct(s["share"]), s["count"]] for s in p["income"]["sources"]]))
+    if p["groups"]:
+        lines.append(_table(["spending", "net", "share", "count"],
+                            [[g["group"], q(g["net"]), _pct(g["share"]), g["count"]] for g in p["groups"]]))
+    for r in p["refunds_over"]:
+        lines.append(f"{r['label']}: {q(r['amount'])} (a source, not spending)")
+    left = f"{q(p['remaining'])} remaining" + (f" · {p['remaining_share']:.1f}% of income"
+                                               if p["remaining_share"] is not None else "")
+    lines.append(f"Cash flow {_period_text(p['period'])}: money in {q(p['money_in'])}, money out {q(p['money_out'])}, "
+                 f"{left}" + (" (short)" if p["short"] else ""))
+    if p["moves"]["rows"]:
+        lines.append(_table(["moved", "date", "amount"],
+                            [[m["label"], m["date"], q(m["amount"])] for m in p["moves"]["rows"]]))
+        if p["moves"].get("truncated"):     # the total covers every move; say the list does not
+            lines.append(p["moves"].get("note")
+                         or f"showing the newest {p['moves']['shown']} of {p['moves']['count']}")
+        lines.append(f"Moved between your accounts: {q(p['moves']['total'])}. Not income and not spending.")
+    return "\n".join(lines)
+
+
+def forecast_report_text(p: dict[str, Any]) -> str:
+    q = lambda x: _m(x, p.get("currency"))
+    accounts = ", ".join(a["name"] or a["account_id"] for a in p["accounts"]) or "none"
+    lines = [f"Forecast {p['horizon']['start']}..{p['horizon']['end']} ({p['horizon']['days']} days) · accounts: {accounts}",
+             f"Opening available balance {q(p['opening']['balance'])}"
+             + (f" (bank balance from {p['opening']['as_of']}, {p['opening']['stale_days']} days ago)"
+                if p["opening"]["as_of"] else "")]
+    if p["events"]:
+        lines.append(_table(["date", "what", "kind", "amount"],
+                            [[e["date"], e["label"], e["kind"], q(e["amount"])] for e in p["events"]]))
+    e = p["expected"]
+    lines.append(f"Expected in {q(e['in'])}, out {q(e['out'])} (bills and everyday spending), net {q(e['net'])}")
+    lines.append(f"Available {p['available_date']}: {q(p['available'])}; lowest {q(p['lowest']['balance'])} on "
+                 f"{p['lowest']['date']}")
+    lines.append(f"Lower everyday spending: {q(p['lines']['lower']['end'])} on {p['available_date']} · "
+                 f"Higher everyday spending: {q(p['lines']['higher']['end'])} on {p['available_date']}")
+    for s in p["paychecks"]["detected"]:
+        if s["answer"] is None:
+            lines.append(f"Possible paycheck: {s['label']} about {q(s['amount'])} {s['cadence_label']} "
+                         f"(last {s['last_date']}); not in the line until you add it")
+    for cur in p["other_currencies"]:
+        lines.append(f"{cur['currency']}: {money(cur['available'], currency=cur['currency'])} on its own line, "
+                     f"never added to {p['currency']}")
+    for w in p["warnings"]:
+        if w.startswith("possible paycheck: "):   # printed above, with its own line
+            continue
+        lines.append(f"({w})")
+    return "\n".join(lines)
 
 
 # --- text -----------------------------------------------------------------------------------------------

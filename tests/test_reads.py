@@ -538,3 +538,33 @@ def test_category_pace_uses_the_overview_pace_rules(conn):
     # TASK-11 (d): the status counts the bill still due (it used to say "ok" with $0 spent of a $100 cap)
     assert (other["spent"], other["due"], other["left"], other["status"], other["projection"],
             other["projection_status"]) == (0.0, 165.03, -65.03, "over", 165.03, "over")
+
+
+# --- the Reports cash flow text (t_589d9c8e) -----------------------------------------------------------------
+
+def test_the_reports_cashflow_text_says_when_only_the_newest_moves_are_listed(conn):
+    """t_209138b7 review nit 2: 64 moves printed the newest 50 rows and then the total for all 64, saying nothing
+    about the 14 that were not listed. The text now carries moves.note, and a period under the cap stays quiet."""
+    demo_data.build(conn, TODAY)
+    currency = db.display_currency(conn)
+    start, end = "2026-09-01", "2026-09-30"
+    moves_sql = ("SELECT COUNT(*), ROUND(SUM(amount), 2) FROM v_transactions WHERE is_transfer = 1 AND amount > 0 "
+                 "AND date >= ? AND date <= ? AND iso_currency = ?")
+    have = conn.execute(moves_sql, (start, end, currency)).fetchone()[0]
+    account_id, item_id = conn.execute("SELECT account_id, item_id FROM accounts WHERE type = 'depository' "
+                                       "AND iso_currency = ? LIMIT 1", (currency,)).fetchone()
+    for i in range(64 - have):
+        tx(conn, f"2026-09-{1 + i % 28:02d}", 50.0 + i, name=f"Move {i:02d}", cat="Transfers",
+           account_id=account_id, item_id=item_id, tid=f"mv{i:02d}")
+    payload = reads.cashflow_report(conn, reads.Period.of_month("2026-09"), TODAY)
+    m = payload["moves"]
+    assert (m["count"], m["shown"], m["truncated"]) == (64, 50, True)
+    count, total = conn.execute(moves_sql, (start, end, currency)).fetchone()
+    assert (count, m["total"]) == (64, total)                    # the total covers every move, not just the 50 rows
+    text = reads.cashflow_report_text(payload)
+    assert "the newest 50 of 64 moves are listed" in text
+    assert "the count and the total cover all 64" in text
+    assert f"Moved between your accounts: ${m['total']:,.2f}." in text
+    assert text.count("| 2026-09-") == 50                        # the table lists exactly the 50 newest rows
+    under = reads.cashflow_report(conn, reads.Period.of_month("2026-10"), TODAY)
+    assert "moves are listed" not in reads.cashflow_report_text(under)

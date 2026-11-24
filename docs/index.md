@@ -23,6 +23,7 @@ matching `finance <command> --json` prints, so the dashboard, the CLI and the ag
 - [AI modes](ai-modes.md): the three modes in detail, and the daily classification loop.
 - [Security model](security.md): what stays on your computer, the access modes, and what leaves it.
 - [Settings](settings.md): every card on the Settings page, plus the files and environment variables.
+- [PDF statements](pdf-import.md): the optional PDF importer, its refusal reasons and the opt-in AI layout proposal.
 - Reference: [CLI](reference/cli.md), [agent tools](reference/tools.md), [settings keys](reference/settings-keys.md).
   These pages are generated from the code.
 - [Architecture](architecture.md), [FAQ](faq.md), [Contributing](contributing.md).

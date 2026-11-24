@@ -83,7 +83,7 @@ def test_v21_to_v23_keeps_every_row_and_marks_the_36_built_ins(data_dir):
 
     conn = db.connect(path)   # the app's own startup path
     assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
-    assert counts(conn) == before_counts
+    assert counts(conn) == {**before_counts, "pdf_templates": 0}   # v25 (PDF import) adds one empty table
     assert rows(conn, "SELECT id, name, is_income, is_transfer, group_id, icon, sort FROM categories ORDER BY id") == \
         before_categories
     assert rows(conn, "SELECT transaction_id, category_id, source, rule_id FROM classifications ORDER BY rowid") == before_users
@@ -122,7 +122,7 @@ def test_read_only_connection_never_upgrades_a_v21_database(data_dir):
     try:
         tooldefs.read_connection(path)
     except tooldefs.ToolError as e:
-        assert "schema v21" in str(e) and f"v{db.SCHEMA_VERSION}" in str(e)
+        assert "schema v21" in str(e) and f"need v{db.SCHEMA_VERSION}" in str(e)
     else:
         raise AssertionError("a read-only tool connection must refuse an old database, never upgrade it")
     assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 21

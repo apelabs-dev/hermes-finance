@@ -636,10 +636,10 @@ def test_every_refusal_is_blocked_before_the_card_and_changes_nothing(c, args, m
     assert table_hashes(config.db_path()) == before
 
 
-def test_the_tool_list_is_20_with_one_hook():
-    """(TASK-22: finance_sync is the 15th; v23 adds the four category tools.)"""
+def test_the_tool_list_is_23_with_one_hook():
+    """(TASK-22: finance_sync is the 15th; v23 adds the four category tools; 0.5 adds the three reports reads.)"""
     p = plugin_ctx()
-    assert len(p.tools) == 20 and len(p.hooks["pre_tool_call"]) == 1 and "finance_track_bill" in p.tools  # v23: + finance_categories, finance_create/update/delete_category
+    assert len(p.tools) == 23 and len(p.hooks["pre_tool_call"]) == 1 and "finance_track_bill" in p.tools  # v23: + finance_categories, finance_create/update/delete_category; 0.5: + finance_reports_spending/cashflow/forecast
     assert tooldefs.WRITES == ("finance_set_category", "finance_add_rule", "finance_set_cap", "finance_create_category",
                                "finance_update_category", "finance_delete_category", "finance_track_bill")
     schema = tooldefs.TOOLS["finance_track_bill"].schema()
@@ -691,7 +691,7 @@ def test_a_real_mcp_stdio_client_asks_the_owner_approves_in_settings_and_the_row
         ("finance_track_bill", {"action": "stop", "merchant": LADWP}),                            # not a bill yet
         ("finance_track_bill", {"action": "update", "merchant": "Netflix", "every": "1m", "varies": False}),
         ("finance_track_bill", {"action": "stop", "merchant": "Netflix"})])
-    assert "finance_track_bill" in listed and len(listed) == 20          # (TASK-22: + finance_sync; TASK-24: + finance_rules; v23: + 4 category tools)
+    assert "finance_track_bill" in listed and len(listed) == 23          # (TASK-22: + finance_sync; TASK-24: + finance_rules; v23: + 4 category tools; 0.5: + 3 reports reads)
     first = json.loads(out[0][1])
     assert not out[0][0] and first["status"] == "pending_approval" and first["applied"] is False
     assert first["pending_action"]["summary"].startswith("Track Los Angeles Department of Water and Power as a bill every "

@@ -86,6 +86,9 @@ V24_COLUMNS = {("categories", "colour"): ("TEXT", 0, None)}
 V16_FOREIGN_KEYS = {("category_groups", "group_id", "id", "NO ACTION", "NO ACTION", "NONE")}
 # and on to 18 (polish P2e): two new tables, empty (no group budget, no kept group)
 V18_OBJECTS = {("table", "group_budgets"), ("table", "group_budget_kept")}
+# and on to 25 (PDF import): pdf_templates, empty; imports is rebuilt so its kind CHECK accepts 'pdf' (same columns)
+V25_OBJECTS = {("table", "pdf_templates")}
+V25_CHANGED = {("table", "imports")}
 V16_NEW_ROWS = {"categories": ("name", {name for name, _, _ in db.DEFAULT_CATEGORIES[13:]}),
                 "plaid_category_map": ("pfc_code", set(db.DEFAULT_PFC_MAP))}
 V16_MOVED = {("plaid_category_map", "LOAN_PAYMENTS_CAR_PAYMENT"): "category_id"}
@@ -307,9 +310,12 @@ def _assert_kept(before: dict, after: dict, lane: str, where: str = "after the u
     new_tables = {name for kind, name in ADDED_OBJECTS[lane] if kind == "table"}
     v16_tables = {name for _, name in V16_OBJECTS}
     v18_tables = {name for _, name in V18_OBJECTS}
-    assert set(after) == set(before) | new_tables | v16_tables | v18_tables, f"{where}: tables lost or unexpected"
+    v25_tables = {name for _, name in V25_OBJECTS}
+    assert set(after) == set(before) | new_tables | v16_tables | v18_tables | v25_tables, \
+        f"{where}: tables lost or unexpected"
     assert all(after[t] == {} for t in new_tables), f"{where}: a table 15 adds has rows"
     assert all(after[t] == {} for t in v18_tables), f"{where}: a table 18 adds has rows"
+    assert all(after[t] == {} for t in v25_tables), f"{where}: a table 25 adds has rows"
     assert all(after[t] for t in v16_tables), f"{where}: a table 16 adds and fills is empty"
     for table, rows in before.items():
         if table in V16_NEW_ROWS:                # 16's own rows, by their key; every original row is still there
@@ -355,11 +361,13 @@ def _assert_converged(conn: sqlite3.Connection, lane: str, before: dict, fresh: 
     after = parents.definition(conn)
     assert parents.changes(fresh, after) == NONE, "not a new database's schema: (extra, missing, different) objects"
     assert after == fresh
-    assert parents.changes(before, after) == (ADDED_OBJECTS[lane] | V16_OBJECTS | V18_OBJECTS, set(),
-                                              CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED
+    assert parents.changes(before, after) == (ADDED_OBJECTS[lane] | V16_OBJECTS | V18_OBJECTS | V25_OBJECTS, set(),
+                                              CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED | V25_CHANGED
                                               | {("table", "categories"), ("table", "goals")})
-    columns = {**{k: v[:3] for k, v in ADDED_COLUMNS[lane].items()}, **V16_COLUMNS, **V17_COLUMNS, **V22_COLUMNS, **V23_COLUMNS, **V24_COLUMNS}
-    for kind, table in CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED | {("table", "categories"), ("table", "goals")}:
+    columns = {**{k: v[:3] for k, v in ADDED_COLUMNS[lane].items()}, **V16_COLUMNS, **V17_COLUMNS, **V22_COLUMNS,
+               **V23_COLUMNS, **V24_COLUMNS}
+    for kind, table in (CHANGED_OBJECTS[lane] | V20_OBJECTS | V22_CHANGED | V25_CHANGED
+                        | {("table", "categories"), ("table", "goals")}):
         if kind != "table":
             continue
         old, new = before[(kind, table)], after[(kind, table)]

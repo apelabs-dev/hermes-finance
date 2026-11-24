@@ -104,7 +104,8 @@ HEIGHT = {1440: 900, 1280: 800, 1024: 768, 768: 1024, 430: 932, 390: 844, 360: 7
 PHONE = 1024                             # below this: the one-column layout (drawer + tab bar)
 DOCK = 1400                              # TASK-19: from here the transaction sheet docks beside the table
 WORKERS = 4                              # TASK-20: headless Chromes per DB (the run is mostly waiting on the pages)
-PAGES = ("overview", "transactions", "budgets", "recurring", "accounts", "investments", "debt", "goals")  # + TASK-19
+PAGES = ("overview", "transactions", "budgets", "reports", "recurring", "accounts", "investments", "debt",
+         "goals")  # + TASK-19; 0.5 B2 adds Reports
 CHECKS = ("clipping", "alignment", "spacing", "charts", "text", "overlays", "segments", "empty",
           "overflow", "escape", "cliptext", "wrapped", "rows", "orphans", "tap", "tap-covered", "darkbg", "headers",
           "rowname", "cutnum")
@@ -250,6 +251,11 @@ REVEAL_NB = ("(() => { const m = document.querySelector('#page .nb button.more')
 # (TASK-19) "dock" / "nodock": 1400px and wider, where the transaction sheet docks beside the table, or narrower.
 STATES: list[tuple[str, str, list[str], str, str]] = [
     *[(p, p, [], "page", "all") for p in PAGES],
+    # 0.5 B2: the three Reports views are one page, so the two tabs after Spending get their own states
+    ("reports-cashflow", "reports", [click("#page .rp-views button", "Cash flow"), wait_for("#page .rp-chips")],
+     "page", "all"),
+    ("reports-forecast", "reports", [click("#page .rp-views button", "Forecast"), wait_for("#page .rp-fsvg")],
+     "page", "all"),
     ("transactions-review", "transactions", [click(".fbar .fchip[data-kind=review]")], "page", "all"),
     # Prefer the capped category Planned control; nocaps reaches the same editor through its category Set control. The editor
     # is the app's modal sheet (bottom sheet on a phone, centred dialog from 1024px), so it is audited as one.
@@ -545,6 +551,10 @@ const NAMEY = '.grow > b, .grow > span, .nm, .ac > span:first-child, .tx .mt b .
 // on one row and the 3 longest labels, "Transport · Car Maintenance", end in an ellipsis on purpose (the owner, 2026-10-23:
 // truncate, don't wrap or restack the row). The whole name is in the button's aria-label and in the picker it opens.)
 for (const el of all) {
+  if (el.closest('.sr')) continue;   // a screen-reader-only line is never drawn (vis2, below, skips it for the same
+                                     // reason): its 1x1 clipped box holding "No data" is not content a reader can see
+                                     // cut off. 0.5 B2 follow-up: the no-data heatmap cells made this 4 false FAILs
+                                     // on a partial-history DB.
   const cs = getComputedStyle(el);
   const hid = (v) => v === 'hidden' || v === 'clip';
   if (!hid(cs.overflowX) && !hid(cs.overflowY)) continue;

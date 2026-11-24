@@ -477,8 +477,8 @@ def test_shell_has_no_inline_script_or_handlers(dash):
 def test_shell_nav_tabs_icons_and_add_account(dash):
     html = dash.handle("GET", "/", LOCAL, b"")[2].decode()
     nav = re.search(r'<nav class="snav".*?</nav>', html, re.S).group(0)
-    assert re.findall(r'data-pg="(\w+)"', nav) == ["overview", "transactions", "budgets", "goals", "recurring", "accounts",
-                                                   "investments", "debt"]  # TASK-19: Goals, under Budgets
+    assert re.findall(r'data-pg="(\w+)"', nav) == ["overview", "transactions", "budgets", "reports", "goals", "recurring",
+                                                   "accounts", "investments", "debt"]  # 0.5 B2: Reports, after Budgets
     assert "Loans &amp; debt" in nav
     tabs = re.search(r'<nav class="tabbar".*?</nav>', html, re.S).group(0)
     # TASK-18 addendum: four tabs on a phone, HOTFIX-1: and Settings (the gear) the fifth; Recurring, Investments, Loans &
@@ -682,6 +682,8 @@ def test_chart_exclusions_round_trip_and_persist(dash, conn):
                                              "fixed_categories": ["Rent & Utilities", "Subscriptions", "Internet & Phone"],
                                              "networth_excluded": [],   # TASK-15: Custom leaves nothing out here
                                              "excluded_accounts": [],   # the account policy: nothing left out
+                                             "reports_paychecks": {},   # 0.5 B2: one answer per paycheck source
+                                             "reports_forecast_accounts": None,   # None: the checking default
                                              "mcp": {"allow_writes": False, "last_used": None, "pending": 0},  # TASK-17
                                              "prefs": prefs.public(conn)}   # TASK-18: the Settings page's values
     status, d = post(dash, "/api/settings", {"chart_excluded_categories": ["rent & utilities", "Travel", "Travel"]})

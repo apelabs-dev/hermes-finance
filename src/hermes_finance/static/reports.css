@@ -1,0 +1,227 @@
+/* Reports (0.5, B2): the Spending year view (C), Cash flow (B) and Forecast (A) pages, from the approved round-3 mock
+   (hermes-finance-reports-cash-4c710f19113adaf6). Desktop rail on the right at 1024 px and up; at 390 px the KPIs come
+   first, the heatmap becomes a category card with a 44 px header, the Sankey becomes labelled bars, and the balance line
+   keeps its two named lines. No glow, no animation beyond the app's own fades; body 15 px, secondary 13 px. */
+
+.rp-bar { display: flex; align-items: center; gap: 12px 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.rp-views button { min-height: 34px; }
+.rp-cycle { display: inline-flex; align-items: center; gap: 2px; background: var(--card2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 3px; margin-left: auto; }
+.rp-range { font-size: 14px; font-weight: 600; padding: 0 10px; min-width: 9.5em; text-align: center; white-space: nowrap; }
+.rp-step { width: 32px; height: 30px; display: grid; place-items: center; background: none; border: 0;
+  color: var(--mut); border-radius: 8px; }
+.rp-step:hover:not(:disabled) { background: var(--card3); color: var(--fg); }
+.rp-body { display: grid; gap: 18px; min-width: 0; }
+
+/* --- Spending: the year heatmap + the KPI rail --------------------------------------------------------------- */
+.rp-rc { display: grid; grid-template-columns: minmax(0, 1fr) 296px; gap: 18px; align-items: start; min-width: 0; }
+.rp-heat { grid-column: 1; grid-row: 1; padding: 18px 22px; }
+.rp-rail { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.rp-head h2 { font-size: 18px; font-weight: 650; }
+.rp-note { font-size: 13px; color: var(--dim); }
+.rp-sub { font-size: 13px; color: var(--dim); }
+.rp-heat > .rp-sub { margin: -6px 0 14px; max-width: 68ch; }
+.rp-kpi { padding: 18px; }
+.rp-kpi h3 { font-size: 14px; margin-bottom: 8px; min-height: 32px; }
+.rp-kpi .big { font-size: 34px; }
+.rp-kpi .rp-name { font-size: 27px; letter-spacing: -.02em; }
+.rp-kpi .rp-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.rp-kpi .rp-sub .pill { margin-left: 0; }
+
+.rp-hm { display: grid; grid-template-columns: minmax(192px, 1.15fr) repeat(12, minmax(0, 1fr)) 78px;
+  gap: 4px 3px; align-items: center; min-width: 0; }
+.rp-hh { font-size: 13px; color: var(--dim); text-align: center; padding-bottom: 2px; white-space: nowrap; }
+.rp-hh.on { color: var(--fg); font-weight: 650; }
+.rp-hh.rp-lab { text-align: left; }
+.rp-hh.rp-tot { text-align: right; }
+.rp-rl { display: flex; align-items: center; gap: 8px; font-size: 14.5px; min-width: 0; padding-right: 8px; }
+.rp-rl > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-c { height: 30px; border-radius: 6px; border: 1px solid transparent; padding: 0; min-width: 0;
+  background: rgba(142, 168, 255, var(--a, .06)); }
+button.rp-c { cursor: pointer; }
+button.rp-c:hover { border-color: var(--line2); }
+.rp-c.refund { background: rgba(255, 123, 123, var(--a, .08)); }
+.rp-c.nodata { background: repeating-linear-gradient(-45deg, var(--card2) 0 4px, var(--card3) 4px 8px); }
+.rp-c.on { outline: 2px solid var(--fg); outline-offset: 1px; }
+.rp-tv { text-align: right; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-legend { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 12px; font-size: 13px; color: var(--dim); }
+.rp-ramp { display: inline-flex; align-items: center; gap: 8px; }
+.rp-ramp i { width: 120px; height: 8px; border-radius: 4px;
+  background: linear-gradient(90deg, rgba(142, 168, 255, .08), rgba(142, 168, 255, .85)); }
+
+.rp-drill { grid-column: 1 / -1; min-width: 0; }
+.rp-drill:not(:empty) { background: var(--card2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; margin: 2px 0 8px; }
+.rp-dh { font-size: 14px; font-weight: 650; margin-bottom: 8px; }
+.rp-gnr { display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 6px 26px;
+  margin-bottom: 10px; }
+.rp-gn { display: grid; gap: 1px; }
+.rp-gn > span { font-size: 13px; color: var(--dim); }
+.rp-gn > b { font-size: 15px; font-weight: 650; }
+.rp-gn.net > b { font-size: 16px; }
+.rp-tx { display: grid; gap: 2px; }
+.rp-txr { display: flex; align-items: baseline; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14.5px; }
+.rp-txr > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-d { color: var(--dim); font-size: 13px; margin-left: 8px; }
+.rp-dfoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  border-top: 1px solid var(--line); margin-top: 8px; padding-top: 10px; }
+.rp-cards { display: none; }
+
+.rp-month { padding: 18px 20px; }
+.rp-mhead { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.rp-mhead b { font-size: 16px; font-weight: 600; margin-right: 8px; }
+.rp-mnow { font-size: 22px; font-weight: 700; }
+.rp-mnow small { font-size: 13px; font-weight: 500; color: var(--dim); margin-left: 8px; }
+.rp-msvg { width: 100%; height: auto; display: block; margin: 8px 0 4px; }
+.rp-axis { stroke: var(--line2); stroke-width: 1; }
+.rp-area { fill: rgba(142, 168, 255, .12); }
+.rp-line { fill: none; stroke: var(--acc); stroke-width: 2; }
+.rp-dot { fill: var(--acc); }
+.rp-dot.now { fill: var(--fg); }
+.rp-tick { fill: var(--dim); font-size: 13px; }
+
+/* --- Cash flow: the Sankey on a desktop, labelled bars on a phone --------------------------------------------- */
+.rp-flow { padding: 20px 22px; }
+.rp-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.rp-svg { width: 100%; height: auto; display: block; }
+.rp-sk-name { fill: var(--fg); font-size: 13.5px; font-weight: 600; }
+.rp-sk-amt { fill: var(--dim); font-size: 13px; }
+.rp-sk-cap { fill: var(--dim); font-size: 13px; }
+.rp-sk-big { fill: var(--fg); font-size: 20px; font-weight: 700; }
+.rp-sk-short { fill: var(--bad); font-size: 13.5px; font-weight: 650; }
+.rp-skn { margin: 2px 0 4px; }
+.rp-bars { display: none; }
+.rp-fr { padding: 8px 0; border-top: 1px solid var(--line); }
+.rp-fl { display: flex; align-items: baseline; gap: 8px; font-size: 14.5px; }
+.rp-fl b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-sw { width: 10px; height: 10px; border-radius: 3px; flex: none; align-self: center; }
+.rp-fa { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+.rp-track { height: 8px; border-radius: 4px; background: var(--card3); margin-top: 7px; overflow: hidden; }
+.rp-track i { display: block; height: 100%; border-radius: 4px; }
+.rp-mi, .rp-flh { display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+  padding: 12px 0 6px; border-top: 1px solid var(--line2); font-size: 14px; }
+.rp-mi b { font-size: 18px; }
+.rp-flh.bal { color: var(--bad); border-top: 1px dashed rgba(255, 123, 123, .4); }
+.rp-rem { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 12px 0 4px;
+  border-top: 1px solid var(--line2); font-size: 14px; }
+.rp-rem .v { font-size: 18px; font-weight: 700; margin-left: auto; }
+.rp-rem small { font-size: 13px; color: var(--dim); flex-basis: 100%; }
+.rp-rem.short .v { color: var(--bad); }
+.rp-moves .li > .grow { display: flex; gap: 10px; align-items: baseline; flex: 1; min-width: 0; }
+.rp-moves .li > .grow > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-moves .li > .grow > span { color: var(--dim); font-size: 13px; white-space: nowrap; }
+.rp-tot { display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; font-size: 14px; }
+
+/* --- Forecast: accounts, KPIs, the ask card, the balance line -------------------------------------------------- */
+.rp-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.rp-acc { padding: 18px 20px; }
+.rp-chips2 { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.rp-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--card2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 7px 14px 7px 9px; font-size: 14px; color: var(--mut); min-height: 38px; }
+.rp-chip:hover { border-color: var(--line2); color: var(--fg); }
+.rp-chip.on { border-color: var(--acc); color: var(--fg); background: rgba(142, 168, 255, .12); }
+.rp-chip .bx { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--line2); display: grid;
+  place-items: center; flex: none; }
+.rp-chip.on .bx { background: var(--acc); border-color: var(--acc); color: #0c0e13; }
+.rp-chip .bx svg { width: 13px; height: 13px; stroke-width: 2.6; }
+.rp-askwrap { display: grid; gap: 12px; }
+.rp-ask { border-color: rgba(245, 180, 84, .42); }
+.rp-q { font-size: 15px; color: var(--mut); margin-bottom: 12px; max-width: 74ch; }
+.rp-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.rp-warn { border-color: rgba(245, 180, 84, .34); }
+.rp-chart { padding: 18px 20px; }
+.rp-leg { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--dim); margin-bottom: 6px; }
+.rp-leg i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.rp-leg i.dash { height: 0; border-top: 2px dashed var(--fg); background: none; }
+.rp-leg i.band { height: 12px; border-radius: 3px; background: rgba(142, 168, 255, .3); border: 1px solid rgba(142, 168, 255, .5); }
+.rp-leg i.lnacc { background: var(--acc); }
+.rp-leg i.dot { width: 9px; height: 9px; border-radius: 50%; }
+.rp-leg i.dot.in { background: var(--ok); }
+.rp-leg i.dot.out { background: var(--bad); }
+.rp-fsvg { margin: 4px 0 8px; }
+.rp-gl { stroke: var(--grid); stroke-width: 1; }
+.rp-band { fill: rgba(142, 168, 255, .3); stroke: rgba(142, 168, 255, .45); stroke-width: .8; }
+.rp-line.lower, .rp-line.higher { stroke: rgba(142, 168, 255, .45); stroke-width: 1.5; }
+.rp-line.sofar { stroke: var(--fg); stroke-width: 2.6; }
+.rp-line.exp { stroke: var(--fg); stroke-width: 2; stroke-dasharray: 5 5; }
+.rp-ev.in { fill: var(--ok); }
+.rp-ev.out { fill: var(--bad); }
+.rp-ev.low { fill: var(--warn); }
+.rp-callout { fill: var(--warn); font-size: 13px; font-weight: 600; }
+.rp-ends { display: flex; flex-wrap: wrap; gap: 10px 30px; margin: 6px 0 8px; }
+.rp-er { display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
+.rp-er > i { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
+.rp-er b { display: grid; }
+.rp-er small { font-size: 13px; font-weight: 500; color: var(--dim); }
+.rp-er .v { font-weight: 700; margin-left: auto; }
+.rp-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.rp-lists .li > .grow { display: flex; gap: 10px; align-items: baseline; flex: 1; min-width: 0; }
+.rp-lists .li > .grow > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-lists .li > .grow > span { color: var(--dim); font-size: 13px; white-space: nowrap; }
+
+/* --- 390 px and the tablet middle ------------------------------------------------------------------------------ */
+@media (max-width: 1180px) {
+  /* the 12 month columns need the width: below this the rail moves above the heatmap instead of squeezing it */
+  .rp-rc { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .rp-heat { grid-column: 1; grid-row: 2; }
+  .rp-rail { grid-column: 1; grid-row: 1; flex-direction: row; flex-wrap: wrap; gap: 10px; }
+  .rp-rail .rp-kpi { flex: 1 1 calc(50% - 5px); }
+  .rp-kpi .big { font-size: 28px; }
+  .rp-kpi .rp-name { font-size: 23px; }
+  .rp-hm { grid-template-columns: minmax(170px, 1fr) repeat(12, minmax(0, 1fr)) 72px; }
+  .rp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rp-lists h3 small { display: none; }
+}
+@media (max-width: 1023px) {
+  .rp-rc { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .rp-heat { grid-column: 1; grid-row: 2; padding: 16px; }
+  .rp-rail .rp-kpi { flex: 1 1 calc(50% - 5px); min-width: 0; }
+  .rp-hm { display: none; }
+  .rp-cards { display: grid; gap: 12px; }
+  .rp-heat > .rp-sub { max-width: none; }
+  .rp-cat { padding: 12px 14px 14px; }
+  .rp-cat-b { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0;
+    background: none; border: 0; color: inherit; text-align: left; font-size: 15px; }
+  .rp-cat-b > b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rp-cat-b .amt { font-size: 15px; }
+  .rp-cat-b > svg.i { transition: transform var(--mo-hover) ease-out; }
+  .rp-cat.open .rp-cat-b > svg.i { transform: rotate(180deg); }
+  .rp-spark { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; margin-top: 8px; }
+  .rp-spark i { height: 34px; border-radius: 4px; background: rgba(142, 168, 255, var(--a, .12));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .035); }
+  .rp-spark i.nd { background: repeating-linear-gradient(-45deg, var(--card2) 0 3px, var(--card3) 3px 6px); }
+  .rp-spark i.on { outline: 2px solid var(--fg); outline-offset: -2px; }
+  .rp-flow .rp-svg { display: none; }
+  .rp-bars { display: block; }
+  .rp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rp-lists { grid-template-columns: minmax(0, 1fr); }
+  .rp-month .rp-msvg { margin-top: 4px; }
+  .rp-chip { min-height: 44px; }
+  .rp-ask .btn.sm, .rp-ask .btn { min-height: 44px; padding: 10px 16px; }
+  .rp-cycle { margin-left: 0; }
+  .rp-bar .sp { display: none; }
+  .rp-views { flex: 1 1 100%; }
+  .rp-views button { flex: 1; }
+  .rp-cycle { flex: 1; }
+  .rp-range { flex: 1; min-width: 0; }
+  .rp-step { width: 44px; height: 40px; }
+}
+@media (max-width: 460px) {
+  .rp-rail .rp-kpi { flex: 1 1 calc(50% - 5px); padding: 13px 14px; }
+  .rp-kpi .big { font-size: 24px; }
+  .rp-kpi .rp-name { font-size: 19px; }
+  .rp-kpi h3 { font-size: 13px; margin-bottom: 6px; min-height: 0; }
+  .rp-kpi h3 .hi { display: none; }   /* the title keeps one line in a 146px card */
+  .rp-chips .pill { font-size: 13px; }
+  .rp-gnr { gap: 6px 18px; }
+  .rp-views button { padding: 8px 4px; font-size: 13.5px; }
+  .rp-month { padding: 14px; }
+}
+/* Desktop keeps the card list, the bars and the phone notes out of the way. */
+@media (min-width: 1024px) { .rp-cards, .rp-bars { display: none; } }
+@media (min-width: 1024px) { .rp-phonly { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .rp-cat-b > svg.i { transition: none; }
+}

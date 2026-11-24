@@ -348,9 +348,9 @@ def test_finance_sync_over_mcp(chase, client, fake, monkeypatch):
     assert mcp_state.pending_count(chase) == 0
 
 
-def test_15_tools_one_hook_and_the_manifest():
+def test_the_tools_one_hook_and_the_manifest():
     p = plugin_ctx()
-    assert len(p.tools) == 20 and len(p.hooks["pre_tool_call"]) == 1 and "finance_sync" in p.tools  # v23: + finance_categories, finance_create/update/delete_category
+    assert len(p.tools) == 23 and len(p.hooks["pre_tool_call"]) == 1 and "finance_sync" in p.tools  # v23: + finance_categories, finance_create/update/delete_category; 0.5: + finance_reports_spending/cashflow/forecast
     assert tooldefs.ACTIONS == ("finance_sync",) and "finance_sync" not in tooldefs.READS + tooldefs.WRITES
     assert tooldefs.TOOLS["finance_sync"].schema() == {
         "type": "object", "additionalProperties": False,

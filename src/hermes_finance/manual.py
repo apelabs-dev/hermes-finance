@@ -548,6 +548,14 @@ def _check_loan_link(conn: sqlite3.Connection, loan_id: int | None) -> None:
 def create(conn: sqlite3.Connection, data: dict[str, Any], today: date, estimate: bool = False) -> dict[str, Any]:
     """Add a manual account. `estimate` (valuation.create, when the source is on and the lookup inputs are there): a vehicle /
     property without a value follows its estimate (value_source 'estimate', $0 until the first one arrives)."""
+    with conn:
+        account_id = insert(conn, data, today, estimate)
+    return describe(conn, get(conn, account_id), today)
+
+
+def insert(conn: sqlite3.Connection, data: dict[str, Any], today: date, estimate: bool = False) -> int:
+    """create()'s validation and rows without a commit, for a caller that writes more in the same transaction (an
+    import: the new account, its rows and a PDF template land together or not at all). Returns the new id."""
     kind = data.get("kind") if isinstance(data, dict) else None
     clean = validate(kind, data, today, estimate=estimate)
     if kind == "vehicle" and not clean.get("name"):
@@ -566,13 +574,12 @@ def create(conn: sqlite3.Connection, data: dict[str, Any], today: date, estimate
     values = {c: clean.get(c) for c in COLUMNS}
     values["kind"] = kind
     ts = now()
-    with conn:
-        cur = conn.execute(
-            f"INSERT INTO manual_accounts ({', '.join(COLUMNS)}, created_at, updated_at) "
-            f"VALUES ({', '.join('?' * len(COLUMNS))}, ?, ?)", [values[c] for c in COLUMNS] + [ts, ts])
-        account_id = cur.lastrowid
-        _history_row(conn, account_id, values["balance_as_of"], values["balance"])
-    return describe(conn, get(conn, account_id), today)
+    cur = conn.execute(
+        f"INSERT INTO manual_accounts ({', '.join(COLUMNS)}, created_at, updated_at) "
+        f"VALUES ({', '.join('?' * len(COLUMNS))}, ?, ?)", [values[c] for c in COLUMNS] + [ts, ts])
+    account_id = cur.lastrowid
+    _history_row(conn, account_id, values["balance_as_of"], values["balance"])
+    return account_id
 
 
 def edit(conn: sqlite3.Connection, account_id: Any, data: dict[str, Any], today: date) -> dict[str, Any]:

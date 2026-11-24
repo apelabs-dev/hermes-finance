@@ -21,7 +21,7 @@
   const fmtName = (f) => FMT[f] || f.replace(/%/g, '');
   const range = (a, b) => (a === b ? fmtDate(a, true) : `${fmtDate(a, true)} – ${fmtDate(b, true)}`);
 
-  HF.HOOKS.addOptions.push(() => HF.opt('filetext', RGB.ok, 'Import a file', "CSV, OFX or QFX from your bank's website · uses no Plaid slot",
+  HF.HOOKS.addOptions.push(() => HF.opt('filetext', RGB.ok, 'Import a file', "CSV, OFX, QFX or PDF from your bank's website · uses no Plaid slot",
     () => HF.openAdd('import')));
   HF.HOOKS.addSteps.import = () => dropSheet();
 
@@ -38,14 +38,19 @@
   // ---- 1: the drop zone ----------------------------------------------------------------------------------------
   function dropSheet() {
     const err = errBox();
-    const input = h('input', {type: 'file', accept: '.csv,.ofx,.qfx,.txt,text/csv', hidden: true, 'aria-label': 'Choose a file'});
+    const input = h('input', {type: 'file', accept: '.csv,.ofx,.qfx,.txt,.pdf,text/csv,application/pdf', hidden: true,
+      'aria-label': 'Choose a file'});
     const choose = h('button', {class: 'btn sm ghost', type: 'button', onclick: () => input.click()}, 'Choose file');
     const zone = h('div', {class: 'drop'}, h('span', {class: 'dri'}, icon('upload')), h('b', {}, 'Drop a file here'),
-      h('span', {}, 'CSV, OFX or QFX · up to 10 MB'), choose, input);
+      h('span', {}, 'CSV, OFX, QFX or PDF · up to 10 MB'), choose, input);
     const take = async (file) => {
       err.textContent = '';
       if (!file) return;
       if (file.size > MAX) { err.textContent = 'That file is over 10 MB. Download a shorter date range.'; return; }
+      if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {  // a statement: its own screens (pdfimport.js)
+        HF.pdf.start(file);
+        return;
+      }
       choose.disabled = true;
       try {
         const st = {filename: file.name, data: toBase64(await file.arrayBuffer()), targets: {}, limits: {}};
@@ -68,7 +73,8 @@
     openSheet([head('Import a file', () => HF.openAdd('home')), h('p', {}, "Download transactions from your bank's website, then drop the file here."),
       zone, err, h('div', {class: 'sub help-line'}, h('span', {class: 'mut'}, 'Where to find the file, and what each format needs'),
         HF.help('Finding your statement', "Look for Download, Export or Statements on the bank's site. OFX and QFX are read "
-          + 'as they are; a CSV shows its columns first so you can match them before anything is saved.', {key: 'import-formats'}))],
+          + 'as they are; a CSV shows its columns first so you can match them before anything is saved. A PDF statement is '
+          + 'read on this computer and has to add up against the balances it prints.', {key: 'import-formats'}))],
     {focus: choose});
   }
 

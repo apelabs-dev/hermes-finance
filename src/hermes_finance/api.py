@@ -15,7 +15,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from . import (alpaca, bills, caticons, catops, classify, config, goals, groupbudget, insights, logos, manual, mcp_state,
-               portfolio, prefs, report, simplefin_sync, txmeta, valuation)
+               portfolio, prefs, report, reports, simplefin_sync, txmeta, valuation)
 from .db import account_policy_sql, now
 
 # Only these image hosts are ever handed to the browser (they're also the CSP img-src).
@@ -58,10 +58,13 @@ MAX_PICKS = 60   # values of one repeated parameter (?category=A&category=B ...)
 
 
 class ApiError(Exception):
-    def __init__(self, message: str, status: int = 400, field: str | None = None):
+    def __init__(self, message: str, status: int = 400, field: str | None = None, code: str | None = None,
+                 extra: dict | None = None):
         super().__init__(message)
         self.status = status
         self.field = field  # the form field an error belongs to, so the page can show it inline
+        self.code = code    # a machine reason code (PDF import), when the error has one
+        self.extra = extra or {}
 
 
 # --- parameters ----------------------------------------------------------------------------------
@@ -763,7 +766,8 @@ def category_groups(conn: sqlite3.Connection, params: dict[str, str] | None = No
 # chart reads chart_excluded_categories: no total, budget, alert, pace or read command ever does. networth_excluded
 # (TASK-15) is the Custom net worth's selection, the accounts it leaves out (insights.networth_excluded).
 # excluded_accounts is the separate account policy: the accounts left out of every read (db.account_policy_sql).
-SETTING_KEYS = ("chart_excluded_categories", "networth_excluded", "excluded_accounts")
+SETTING_KEYS = ("chart_excluded_categories", "networth_excluded", "excluded_accounts",
+                "reports_paychecks", "reports_forecast_accounts")   # 0.5 B2: the Reports pages' two answers
 MAX_EXCLUDED = 50
 
 
@@ -780,6 +784,8 @@ def settings(conn: sqlite3.Connection, params: dict[str, str] | None = None, tod
     return {"chart_excluded_categories": chart_excluded(conn), "fixed_categories": list(insights.FIXED_CATEGORIES),
             "networth_excluded": insights.networth_excluded(conn),
             "excluded_accounts": insights.excluded_accounts(conn),
+            "reports_paychecks": reports.paycheck_answers(conn),          # 0.5 B2: one answer per paycheck source
+            "reports_forecast_accounts": reports.forecast_account_choice(conn),   # None: the checking defaults
             "mcp": mcp_settings(conn),
             "prefs": prefs.public(conn)}   # TASK-18: the Settings page's values (sync & alerts, region, ...)
 
@@ -820,18 +826,23 @@ def _chart_setting(conn: sqlite3.Connection, value: Any) -> list[str]:
 
 def save_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     """{"chart_excluded_categories": [category, ...], "networth_excluded": [account id, ...],
-    "excluded_accounts": [account id, ...]}, any one or more.
+    "excluded_accounts": [account id, ...], "reports_paychecks": {source key: "add" | "omit"},
+    "reports_forecast_accounts": [account id, ...]}, any one or more.
     networth_excluded: the accounts the Custom net worth leaves out, as `finance networth --json` shows their ids (a
     Plaid account_id, or "manual:<id>"). An id that isn't a current account (unknown, archived, a removed bank's) is
     dropped, and the answer says so in `note` (with `dropped`); the rest is saved.
     excluded_accounts: the account policy (every read leaves them out). Unlike networth_excluded, an id that isn't a
-    current account is kept, and the answer reports the ones that resolve to no account in `unresolved`."""
+    current account is kept, and the answer reports the ones that resolve to no account in `unresolved`.
+    reports_paychecks / reports_forecast_accounts (0.5 B2): the Reports pages' answers. A paycheck answer is keyed by
+    the source key `reports.detected_paychecks` returns (account | currency | label), never a bare label; the account
+    list keeps only eligible cash accounts. Both come back in the Settings payload."""
     unknown = sorted(set(data) - set(SETTING_KEYS))
     if unknown:
         raise ApiError(f"unknown setting {unknown[0]!r}")
     if not any(k in data for k in SETTING_KEYS):
         raise ApiError("a setting is required: chart_excluded_categories (a list of category names), "
-                       "networth_excluded or excluded_accounts (a list of account ids)", field="chart_excluded_categories")
+                       "networth_excluded, excluded_accounts, reports_paychecks or reports_forecast_accounts",
+                       field="chart_excluded_categories")
     chart = _chart_setting(conn, data["chart_excluded_categories"]) if "chart_excluded_categories" in data else None
     ids = data.get("networth_excluded")
     if "networth_excluded" in data:
@@ -847,6 +858,20 @@ def save_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, A
         if len(policy_ids) > insights.MAX_EXCLUDED_ACCOUNTS:
             raise ApiError(f"excluded_accounts takes at most {insights.MAX_EXCLUDED_ACCOUNTS} ids",
                            field="excluded_accounts")
+    answers = data.get("reports_paychecks")
+    if "reports_paychecks" in data:
+        try:
+            reports.clean_paycheck_answers(answers)       # validated here; written below, like the rest
+        except reports.ReportError as e:
+            raise ApiError(str(e), field="reports_paychecks") from None
+    account_ids = data.get("reports_forecast_accounts")
+    if "reports_forecast_accounts" in data:
+        if not isinstance(account_ids, list) or not all(isinstance(x, str) for x in account_ids):
+            raise ApiError("reports_forecast_accounts must be a list of account ids",
+                           field="reports_forecast_accounts")
+        if len(account_ids) > reports.MAX_FORECAST_ACCOUNTS:
+            raise ApiError(f"reports_forecast_accounts takes at most {reports.MAX_FORECAST_ACCOUNTS} ids",
+                           field="reports_forecast_accounts")
     if chart is not None:  # everything is validated by now: all are saved, or (a 400 above) none
         with conn:
             conn.execute("INSERT INTO settings (key, value, updated_at) VALUES ('chart_excluded_categories', ?, ?) "
@@ -855,7 +880,17 @@ def save_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, A
     dropped = insights.save_networth_excluded(conn, ids)[1] if ids is not None else []
     if policy_ids is not None:
         insights.save_excluded_accounts(conn, policy_ids)
+    if "reports_paychecks" in data:
+        try:
+            reports.save_paycheck_answers(conn, answers)
+        except reports.ReportError as e:   # unreachable: validated above
+            raise ApiError(str(e), field="reports_paychecks") from None
+    account_dropped: list[str] = []
+    if "reports_forecast_accounts" in data:
+        account_dropped = reports.save_forecast_accounts(conn, account_ids)["dropped"]
     out = settings(conn)
+    if account_dropped:
+        out["reports_accounts_dropped"] = account_dropped
     if dropped:
         shown = ", ".join(repr(x[:MAX_TEXT]) for x in dropped[:5]) + (f" and {len(dropped) - 5} more" if len(dropped) > 5 else "")
         out.update(dropped=dropped, note=f"{len(dropped)} unknown account id{'s' if len(dropped) != 1 else ''} dropped "

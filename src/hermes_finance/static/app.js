@@ -681,6 +681,9 @@
     if (!r.ok) {
       const err = new Error(j.error || r.statusText);
       err.field = j.field;
+      err.code = j.code;                // (0.5 PDF import: no_text_layer, password_wrong, does_not_reconcile, …)
+      err.detail = j.detail;            // (0.5: the printed columns, samples and fingerprint the parser saw)
+      err.proposal = j.proposal;        // (0.5: an AI layout that didn't add up, for Teach it to start from)
       err.retryAfter = j.retry_after;   // (TASK-22c: Sync now's minute between two syncs)
       err.status = r.status;            // (TASK-22f: 409 a sync already running, 403 refresh off)
       throw err;

@@ -1,0 +1,107 @@
+/* Hermes Finances · the PDF import screens (epic 0.5): reading, the check, the refusals, the password, the missing
+   add-on, the AI opt-in, Teach this layout, and the install line. Every colour is a theme variable, so dark and light
+   are the same layout; nothing is under 13px. Prefix: .pi- */
+
+/* ---- reading / asking --------------------------------------------------------------------------------------- */
+.pi-read { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; font-size: 14px; color: var(--mut); }
+.pi-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.pi-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--ok); }
+.pi-wide { width: 100%; justify-content: center; }
+
+/* ---- the check: the proof pair and the row table ------------------------------------------------------------ */
+.pi-pair { display: inline-flex; align-items: center; gap: 10px; }
+.pi-in { color: var(--ok); }
+.pi-rows { max-height: 264px; overflow: auto; }
+.pi-rows table.map td:first-child { color: var(--mut); }
+.pi-hint { font-size: 13.5px; color: var(--mut); margin: 8px 0 0; }
+
+/* ---- Teach this layout -------------------------------------------------------------------------------------- */
+.pi-steps { display: flex; align-items: center; gap: 6px; margin: 10px 0 2px; }
+.pi-steps > span { font-size: 13px; font-weight: 600; color: var(--dim); margin-right: 6px; white-space: nowrap; }
+.pi-steps i { flex: 1; height: 4px; border-radius: 999px; background: var(--line); }
+.pi-steps i.on { background: var(--acc); }
+.pi-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 6px; }
+.pi-col { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 10px 0;
+  border-top: 1px solid var(--line); }
+.pi-col:first-child { border-top: 0; }
+.pi-col > .grow { min-width: 0; }
+.pi-col b { display: block; font-size: 15px; font-weight: 650; }
+.pi-col span > span { display: block; font-size: 13px; color: var(--dim); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.pi-col select.selv { flex: none; width: 168px; }
+.pi-note { font-size: 14.5px; color: var(--mut); margin: 8px 0 8px; }
+.pi-opts { display: grid; gap: 6px; margin-bottom: 2px; }
+.pi-opt { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 14px;
+  background: transparent; border: 1px solid var(--line); border-radius: 12px; color: inherit; }
+.pi-opt:hover { background: var(--card2); }
+.pi-opt.on { border-color: var(--acc); background: rgba(142, 168, 255, .09); }
+.pi-opt .rd { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line2);
+  position: relative; }
+.pi-opt.on .rd { border-color: var(--acc); }
+.pi-opt.on .rd::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--acc); }
+.pi-opt .grow > b { display: block; font-size: 15px; font-weight: 650; }
+.pi-opt .grow > span { display: block; font-size: 13.5px; color: var(--mut); }
+.pi-typed { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0 0; }
+.pi-year { margin-top: 12px; }
+.pi-tag { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 13px; font-weight: 650;
+  color: var(--acc); background: rgba(142, 168, 255, .14); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.pi-tag svg { width: 14px; height: 14px; }
+
+/* the check line under the answers: idle, adds up, doesn't */
+.pi-chk { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0 0; padding: 9px 12px; border-radius: 12px;
+  background: rgba(155, 162, 182, .09); font-size: 13.5px; color: var(--mut); }
+.pi-chk > svg { flex: none; margin-top: 1px; }
+.pi-chk .grow > b { display: block; font-size: 14px; color: var(--fg); }
+.pi-chk .grow > span { display: block; }
+/* the proof line and what saving does are the evidence: they wrap, never end in an ellipsis (.grow > span would) */
+.pi-chk .grow > span, .pi-save .grow > span { white-space: normal; overflow: visible; }
+.pi-chk.ok { background: rgba(79, 209, 165, .11); }
+.pi-chk.ok > svg { color: var(--ok); }
+.pi-chk.ok .grow > b { color: var(--ok); }
+.pi-chk.bad { background: rgba(255, 123, 123, .11); }
+.pi-chk.bad > svg { color: var(--bad); }
+.pi-chk.bad .grow > b { color: var(--bad); }
+
+/* ---- the AI opt-in ----------------------------------------------------------------------------------------- */
+.pi-priv > .gh { margin-top: 10px; }
+.pi-priv > .gh:first-child { margin-top: 0; }
+.pi-priv ul { list-style: none; display: grid; gap: 6px; margin: 2px 0 10px; }
+.pi-priv li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--mut); }
+.pi-priv li svg { width: 15px; height: 15px; flex: none; }
+.pi-priv ul.yes li svg { color: var(--ok); }
+.pi-priv ul.no li svg { color: var(--dim); }
+.pi-mask { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.65;
+  color: var(--mut); background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  white-space: pre-wrap; word-break: break-word; }
+/* the privacy screen: every word that would be sent, in a box that scrolls rather than a sheet that never ends */
+.pi-sent .pi-mask { max-height: 280px; overflow: auto; overscroll-behavior: contain; }
+.pi-sent .pi-note { margin: 10px 0 6px; }
+
+.pi-rowstart { border-bottom: 0; }
+.pi-rowstart select.selv { width: 200px; }   /* both option labels fit whole */
+
+.pi-typed .fld { margin-top: 10px; }
+.pi-typed .fld > label { margin-bottom: 6px; }
+.sheet .pi-actions { margin-top: 16px; }
+
+/* ---- the install line -------------------------------------------------------------------------------------- */
+.pi-codeline { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; }
+.pi-codeline .inp { flex: 1; min-width: 0; margin: 0; }
+.pi-codeline .inp input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13.5px; }
+
+/* ---- light theme: the same tints on white ------------------------------------------------------------------ */
+:root[data-theme=light] .pi-chk { background: rgba(21, 25, 34, .04); }
+:root[data-theme=light] .pi-chk.ok { background: rgba(11, 122, 85, .09); }
+:root[data-theme=light] .pi-chk.bad { background: rgba(196, 44, 44, .08); }
+:root[data-theme=light] .pi-opt.on { background: rgba(53, 82, 212, .07); }
+:root[data-theme=light] .pi-tag { background: rgba(53, 82, 212, .1); }
+:root[data-theme=light] .pi-bar > i { background: var(--ok); }
+
+/* ---- a phone: the column row wraps, the two typed balances stack -------------------------------------------- */
+@media (max-width: 520px) {
+  .pi-col { flex-wrap: wrap; }
+  .pi-col > .grow { flex: 1 1 100%; }
+  .pi-col select.selv { width: 100%; }
+  .pi-typed { grid-template-columns: 1fr; }
+  .pi-rows { max-height: 220px; }
+}

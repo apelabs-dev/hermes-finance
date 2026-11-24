@@ -19,6 +19,9 @@ photos = ["rembg[cpu]>=2.0.61", "pillow>=10.0", "numpy>=1.26", "scipy>=1.11"]
 # TASK-17: `finance mcp` (stdio) and the /mcp route of `finance serve` (streamable HTTP), the official MCP Python SDK.
 # Optional: without it every other command works and /mcp answers 501. `uv sync --extra mcp`
 mcp = ["mcp>=2.2,<3"]
+# PDF statement import: the word and position layer of a statement PDF. Optional: without it CSV / OFX / QFX work and a
+# PDF import says to install this extra. `uv sync --extra pdf`
+pdf = ["pdfplumber>=0.11.10,<0.12"]
 
 [project.scripts]
 finance = "hermes_finance.cli:main"
@@ -33,6 +36,8 @@ dev = [
     "mcp>=2.2,<3",   # the MCP tests (TASK-17) run against the real SDK
     "pytest-xdist>=3.6",   # TEST-SPEED: scripts/check.py runs the suite on several workers (pytest -n)
     "playwright==1.62.0",
+    "pdfplumber>=0.11.10,<0.12",   # the PDF import tests parse synthetic PDFs through the real optional extra
+    "fpdf2>=2.8,<3",   # tests/pdf_fixtures.py writes the synthetic statement PDFs
 ]
 
 [tool.pytest.ini_options]

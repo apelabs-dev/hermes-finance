@@ -3,7 +3,7 @@
 
 # Agent tools reference
 
-The 20 `finance_*` tools. One definition each, in `src/hermes_finance/tooldefs.py`, shared by the Hermes plugin (`hermes_plugin/`) and the MCP server (`finance mcp`, and `/mcp` on `finance serve`). A read tool answers exactly what its `finance <command> --json` prints.
+The 23 `finance_*` tools. One definition each, in `src/hermes_finance/tooldefs.py`, shared by the Hermes plugin (`hermes_plugin/`) and the MCP server (`finance mcp`, and `/mcp` on `finance serve`). A read tool answers exactly what its `finance <command> --json` prints.
 
 - **read**: opens the database read-only and never calls Plaid. Listed everywhere.
 - **action** (`finance_sync`): syncs with Plaid now. It changes nothing you entered, so it runs without an approval, except `refresh=true` on a paid Plaid plan (Plaid bills each refresh), which needs one.
@@ -23,6 +23,9 @@ The MCP server's instructions to every client:
 | [`finance_loans`](#finance-loans) | read | `finance loans --json` |
 | [`finance_holdings`](#finance-holdings) | read | `finance holdings --json` |
 | [`finance_cashflow`](#finance-cashflow) | read | `finance cashflow --json` |
+| [`finance_reports_spending`](#finance-reports-spending) | read | `finance reports-spending --json` |
+| [`finance_reports_cashflow`](#finance-reports-cashflow) | read | `finance reports-cashflow --json` |
+| [`finance_reports_forecast`](#finance-reports-forecast) | read | `finance reports-forecast --json` |
 | [`finance_status`](#finance-status) | read | `finance status --json` |
 | [`finance_goals`](#finance-goals) | read | `finance goals --json` |
 | [`finance_rules`](#finance-rules) | read | `finance rules --json` |
@@ -308,6 +311,109 @@ Kind: read. Same answer as `finance cashflow --json`.
       "minimum": 1,
       "maximum": 120,
       "description": "how many months (default 6)"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+</details>
+
+## `finance_reports_spending` {#finance-reports-spending}
+
+Spending by category for a period: gross, refunds and net (refunds net against their category). A category below zero is a 'Refunds over spending' source; another currency is listed separately, never added. Default: this month.
+
+Kind: read. Same answer as `finance reports-spending --json`.
+
+| Argument | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `month` | string | no |  | one month, YYYY-MM (not with since/until) |
+| `since` | string | no |  | from: Nd (the last N days, today included) or YYYY-MM-DD |
+| `until` | string | no |  | through YYYY-MM-DD, inclusive (default today) |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "month": {
+      "type": "string",
+      "description": "one month, YYYY-MM (not with since/until)"
+    },
+    "since": {
+      "type": "string",
+      "description": "from: Nd (the last N days, today included) or YYYY-MM-DD"
+    },
+    "until": {
+      "type": "string",
+      "description": "through YYYY-MM-DD, inclusive (default today)"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+</details>
+
+## `finance_reports_cashflow` {#finance-reports-cashflow}
+
+Money in by source, net spending per category group, and what is left after spending (income minus net spending, exact for the period); the money moved between accounts is listed, not drawn. Refunds are never income. Default: this month.
+
+Kind: read. Same answer as `finance reports-cashflow --json`.
+
+| Argument | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `month` | string | no |  | one month, YYYY-MM (not with since/until) |
+| `since` | string | no |  | from: Nd (the last N days, today included) or YYYY-MM-DD |
+| `until` | string | no |  | through YYYY-MM-DD, inclusive (default today) |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "month": {
+      "type": "string",
+      "description": "one month, YYYY-MM (not with since/until)"
+    },
+    "since": {
+      "type": "string",
+      "description": "from: Nd (the last N days, today included) or YYYY-MM-DD"
+    },
+    "until": {
+      "type": "string",
+      "description": "through YYYY-MM-DD, inclusive (default today)"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+</details>
+
+## `finance_reports_forecast` {#finance-reports-forecast}
+
+The next N days' available balance on the chosen cash accounts: bills, paychecks the user added (a detected one waits for an answer), and the lower / higher everyday-spending lines with their end balances.
+
+Kind: read. Same answer as `finance reports-forecast --json`.
+
+| Argument | Type | Required | Limits | Description |
+|---|---|---|---|---|
+| `days` | integer | no | min 1; max 90 | how many days (default 30) |
+
+<details><summary>JSON schema</summary>
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90,
+      "description": "how many days (default 30)"
     }
   },
   "additionalProperties": false

@@ -37,6 +37,7 @@ from .db import IMPORT_ITEM, display_currency, now
 
 TARGET_KINDS = ("bank", "credit_card")
 MAX_ROWS = 20_000
+PREVIEW_ROWS = 200    # a PDF preview's row list: the check screen shows these, the total is counted separately
 
 # OFX TRNTYPE -> the Plaid personal_finance_category (primary, detailed) a money-in row of that type is saved with.
 # classify.apply() files it like a synced row: a matching rule first, else plaid_category_map (INCOME -> Income).
@@ -55,9 +56,11 @@ _CARD_PAYMENT_WORDS = classify.CARD_PAYMENT_WORDS  # (importfile needs ofxtools,
 
 
 class ImportRefused(ValueError):
-    def __init__(self, message: str, field: str | None = None):
+    def __init__(self, message: str, field: str | None = None, code: str | None = None, extra: dict | None = None):
         super().__init__(message)
         self.field = field
+        self.code = code
+        self.extra = extra or {}
 
 
 def _chosen_currency(conn: sqlite3.Connection, data: dict[str, Any]) -> str:
@@ -73,8 +76,77 @@ def _chosen_currency(conn: sqlite3.Connection, data: dict[str, Any]) -> str:
     return display_currency(conn)
 
 
-def _parse(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
+def _pdf_info(st) -> dict[str, Any]:
+    return {"reason": None, "balance_mode": st.balance_mode, "period": [st.period[0].isoformat(),
+                                                                        st.period[1].isoformat()],
+            "opening": str(st.opening), "closing": str(st.closing), "currency": st.currency,
+            "template": st.template, "proposal": st.proposal, "ai_used": st.ai_used, "detail": st.detail}
+
+
+def _pdf_year(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 1000 <= value <= 9999:
+        raise ImportRefused("The year must be four digits, such as 2024.", "year")
+    return value
+
+
+def _pdf_password(data: dict[str, Any]) -> str | None:
+    password = data.get("password")
+    if password is not None and not isinstance(password, str):
+        raise ImportRefused("The password must be text.", "password")
+    return password or None
+
+
+def _ai_view(filename: str, raw: bytes, data: dict[str, Any]) -> dict[str, Any]:
+    """ai_view on a PDF preview: every prompt an AI layout proposal could send, word for word, for the privacy screen
+    to show before the person presses Send. Worked out here; nothing is parsed further, written or sent."""
+    from . import pdfimport
+    try:
+        prompts = pdfimport.ai_outgoing(raw, password=_pdf_password(data))
+    except pdfimport.PdfRefused as e:
+        raise ImportRefused(e.message, e.field, e.code, e.extra) from None
+    return {"kind": "pdf", "filename": filename, "ai_view": {"prompts": prompts}}
+
+
+def _parse_pdf(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date,
+               commit: bool = False) -> dict[str, Any]:
+    """One statement PDF through pdfimport (before sniff: a PDF is not a CSV/OFX file). Only a preview may ask the
+    model (ai_template); a commit sends the previewed proposal back as `template` with template_source 'ai'."""
+    from . import pdfimport
+
+    password = _pdf_password(data)
+    if not isinstance(data.get("ai_template", False), bool):
+        raise ImportRefused("ai_template must be true or false", "ai_template")
+    template = data.get("template")
+    if template is not None and not isinstance(template, dict):
+        raise ImportRefused(pdfimport.REASONS["template_invalid"], "file", "template_invalid")
+    template_source = data.get("template_source") or "user"
+    if template_source not in ("user", "ai"):
+        raise ImportRefused("template_source must be user or ai", "template_source")
+    year = _pdf_year(data.get("year"))
+    try:
+        st = pdfimport.parse_statement(conn, raw, password=password,
+                                       ai=not commit and data.get("ai_template") is True,
+                                       template=template, template_source=template_source,
+                                       opening=data.get("opening"), closing=data.get("closing"), year=year,
+                                       today=today)
+    except pdfimport.PdfRefused as e:
+        raise ImportRefused(e.message, e.field, e.code, e.extra) from None
+    label = _stem(filename)
+    group = {"label": label, "kind": "bank", "subtype": st.subtype, "balance": float(st.closing),
+             "balance_date": st.period[1].isoformat(), "institution": None, "rows": st.rows, "card": False,
+             "currency": None}
+    return {"kind": "pdf", "groups": [group], "pdf": _pdf_info(st)}
+
+
+def _parse(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date,
+           commit: bool = False) -> dict[str, Any]:
     """The file read with the page's choices (a CSV's column mapping, date format and sign; guesses when absent)."""
+    if importfile.is_pdf(raw):
+        parsed = _parse_pdf(conn, filename, raw, data, today, commit)
+        _check_max_rows(sum(len(g["rows"]) for g in parsed["groups"]))
+        return parsed
     try:
         kind = importfile.sniff(filename, raw)
         if kind == "csv":
@@ -120,9 +192,14 @@ def _parse(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, 
     total = sum(len(g["rows"]) for g in out_groups)
     if not total:
         raise ImportRefused("There are no transactions in this file.", "file")
+    _check_max_rows(total)
+    return {"kind": kind, "groups": out_groups, **info}
+
+
+def _check_max_rows(total: int) -> None:
+    """One refusal for every file kind (CSV, OFX, PDF) over MAX_ROWS."""
     if total > MAX_ROWS:
         raise ImportRefused(f"This file has {total:,} rows; import at most {MAX_ROWS:,} at a time.", "file")
-    return {"kind": kind, "groups": out_groups, **info}
 
 
 def _stem(filename: str) -> str:
@@ -193,6 +270,8 @@ def _target(conn: sqlite3.Connection, choice: Any, group: dict[str, Any]) -> dic
 
 def preview(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
     """What the import would do with these choices, changing nothing."""
+    if data.get("ai_view") is True and importfile.is_pdf(raw):
+        return _ai_view(filename, raw, data)
     p = _parse(conn, filename, raw, data, today)
     chosen = data.get("targets") or {}
     groups = []
@@ -207,8 +286,21 @@ def preview(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str,
     rows = [r for g in p["groups"] for r in g["rows"]]
     dates = sorted(r.date for r in rows)
     out = {k: v for k, v in p.items() if k != "groups"}
-    return {**out, "filename": filename, "rows": len(rows), "first": dates[0], "last": dates[-1], "groups": groups,
-            "accounts": targets(conn), "new": sum(g["new"] for g in groups), "skipped": sum(g["skipped"] for g in groups)}
+    res = {**out, "filename": filename, "rows": len(rows), "first": dates[0], "last": dates[-1], "groups": groups,
+           "accounts": targets(conn), "new": sum(g["new"] for g in groups), "skipped": sum(g["skipped"] for g in groups)}
+    if p["kind"] == "pdf":
+        # What the check screen lists under the proof: every row the replay accepted (the PDF branch has one group),
+        # and the two totals across all of them (the list may be capped, the sums never are).
+        res["preview_rows"] = [{"date": r.date, "description": r.description, "amount": r.amount}
+                               for r in rows[:PREVIEW_ROWS]]
+        res["preview_rows_total"] = len(rows)
+        res["preview_in"] = float(sum(-r.amount for r in rows if r.amount < 0))
+        res["preview_out"] = float(sum(r.amount for r in rows if r.amount > 0))
+        # A mapping sent to be checked: the saved layout teaching it would replace (None: nothing would be replaced),
+        # so the screen can say so before Save and import; the commit then has to send replace_template: true.
+        fp = ((p.get("pdf") or {}).get("detail") or {}).get("fingerprint")
+        res["pdf"] = {**(p.get("pdf") or {}), "replaces": _replaces(conn, fp, data.get("template"))}
+    return res
 
 
 def _new_account(conn: sqlite3.Connection, spec: dict[str, Any], group: dict[str, Any], today: date) -> int:
@@ -226,7 +318,7 @@ def _new_account(conn: sqlite3.Connection, spec: dict[str, Any], group: dict[str
     if data["balance_as_of"] > today.isoformat():
         data["balance_as_of"] = today.isoformat()
     try:
-        return manual.create(conn, data, today)["id"]
+        return manual.insert(conn, data, today)   # no commit: commit() writes the account with its rows
     except manual.ManualError as e:
         raise ImportRefused(f"{group['label']}: {e}", "targets") from None
 
@@ -261,22 +353,30 @@ def _raw_json(filename: str, row) -> str:
 def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
     """Import the file with these choices: new accounts first, then every new row (one transaction; an OFX money-in row
     with its TRNTYPE's income code, or a card payment's transfer code, _pfc_hint), then the rules and the
-    Plaid-category defaults (classify.apply). Returns what was added and skipped, per account."""
-    p = _parse(conn, filename, raw, data, today)
+    Plaid-category defaults (classify.apply). Returns what was added and skipped, per account. A commit never calls the
+    model: ai_template is refused (ai_on_commit); a previewed AI proposal comes back as `template` with
+    template_source 'ai', is validated and must reconcile again locally, and is taught with source 'ai'."""
+    if data.get("ai_template") is True:
+        raise ImportRefused("A commit doesn't ask the AI again. Send the proposal the preview returned as the template "
+                            "(template_source \"ai\").", "ai_template", "ai_on_commit")
+    p = _parse(conn, filename, raw, data, today, commit=True)
     chosen = data.get("targets") or {}
     plan = [(g, _target(conn, chosen.get(g["label"]) if isinstance(chosen, dict) else None, g)) for g in p["groups"]]
     for g, t in plan:  # everything checked before anything is written
         if "new" in t and t["new"]["kind"] == "credit_card" and not t["new"].get("credit_limit"):
             raise ImportRefused(f"{g['label']}: a card needs its credit limit", "credit_limit")
+    taught = _teach_plan(conn, p, data) if p["kind"] == "pdf" and data.get("teach") is True else None
     ts = now()
     results = []
-    for g, t in plan:
-        account_id = t.get("account_id") or _new_account(conn, t["new"], g, today)
-        new, skipped = _split(conn, t.get("account_id"), g["rows"])
-        account = conn.execute("SELECT name, currency FROM manual_accounts WHERE id = ?", (account_id,)).fetchone()
-        name = account["name"]
-        account_currency = (account["currency"] or "").strip().upper() or display_currency(conn)
-        with conn:
+    # One transaction for every write: new accounts, the imports rows, the transactions and a taught PDF template
+    # land together, so an error anywhere (a template save included) leaves no account or row behind.
+    with conn:
+        for g, t in plan:
+            account_id = t.get("account_id") or _new_account(conn, t["new"], g, today)
+            new, skipped = _split(conn, t.get("account_id"), g["rows"])
+            account = conn.execute("SELECT name, currency FROM manual_accounts WHERE id = ?", (account_id,)).fetchone()
+            name = account["name"]
+            account_currency = (account["currency"] or "").strip().upper() or display_currency(conn)
             cur = conn.execute("INSERT INTO imports (created_at, filename, kind, manual_account_id, rows_new, rows_skipped) "
                                "VALUES (?, ?, ?, ?, ?, ?)", (ts, filename[:200], p["kind"], account_id, len(new), skipped))
             import_id = cur.lastrowid
@@ -291,9 +391,54 @@ def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, 
                     (_tid(account_id, row, seen[k]), f"manual:{account_id}", IMPORT_ITEM, row.date, row.description[:300],
                      round(row.amount, 2), (row.currency or g.get("currency") or account_currency).strip().upper(),
                      *_pfc_hint(row, g["card"]), _raw_json(filename, row), ts, ts, import_id, row.fitid))
-        results.append({"label": g["label"], "account": {"id": account_id, "name": name, "currency": account_currency},
-                        "new": len(new), "skipped": skipped})
+            if taught is not None and taught["saved"]:
+                # the template is saved in the same transaction as the rows, only after the parse/replay that preview ran
+                from .pdfimport import templates
+                templates.save(conn, taught["fp"], taught["ref"]["config"], taught["ref"]["source"])
+            results.append({"label": g["label"], "account": {"id": account_id, "name": name, "currency": account_currency},
+                            "new": len(new), "skipped": skipped})
     classify.apply(conn)
     dates = sorted(r.date for g, _ in plan for r in g["rows"])
-    return {"filename": filename, "kind": p["kind"], "new": sum(r["new"] for r in results),
-            "skipped": sum(r["skipped"] for r in results), "accounts": results, "first": dates[0], "last": dates[-1]}
+    out = {"filename": filename, "kind": p["kind"], "new": sum(r["new"] for r in results),
+           "skipped": sum(r["skipped"] for r in results), "accounts": results, "first": dates[0], "last": dates[-1]}
+    if taught is not None:   # what teach=true did with the layout: saved (replacing one or not), or why not
+        out["template"] = {k: v for k, v in taught.items() if k not in ("fp", "ref")}
+    return out
+
+
+def _typed_balances(data: dict[str, Any]) -> bool:
+    return any(data.get(k) not in (None, "") for k in ("opening", "closing"))
+
+
+def _teach_plan(conn: sqlite3.Connection, p: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """What teach=true will do with the layout, decided before anything is written. Balances typed by hand save
+    nothing (next month's statement can't be read without typing them again); a different layout already saved for
+    these statements is replaced only when the request says replace_template: true, never silently."""
+    pdf = p.get("pdf") or {}
+    fp = (pdf.get("detail") or {}).get("fingerprint")
+    ref = pdf.get("template") or ({"source": "ai", "config": pdf.get("proposal")} if pdf.get("proposal") else None)
+    if not ref or not ref.get("config") or not fp:
+        return {"saved": False, "reason": "nothing_to_save"}
+    if _typed_balances(data):
+        return {"saved": False, "reason": "typed_balances"}
+    replaced = _replaces(conn, fp, ref["config"]) is not None
+    if replaced and data.get("replace_template") is not True:
+        raise ImportRefused("A layout is already saved for statements like this one. To replace it, teach it again "
+                            "with replace_template set to true.", "teach", "template_exists")
+    return {"saved": True, "replaced": replaced, "source": ref["source"], "fp": fp, "ref": ref}
+
+
+def _replaces(conn: sqlite3.Connection, fp: dict | None, config: Any) -> dict[str, Any] | None:
+    """The saved layout a teach with this config would replace ({source, created_at}), or None (none saved, the
+    same config is saved, or the config doesn't validate: then nothing would be saved at all)."""
+    from .pdfimport import templates
+    if not fp or not isinstance(config, dict):
+        return None
+    found = templates.find(conn, fp)
+    try:
+        if found is None or found["config"] == templates.clean_config(config):
+            return None
+    except ValueError:
+        return None
+    row = conn.execute("SELECT source, created_at FROM pdf_templates WHERE id = ?", (found["id"],)).fetchone()
+    return {"source": row[0], "created_at": row[1]} if row else None

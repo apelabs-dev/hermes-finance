@@ -122,7 +122,8 @@ def _json(status: int, payload: Any) -> tuple[int, str, bytes]:
 
 
 def _err(e: Exception, status: int | None = None) -> api.ApiError:
-    return api.ApiError(str(e), status or getattr(e, "status", 400), getattr(e, "field", None))
+    return api.ApiError(str(e), status or getattr(e, "status", 400), getattr(e, "field", None),
+                        getattr(e, "code", None), getattr(e, "extra", None))
 
 
 @contextmanager
@@ -585,7 +586,7 @@ def import_preview(app, conn, req):
     try:
         return _json(200, importer.preview(conn, name, raw, req.data(), app.today()))
     except importer.ImportRefused as e:
-        raise api.ApiError(str(e), field=e.field) from None
+        raise api.ApiError(str(e), field=e.field, code=e.code, extra=e.extra) from None
 
 
 def import_commit(app, conn, req):
@@ -594,7 +595,7 @@ def import_commit(app, conn, req):
     try:
         return _json(200, importer.commit(conn, name, raw, req.data(), app.today()))
     except importer.ImportRefused as e:
-        raise api.ApiError(str(e), field=e.field) from None
+        raise api.ApiError(str(e), field=e.field, code=e.code, extra=e.extra) from None
 
 
 ROUTES = {

@@ -119,7 +119,7 @@ ok <name>
      "optional": false, "fix": "README.md#integration-plaid-banks"}
   ],
   "files": {"env_file": "...", "secrets_file": "...", "data_dir": "...", "db_path": "...",
-            "schema_version": null, "code_schema_version": 19}
+            "schema_version": null, "code_schema_version": 25}
 }
 ```
 
