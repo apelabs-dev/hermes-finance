@@ -154,15 +154,21 @@ def category_id(conn: sqlite3.Connection, name_or_id: str | int) -> int:
 
 def _candidates(conn: sqlite3.Connection, sources: tuple[str, ...], unlinked: bool = True) -> list[sqlite3.Row]:
     """Live transactions with no classification, or one whose source is in `sources`. unlinked=False leaves out the
-    rows a deleted rule filed (source 'rule', rule_id NULL: TASK-24), which stay as they are."""
+    rows a deleted rule filed (source 'rule', rule_id NULL: TASK-24), which stay as they are. An imported row also
+    carries its file's recorded kind (`imports.kind`: csv / ofx / pdf - the provenance the description hint needs, so
+    a typeless OFX row is never read as a CSV one) and its manual account's kind (accounts has no row for it: the
+    view joins it the same way)."""
     marks = ", ".join("?" * len(sources))
     keep = "" if unlinked else " AND NOT COALESCE(c.source = 'rule' AND c.rule_id IS NULL, 0)"  # no row: a candidate
     return conn.execute(
         f"""SELECT t.transaction_id, t.name, t.merchant_name, t.pfc_primary, t.pfc_detailed, t.source, t.amount,
-                   a.type AS account_type,
+                   a.type AS account_type, i.kind AS import_kind, ma.kind AS manual_kind,
                    c.category_id AS cur_category, c.source AS cur_source, c.rule_id AS cur_rule
             FROM transactions t LEFT JOIN classifications c USING (transaction_id)
                  LEFT JOIN accounts a ON a.account_id = t.account_id
+                 LEFT JOIN imports i ON i.id = t.import_id
+                 LEFT JOIN manual_accounts ma ON t.source = 'import'
+                      AND ma.id = CAST(substr(t.account_id, 8) AS INTEGER)
             WHERE t.removed = 0 AND (c.source IS NULL OR c.source IN ({marks})){keep}""", sources).fetchall()
 
 
@@ -231,17 +237,55 @@ def inflow_hint(description: str | None, account_type: str | None, amount: float
     return INCOME_HINT
 
 
+_MANUAL_ACCOUNT_TYPES = {"credit_card": "credit"}   # accounts.type's vocabulary; an imported row's own kind
+
+
+def _import_hint(t: sqlite3.Row) -> tuple[str | None, str | None]:
+    """The (pfc_primary, pfc_detailed) code a CSV or PDF import's money-in row is saved with, or (None, None).
+
+    A file has no Plaid category, and a CSV / PDF row has no TRNTYPE either (an OFX row does: importer's
+    OFX_INCOME_HINTS, written at commit), so with nothing on the row it was filed under Other - a spending
+    category - and a payroll deposit counted as *negative* spending (QA 0.5 F1/F2). This is the same rule a synced
+    row with no provider category gets (SimpleFIN's inflow_hint): money out gets nothing; on a card or loan only
+    the account's own payment line gets a code, and never one that names a refund; a tax refund stays Income; a
+    refund, return or reversal stays undecided (a refund is never Income); a transfer in is a transfer; any other
+    credit is income.
+
+    The file's recorded kind decides (`imports.kind`), not the absence of a TRNTYPE: an OFX row whose type is
+    missing or blank is still an OFX row, and only the OFX rule may file it (owner rule: a generic credit is never
+    Income); a row with no recorded import (import_id NULL) is not re-filed either. A rule still wins over this in
+    apply(), and an AI or user decision is never touched."""
+    if (t["source"] != "import" or t["pfc_primary"] or t["import_kind"] not in ("csv", "pdf")
+            or t["amount"] is None or t["amount"] >= 0):
+        return None, None
+    # an imported row's account is a manual one (importer only targets those): its kind, mapped to accounts.type's
+    # vocabulary; a synced account's type is taken as it is, and anything else counts as a bank account
+    kind = _MANUAL_ACCOUNT_TYPES.get(t["manual_kind"]) or t["account_type"] or "bank"
+    if kind in ("credit", "loan") and REFUND_WORDS.search(t["name"] or ""):
+        return None, None    # an explicit refund is not the account's own payment, and not income either
+    return inflow_hint(t["name"], kind, t["amount"])
+
+
 def apply(conn: sqlite3.Connection) -> dict[str, int]:
-    """(a) apply rules, (b) fill Plaid-mapped defaults, for everything not decided by ai/user."""
+    """(a) apply rules, (b) fill Plaid-mapped defaults, for everything not decided by ai/user. A CSV / PDF
+    import's money-in row first gets its code from _import_hint(), saved on the row the way an OFX / synced row's
+    is; then a rule files it if one matches, else that code fills it in (Income, or Transfers for a transfer in)
+    instead of Other - and a re-apply finds the code already on the row."""
     rules = load_rules(conn)
     counts = {"rule": 0, "plaid": 0, "unchanged": 0}
     ts = now()
     rows = _candidates(conn, ("rule", "plaid"), unlinked=False)
     with _writing(conn):
         for t in rows:
+            hint = _import_hint(t)
+            if hint != (None, None):
+                conn.execute("UPDATE transactions SET pfc_primary = ?, pfc_detailed = ? WHERE transaction_id = ?",
+                             (*hint, t["transaction_id"]))
             rule = next((r for r in rules if r.matches(t)), None)
             if rule:
                 new = (rule.category_id, "rule", rule.id, f"rule #{rule.id}")
+            elif hint != (None, None):
+                new = (plaid_default(conn, hint[1], hint[0]), "plaid", None, None)
             elif t["source"] == "simplefin" and not t["pfc_primary"]:
                 # SimpleFIN sends no category, and a money-out row has no hint (inflow_hint): it stays
                 # undecided for the AI / a person. A 'plaid' filing left by an earlier hint (the row's sign changed) goes.

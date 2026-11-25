@@ -11,12 +11,16 @@ import would do (preview) and does it (commit):
     saved import one.
   * imported rows get source 'import' and go through the same rules and classification as synced ones
     (classify.apply; the AI queue picks up what no rule files). A file has no Plaid category, so a row no rule
-    matches is filed under Other, except money coming in on an OFX row whose TRNTYPE says what it is
-    (OFX_INCOME_HINTS: a direct deposit, payroll or interest), which is saved with the Plaid income code that type
-    means, or a credit-card statement's own payment line (a CREDIT or PAYMENT row naming a payment), saved as
-    LOAN_PAYMENTS / LOAN_PAYMENTS_CREDIT_CARD_PAYMENT so it files under Transfers. A bank statement's generic
-    credit, a card refund and a CSV row stay Other. A rule still wins over either hint, and an AI or user decision
-    is never touched.
+    matches is filed under Other, with two exceptions for money coming in. An OFX row whose TRNTYPE says what it is
+    (OFX_INCOME_HINTS: a direct deposit, payroll or interest) is saved with the Plaid income code that type means,
+    and a credit-card statement's own payment line (a CREDIT or PAYMENT row naming a payment) as
+    LOAN_PAYMENTS / LOAN_PAYMENTS_CREDIT_CARD_PAYMENT, so it files under Transfers. A CSV or PDF row has no
+    TRNTYPE at all, so its description decides by the same rule a synced row with no provider category gets
+    (classify.inflow_hint: a card payment, a refund / return / reversal, a tax refund, a transfer in, else income),
+    which is why a payroll deposit from a statement files under Income rather than counting as negative spending
+    (QA 0.5 F1/F2). Only a row whose import is recorded as csv or pdf gets that hint: an OFX row whose TRNTYPE is
+    missing or blank is still an OFX row and stays Other. A bank statement's generic OFX CREDIT and a refund stay
+    Other. A rule still wins over every hint, and an AI or user decision is never touched.
   * the account's balance is what you give it (an OFX file's ledger balance is offered): transactions never move a
     manual account's balance, so no total changes until rows are imported, and then only spending does.
 """
@@ -353,7 +357,8 @@ def _raw_json(filename: str, row) -> str:
 def commit(conn: sqlite3.Connection, filename: str, raw: bytes, data: dict[str, Any], today: date) -> dict[str, Any]:
     """Import the file with these choices: new accounts first, then every new row (one transaction; an OFX money-in row
     with its TRNTYPE's income code, or a card payment's transfer code, _pfc_hint), then the rules and the
-    Plaid-category defaults (classify.apply). Returns what was added and skipped, per account. A commit never calls the
+    Plaid-category defaults (classify.apply, which also gives a CSV / PDF money-in row its code from its
+    description). Returns what was added and skipped, per account. A commit never calls the
     model: ai_template is refused (ai_on_commit); a previewed AI proposal comes back as `template` with
     template_source 'ai', is validated and must reconcile again locally, and is taught with source 'ai'."""
     if data.get("ai_template") is True:
