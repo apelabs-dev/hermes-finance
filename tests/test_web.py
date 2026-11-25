@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from hermes_finance import config
+from hermes_finance import api, config
 from hermes_finance.web import App, make_server
 
 
@@ -52,3 +52,19 @@ def test_rejects_non_json_post_and_foreign_origin(server):
     assert status == 403
     status, _ = request(server, "GET", "/", headers={"Host": "evil.example:80"})
     assert status == 403
+
+
+def test_error_extras_cannot_replace_the_error_fields(conn, client, monkeypatch):
+    """A refusal's extra payload may add detail, never overwrite error/field/code (web.py's ApiError body)."""
+    app = App(config.db_path(), lambda: client, "127.0.0.1", 8765)
+
+    def boom(self, path, data, req):
+        raise api.ApiError("the real message", field="file", code="real_code",
+                           extra={"error": "forged", "field": "forged", "code": "forged", "detail": "kept"})
+
+    monkeypatch.setattr(App, "_post", boom)
+    status, ctype, body = app.handle("POST", "/api/settings",
+                                     {"Host": "127.0.0.1:8765", "Content-Type": "application/json",
+                                      "Origin": "http://127.0.0.1:8765"}, b"{}")
+    assert status == 400 and ctype == "application/json"
+    assert json.loads(body) == {"error": "the real message", "field": "file", "code": "real_code", "detail": "kept"}

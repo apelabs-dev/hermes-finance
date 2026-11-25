@@ -324,11 +324,13 @@ class App:
                 return self._json(400, {"error": "expected a JSON object"})
             return self._post(path, data, req)
         except api.ApiError as e:
-            body = {"error": str(e), **({"field": e.field} if e.field else {})}
+            # extras may add detail; the reserved keys come from the exception only, never from its payload
+            body = {k: v for k, v in e.extra.items() if k not in ("error", "field", "code")}
+            body["error"] = str(e)
+            if e.field:
+                body["field"] = e.field
             if e.code:
                 body["code"] = e.code
-            if e.extra:
-                body.update(e.extra)
             return self._json(e.status, body)
         except link.LinkRefused as e:
             return self._json(e.status, {"error": str(e)})

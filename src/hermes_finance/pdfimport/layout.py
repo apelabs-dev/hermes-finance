@@ -6,11 +6,11 @@ caller maps those to a user-facing reason and replay.py checks the printed balan
 
 from __future__ import annotations
 
+import heapq
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
-from statistics import median
 
 from .numbers import MONTHS, Money, RawDate, parse_date_prefix, parse_money, resolve
 from .words import Line, Word, build_lines
@@ -46,6 +46,12 @@ SKIP_RE = re.compile(
     r"\(continued|fortsetzung|übertrag|uebertrag|daily\s+(ending\s+)?balance)|\bcontinued\b|"
     r"\bpage\s+\d+\s+(of|von|de)\s+\d+|\bseite\s+\d+\s+von\s+\d+|^\s*total\b", re.I)
 PERIOD_SEP = r"(?:to|through|thru|until|bis|au|al|tot|à|-|–|—)"
+
+# Bounds on the parent's work on the words the guard's child returns (epic 0.5, PR #28 review). The child caps pages,
+# words and characters; these bound what one parse does with them.
+HEADER_WORDS = 14        # a header row is a dozen short cells; a table row (or a bomb) is not a header
+PHRASE_CHARS = 200       # a header cell is short: role_of reads this much of a phrase and no more
+DATE_SCAN_CHARS = 400    # a date on a statement line sits in its first few hundred characters
 
 CREDIT_CARD_RE = re.compile(
     r"\b(credit\s+card|card\s+statement|card\s+account|visa|mastercard|american\s+express|amex)\b", re.I)
@@ -143,20 +149,35 @@ def merge_money(words: list[Word]) -> list[tuple[list[Word], str]]:
 # ------------------------------------------------------------------ header / columns
 
 def _phrases(line: Line) -> list[list[Word]]:
+    """Adjacent words closer than a phrase gap, merged while their header roles stay compatible.
+
+    `header_columns` only calls this for a line of at most HEADER_WORDS words, and each phrase keeps at most
+    PHRASE_CHARS characters: joining the whole growing phrase for every word was O(words x phrase), and on a
+    20,000-word line that alone held the GIL for seconds.
+    """
     out: list[list[Word]] = []
+    texts: list[str] = []
     for w in line.words:
         if out and _gap_small(out[-1][-1], w, 0.55):
-            a, b = role_of(" ".join(x.text for x in out[-1])), role_of(w.text)
+            a, b = role_of(texts[-1]), role_of(w.text)
             if a is None or b is None or a == b or {a, b} in ({"amount", "debit"}, {"amount", "credit"},
                                                               {"amount", "balance"}):
                 out[-1].append(w)
+                texts[-1] = (texts[-1] + " " + w.text)[:PHRASE_CHARS]
                 continue
         out.append([w])
+        texts.append(w.text[:PHRASE_CHARS])
     return out
 
 
+# `\([^()]*\)`, not `\(.*?\)`: on a run of unclosed "(" the lazy dot scanned to the end of the phrase from every
+# position (O(n²): 40,000 "(" took 3.64 s and held the GIL in C, so ThreadingHTTPServer answered nothing).
+_PARENS = re.compile(r"\([^()]*\)|[$€£]|\b(eur|usd|cad|aud|gbp|chf)\b|\b\d{1,2}\b")
+
+
 def role_of(phrase: str) -> str | None:
-    p = re.sub(r"\(.*?\)|[$€£]|\b(eur|usd|cad|aud|gbp|chf)\b|\b\d{1,2}\b", " ", (phrase or "").lower()).strip()
+    """The printed header role of a phrase, or None. Only the first PHRASE_CHARS characters are read."""
+    p = _PARENS.sub(" ", (phrase or "")[:PHRASE_CHARS].lower()).strip()
     if not p or re.search(r"\d", p):
         return None
     for role, rx in ROLE_WORDS:
@@ -166,6 +187,9 @@ def role_of(phrase: str) -> str | None:
 
 
 def header_columns(line: Line, header_words: list[str] | None = None) -> list[Column] | None:
+    if len(line.words) > HEADER_WORDS:
+        # Before the phrase scan: `_phrases` runs role_of for every word, and a table row is never a header.
+        return None
     if header_words:
         low = line.text.lower()
         if not all(h.lower() in low for h in header_words):
@@ -183,7 +207,7 @@ def header_columns(line: Line, header_words: list[str] | None = None) -> list[Co
         return None
     if not any(r in ("debit", "credit", "amount") for r in roles):
         return None
-    if len(cols) < 3 or len(money) > 4 or len(line.words) > 14:
+    if len(cols) < 3 or len(money) > 4:
         return None
     return _bands(cols)
 
@@ -231,6 +255,10 @@ def assign(cols: list[Column], x0: float, x1: float, money: bool) -> Column | No
 def _all_dates(text: str) -> list[tuple[RawDate, int, int]]:
     out = []
     i = 0
+    # Every position here hands parse_date_prefix the rest of the string, so a long line was quadratic (a 2 MB word
+    # run copied its tail at each of 2 M positions). A date on a statement line sits in its first few hundred
+    # characters; past that a line is a description or a bomb, not a period.
+    text = (text or "")[:DATE_SCAN_CHARS]
     while i < len(text):
         if (i == 0 or not text[i - 1].isalnum()) and (text[i].isdigit() or text[i].isalpha()):
             r = parse_date_prefix(text[i:])
@@ -335,6 +363,41 @@ def balance_phrases(lines: list[Line], cfg: dict) -> tuple[list[tuple[int, Decim
 
 # ------------------------------------------------------------------ main
 
+
+class RunningMedian:
+    """The median of every value added so far, in O(log n) a value, answering exactly what `statistics.median` did.
+
+    `parse` needs the table's typical row pitch on every line: it called `median(row_pitch)` on the whole list for
+    every line in the table and never reset it across pages, so a table of 37,504 `Line`s re-sorted a growing list
+    37,504 times (O(n^2 log n); 48 s of parent CPU on a 220 KB, 50-page file). Two heaps keep the middle cheap: the
+    lower half as a max-heap (negated), the upper half as a min-heap, the size difference at most one.
+    """
+
+    __slots__ = ("_low", "_high")
+
+    def __init__(self) -> None:
+        self._low: list[float] = []      # max-heap (values negated): the lower half
+        self._high: list[float] = []     # min-heap: the upper half
+
+    def __len__(self) -> int:
+        return len(self._low) + len(self._high)
+
+    def add(self, value: float) -> None:
+        if self._low and value < -self._low[0]:
+            heapq.heappush(self._low, -value)
+        else:
+            heapq.heappush(self._high, value)
+        if len(self._low) > len(self._high) + 1:
+            heapq.heappush(self._high, -heapq.heappop(self._low))
+        elif len(self._high) > len(self._low):
+            heapq.heappush(self._low, -heapq.heappop(self._high))
+
+    def value(self) -> float:
+        if len(self._low) > len(self._high):
+            return -self._low[0]
+        return (-self._low[0] + self._high[0]) / 2      # the same two values and the same sum as statistics.median
+
+
 def parse(pages: list[list[dict]], sizes: list[tuple[float, float]] | None = None, config: dict | None = None,
           *, year: int | None = None) -> Parsed:
     cfg = dict(config or {})
@@ -359,7 +422,7 @@ def parse(pages: list[list[dict]], sizes: list[tuple[float, float]] | None = Non
     last_header_page = -1
     rows_at_header = 0
     prev_line: Line | None = None
-    row_pitch: list[float] = []
+    row_pitch = RunningMedian()
     awaiting_page = False
     section_sign = 0
     fixed_cols = None
@@ -403,7 +466,7 @@ def parse(pages: list[list[dict]], sizes: list[tuple[float, float]] | None = Non
             ended = True
             continue
         if prev_line is not None and ln.page == prev_line.page and rows:
-            pitch = median(row_pitch) if row_pitch else 12.0
+            pitch = row_pitch.value() if len(row_pitch) else 12.0
             if ln.top - prev_line.top > max(4 * pitch, 40):
                 in_table = False
                 continue
@@ -415,7 +478,7 @@ def parse(pages: list[list[dict]], sizes: list[tuple[float, float]] | None = Non
                 continue
             awaiting_page = False
         if prev_line is not None and ln.page == prev_line.page:
-            row_pitch.append(ln.top - prev_line.top)
+            row_pitch.add(ln.top - prev_line.top)
         prev_line = ln
         text = ln.text
         low = text.lower().strip()
@@ -488,6 +551,7 @@ def parse(pages: list[list[dict]], sizes: list[tuple[float, float]] | None = Non
             unassigned.extend((w.page, w.wid) for w in g)
         money = [(c, m, g) for c, m, g in money if c is not None and c.role in ("debit", "credit", "amount",
                                                                                  "balance")]
+        money_ids = {id(x) for _, _, g in money for x in g}   # built once: the identity scan below ran per word
         if len(txn) > 1:
             problems.append("ambiguous_amounts")
         if len(bal) > 1:
@@ -499,14 +563,13 @@ def parse(pages: list[list[dict]], sizes: list[tuple[float, float]] | None = Non
             if raw is None and not rows and pending is None:
                 problems.append("first_row_without_date")
             if raw is None and any(c.x0 <= w.xc < c.x1 for w in ln.words for c in date_cols
-                                   if not any(w is x for _, _, g in money for x in g)):
+                                   if id(w) not in money_ids):
                 problems.append("unreadable_date")
             r = Row(raw_date=raw if raw is not None else (rows[-1].raw_date if rows else None),
                     date_inherited=raw is None, page=ln.page, line_index=li, section_sign=section_sign)
             pending = r
             rows.append(r)
-            desc_words = [w.text for w in ln.words if id(w) not in date_words
-                          and not any(w is x for _, _, g in money for x in g)]
+            desc_words = [w.text for w in ln.words if id(w) not in date_words and id(w) not in money_ids]
             r.desc.append(" ".join(desc_words))
         elif pending is not None and (txn or bal):
             if txn and pending.amount is not None:

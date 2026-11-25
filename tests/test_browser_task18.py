@@ -177,12 +177,11 @@ def test_signing_in_with_the_built_in_login(browser, tmp_path):
 
 
 def test_phone_five_tabs_and_the_drawer_order_and_highlight(browser, full):
-    """TASK-18 addendum: under 1024px the tab bar has Overview, Transactions, Budgets, Accounts (13px+, one line, whole),
-    HOTFIX-1: and Settings; the drawer lists Overview, Transactions, Budgets, then Goals (HOTFIX-1: under Budgets, as in
-    the desktop sidebar), then Accounts, Recurring, Investments, Loans & debt, with Settings at the bottom, and marks the
-    page you're on even when it has no tab."""
+    """The drawer lists Overview, Transactions, Budgets, Reports, Goals (HOTFIX-1: under Budgets, as in the desktop
+    sidebar), then Accounts, Recurring, Investments, Loans & debt, with Settings at the bottom, and marks the page
+    you're on even when it has no tab."""
     for width in (390, 768):
-        for page in ("recurring", "investments", "debt", "goals", "settings"):
+        for page in ("recurring", "investments", "debt", "goals", "reports", "settings"):
             goto(browser, full, page, width)
             got = browser.js("""(() => {
               const tabs = [...document.querySelectorAll('#tabbar a')].map((a) => ({t: a.textContent.trim(), fs: parseFloat(getComputedStyle(a.querySelector('span')).fontSize),
@@ -194,5 +193,5 @@ def test_phone_five_tabs_and_the_drawer_order_and_highlight(browser, full):
             })()""")
             assert [t["t"] for t in got["tabs"]] == ["Overview", "Transactions", "Budgets", "Accounts", "Settings"]
             assert all(t["fs"] >= 13 and t["one"] and t["whole"] for t in got["tabs"]), got["tabs"]
-            assert got["order"] == ["overview", "transactions", "budgets", "goals", "accounts", "recurring", "investments", "debt"]
+            assert got["order"] == ["overview", "transactions", "budgets", "reports", "goals", "accounts", "recurring", "investments", "debt"]
             assert got["current"] == [page] and got["gear"]

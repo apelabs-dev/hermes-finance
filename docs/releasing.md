@@ -11,7 +11,10 @@ remain development-only; `scripts/sync_release.py` is standalone and also ships 
   takes every branch. CI (`ci.yml`) runs on every push there. The macOS nightly runs only by manual dispatch, since
   private macOS minutes cost ten times as much as Linux. Release Please and the weekly demo are skipped there by
   job-level guards (`github.event.repository.private`); the nightly's scheduled run is skipped the same way.
-  Agents may push their own `ci/<name>` branches to `origin` without asking, to run the suite on GitHub.
+  Agents may push their own `ci/<name>` branches to `origin` without asking. Private Actions minutes are limited:
+  when the budget is spent, a run is refused in about three seconds ("recent account payments have failed or your
+  spending limit needs to be increased"), and the push is then only a backup. Full-suite evidence for a release comes
+  from the export pull request on `public`, whose Actions minutes are free, with a clean run on its head commit.
 - `public`: the distribution repository, a release-only export target. Its push URL stays disabled; only the
   operator's export step (below) pushes there. Agents never push to it.
 

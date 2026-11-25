@@ -48,16 +48,61 @@ def _number(value, what: str) -> float:
     return value
 
 
+_PLAIN_META = set("\\.^$*+?{}[]|()")
+
+
+def _plain_pattern(value: str, what: str) -> str:
+    """One pattern from escaped plain text. `^` and a trailing `$` stay anchors; everything else is literal.
+
+    `layout.parse` runs every pattern with `re.search` on every line, in-process, where `re` has no clock: the review's
+    `^(\\s*\\S*)*Z$` kept a preview past 30 s. A plain-text grammar (escaped characters plus optional anchors) cannot
+    backtrack, so the client and the teaching path can't hand the parser a pathological expression at all."""
+    body = value
+    start = body.startswith("^")
+    if start:
+        body = body[1:]
+    end = False
+    if body.endswith("$"):
+        backslashes = 0
+        while backslashes < len(body) - 1 and body[-2 - backslashes] == "\\":
+            backslashes += 1
+        if backslashes % 2 == 0:
+            end = True
+            body = body[:-1]
+    chars: list[str] = []
+    i = 0
+    while i < len(body):
+        char = body[i]
+        if char == "\\":
+            if i + 1 >= len(body):
+                raise ValueError(f"{what} isn't a valid pattern: a trailing backslash")
+            nxt = body[i + 1]
+            if nxt.isalnum():
+                # `\d`, `\w`, `\s` are a regex class, not escaped plain text; reading them as the literal letter (the
+                # old behaviour) silently changed the pattern the client or the model asked for. A digit after the
+                # backslash (`\1`) is a backreference to the caller, not an escape either.
+                raise ValueError(f"{what} isn't a valid pattern: only plain text (escape \\ . * + ? etc.) is accepted")
+            chars.append(nxt)
+            i += 2
+            continue
+        if char in _PLAIN_META:
+            raise ValueError(f"{what} isn't a valid pattern: only plain text (escape \\ . * + ? etc.) is accepted")
+        chars.append(char)
+        i += 1
+    return ("^" if start else "") + re.escape("".join(chars)) + ("$" if end else "")
+
+
 def _pattern(value, what: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{what} must be text")
     if len(value) > MAX_PATTERN:
         raise ValueError(f"{what} is too long")
+    pattern = _plain_pattern(value, what)
     try:
-        re.compile(value)
+        re.compile(pattern)
     except re.error:
         raise ValueError(f"{what} isn't a valid pattern") from None
-    return value
+    return pattern
 
 
 def clean_config(cfg) -> dict:
@@ -176,9 +221,13 @@ def same_layout(a: dict, b: dict) -> bool:
         and _shape_close(a.get("top_shape") or [], b.get("top_shape") or [])
 
 
-def _row_dict(row: sqlite3.Row) -> dict:
-    return {"id": row["id"], "layout_id": row["layout_id"], "source": row["source"],
-            "config": json.loads(row["config"]), "fingerprint": json.loads(row["fingerprint"])}
+def _usable(raw) -> dict | None:
+    """A stored config, revalidated: a row taught by an older version can hold a regex the client grammar no longer
+    accepts (a backtracking `^(\\s*\\S*)*Z$` among them). Such a row is ignored, so it never runs on a later statement."""
+    try:
+        return clean_config(json.loads(raw))
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def find(conn: sqlite3.Connection, fp: dict) -> dict | None:
@@ -188,15 +237,25 @@ def find(conn: sqlite3.Connection, fp: dict) -> dict | None:
             stored = json.loads(row["fingerprint"])
         except (TypeError, ValueError):
             continue
+        cfg = _usable(row["config"])
+        if cfg is None:
+            continue
         if same_layout(stored, fp):
-            return _row_dict(row)
+            return {"id": row["id"], "layout_id": row["layout_id"], "source": row["source"], "config": cfg,
+                    "fingerprint": stored}
     return None
 
 
 def load(conn: sqlite3.Connection, template_id: str) -> dict | None:
     row = conn.execute("SELECT id, layout_id, fingerprint, config, source FROM pdf_templates WHERE id = ?",
                        (template_id,)).fetchone()
-    return _row_dict(row) if row else None
+    if row is None:
+        return None
+    cfg = _usable(row["config"])
+    if cfg is None:
+        return None
+    return {"id": row["id"], "layout_id": row["layout_id"], "source": row["source"], "config": cfg,
+            "fingerprint": json.loads(row["fingerprint"])}
 
 
 def template_id(lid: str, canonical: str) -> str:

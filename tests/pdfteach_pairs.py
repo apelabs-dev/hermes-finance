@@ -39,7 +39,8 @@ FIXTURES = HERE / "fixtures" / "pdfspike"
 MANIFEST = FIXTURES / "manifest.json"
 
 # The template keys a teacher can set from A's visible header, simplest first. `skip_pattern` is the zero placeholder
-# of the stacked-cell layout; it is escaped so it never looks like an amount to `templates.clean_config`.
+# of the stacked-cell layout; it is escaped so it never looks like an amount to `templates.clean_config`. Patterns are
+# escaped plain text only (0.5 review): a class such as `^0[.,]00$` is no longer accepted, so it has no variant here.
 OVERRIDES = (
     {},
     {"date_order": "MDY"},
@@ -47,7 +48,6 @@ OVERRIDES = (
     {"row_start": "date"},
     {"skip_pattern": r"^0\.00$"},
     {"row_start": "date", "skip_pattern": r"^0\.00$"},
-    {"row_start": "date", "skip_pattern": r"^0[.,]00$"},
     {"amount_sign": "explicit"},
     {"amount_sign": "unsigned_is_debit"},
     {"amount_sign": "unsigned_is_credit"},

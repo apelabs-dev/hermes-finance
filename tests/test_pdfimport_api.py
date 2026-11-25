@@ -16,7 +16,7 @@ from hermes_finance import clibrain, config, db
 from hermes_finance.pdfimport import ai, templates, words
 from hermes_finance.web import App
 
-from pdf_fixtures import statement
+from pdf_fixtures import many_pages_pdf, statement
 
 TODAY = date(2026, 9, 28)
 H = {"Host": "127.0.0.1:8765", "Content-Type": "application/json"}
@@ -388,6 +388,16 @@ def test_a_failure_inside_the_commit_leaves_no_new_account_behind(conn, monkeypa
         "targets": {"Odd": {"new": {"name": "Odd", "kind": "bank"}}}}).encode())
     assert s != 200
     assert counts(conn) == before
+
+
+def test_a_pdf_over_the_page_cap_is_a_400_refusal_on_preview_and_commit(conn):
+    """A crafted many-page file is the product's refusal on both routes, with the batch's field and code: not a 500."""
+    app = app_for(conn)
+    raw = many_pages_pdf(200)        # 200 pages in ~20 KB: over the 50-page cap, and far under the 10 MB file cap
+    for path in ("/api/import/preview", "/api/import/commit"):
+        s, e = post(app, path, {"filename": "many.pdf", "data": b64(raw),
+                                "targets": {"Big": {"new": {"name": "Big", "kind": "bank"}}}})
+        assert s == 400 and e["field"] == "file" and e["code"] == "pdf_too_complex", (path, s, e)
 
 
 def test_a_pdf_over_max_rows_is_refused_like_csv_and_ofx(conn, monkeypatch):

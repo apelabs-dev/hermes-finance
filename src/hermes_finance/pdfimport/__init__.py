@@ -13,10 +13,12 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from .. import importfile
-from . import layout, replay as replay_mod, templates, words
+from . import guard, layout, replay as replay_mod, templates, words
 
 REASONS = {
     "pdf_unreadable": "This file couldn't be read as a PDF. It may be damaged; download it again from your bank.",
+    "pdf_too_complex": "This PDF is too large or too complex to read safely. Download a shorter date range from your "
+                       "bank, or import CSV, OFX or QFX.",
     "password_required": "This PDF is password-protected. Enter the password your bank uses for statements.",
     "password_wrong": "That password didn't open the PDF. Check it and try again.",
     "no_text_layer": "This PDF is a scanned image, so there's no text to read. Download the statement as CSV, OFX or "
@@ -89,8 +91,8 @@ _PRECEDENCE = ("multi_account", "no_header", "no_rows", "no_balances", "does_not
                "unreadable_date", "template_invalid")
 
 _FIXABLE = {"no_header", "unreadable_date", "no_period", "does_not_reconcile", "no_balances"}
-_HARD = {"missing_extra", "pdf_unreadable", "password_required", "password_wrong", "no_text_layer", "credit_card",
-         "multi_account", "template_invalid", "too_big"}
+_HARD = {"missing_extra", "pdf_unreadable", "pdf_too_complex", "password_required", "password_wrong", "no_text_layer",
+         "credit_card", "multi_account", "template_invalid", "too_big"}
 
 _NO_YEAR_MESSAGE = ("This statement doesn't print a year, so its dates can't be placed on the timeline. "
                     "Type the year the statement covers to import it.")
@@ -264,12 +266,16 @@ def _check_raw(raw) -> None:
 
 
 def _read_pages(raw: bytes, password):
+    """(pages, sizes, producer) through the guard's child process: its page/word caps, wall clock and memory ceiling.
+    Any raw pdfminer failure is already a WordReadError there; a limit hit is TooComplex."""
     try:
-        return words.read(raw, password)
+        return guard.read(raw, password)
     except words.PasswordRequired:
         raise PdfRefused("password_required", field="password") from None
     except words.PasswordWrong:
         raise PdfRefused("password_wrong", field="password") from None
+    except words.TooComplex:
+        raise PdfRefused("pdf_too_complex") from None
     except words.WordReadError:
         raise PdfRefused("pdf_unreadable") from None
 
@@ -279,8 +285,11 @@ def ai_outgoing(raw: bytes, *, password=None) -> list[str]:
     privacy screen shows them word for word before Send. A file it can't read is refused as parse_statement would."""
     from . import ai
     _check_raw(raw)
-    pages, _sizes = _read_pages(raw, password)
-    return ai.outgoing(pages)
+    pages, _sizes, _producer = _read_pages(raw, password)
+    try:
+        return ai.outgoing(pages)
+    except words.TooComplex:
+        raise PdfRefused("pdf_too_complex") from None
 
 
 def parse_statement(conn, raw: bytes, *, password=None, ai=False, template=None, template_source="user", opening=None,
@@ -294,7 +303,7 @@ def parse_statement(conn, raw: bytes, *, password=None, ai=False, template=None,
     except ValueError:
         raise PdfRefused("template_invalid", "The opening or closing balance you typed isn't a number.") from None
 
-    pages, sizes = _read_pages(raw, password)
+    pages, sizes, producer = _read_pages(raw, password)
 
     text = " ".join(w["text"] for page in pages for w in page).strip()
     if len(text) < 10:
@@ -305,10 +314,6 @@ def parse_statement(conn, raw: bytes, *, password=None, ai=False, template=None,
     if layout.account_count(lines) > 1:
         raise PdfRefused("multi_account")
 
-    try:
-        producer = words.producer(raw, password)
-    except words.WordReadError:
-        producer = ""
     fp = templates.fingerprint(pages, sizes, producer)
     anchors = {}
     if open_anchor is not None:

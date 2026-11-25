@@ -38,7 +38,10 @@ QFX instead.
 3. **An opt-in AI template proposal** is the last step, only when you turn it on for that statement. It sends a
    masked shape of the layout (digits shown as `9`, names shown as `x`/`X`) and gets back column roles and word ids.
    It never sends a number, a description, the raw text layer or the PDF, and the model never returns a number. The
-   proposed mapping runs locally and must reconcile before anything is imported.
+   proposed mapping runs locally and must reconcile before anything is imported. A statement's own column words
+   (`Date`, `Debit`, `Balance`) stay readable so the model can name the columns, except a word that also appears
+   outside them: a title `Credit Card Statement` masks the `Credit` header, because the mask check refuses any
+   statement word anywhere in the prompt and a description can hide a name in one.
 
 Rows reach the preview only when they replay to the statement's printed balances. "Reconcile or refuse" is the rule:
 a mismatch imports nothing, even if most rows look right.
@@ -66,6 +69,11 @@ sends `replace_template: true`. The commit's `template` answer says whether it s
 The import stops with one specific reason and imports nothing. The main ones:
 
 - The file couldn't be read as a PDF, or needs a password you don't have.
+- The PDF is too large or too complex to read safely (`pdf_too_complex`): a file over 10 MB, a statement over 50
+  pages, 40,000 words or 2,000,000 characters of text (a single "word" over 200 characters counts as too complex
+  too, unless it is a drawn rule or dot leader — those are layout, not data), or one whose read would take more than
+  10 seconds or 256 MB. The read runs in a separate process so those limits stop it (a decompression bomb is one
+  example); download a shorter date range, or CSV, OFX or QFX instead.
 - The PDF is a scan, so there's no text to read.
 - It looks like a credit-card statement, or it has more than one account.
 - The transaction table wasn't recognized, or it has no transactions.
@@ -82,7 +90,16 @@ to reconcile. Only a preview asks the AI (`ai_template: true`). To import a prop
 preview returned back as `template` with `template_source: "ai"` (it is saved as an AI template when taught). A
 commit with `ai_template: true` is refused with the code `ai_on_commit`, so a commit never asks the AI again. Before
 anything is sent, a preview with `ai_view: true` returns `ai_view.prompts`: every prompt the AI tries could send for
-this file, word for word, worked out locally with no model call; the app's privacy screen shows them before Send.
+this file, word for word, worked out locally with no model call; the app's privacy screen shows them before Send. The
+view is the two pages that carry money, and screening it does not grow with the file's word count: the letters are one
+intersection with the view's own letter runs, and the numbers go through Aho-Corasick automatons built from the
+statement's number words and run over the view, so a statement word holding whitespace is caught wherever it lands and
+no word is searched for on its own. One automaton holds at most about 200,000 nodes; the node count is checked after a
+word has been added, so it can overshoot by less than one supported word (200 characters), and a word set past that
+budget is screened by the next automaton over the same view - at most 11 traversals of one view, which is what the
+2,000,000-character read cap allows. A file whose view would exceed 512,000 characters is refused as
+`pdf_too_complex` instead of screened and sent; that is the only refusal the screen itself can add, and it is about
+the input's size, not the work the guard would do.
 
 ## Currency
 

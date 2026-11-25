@@ -122,10 +122,10 @@ def test_table_end_pattern_never_carries_a_statement_word(conn):
 
 
 def test_mask_text_and_assert_masked():
-    real = ["Jane", "Doe", "ACME", "Grocery", "1,234.56", "Balance", "Date"]
+    real = ["Jane", "Doe", "ACME", "Grocery", "1,234.56"]
     masked = words.mask_text("Jane Doe paid ACME Grocery 1,234.56 Balance Date")
     assert "Jane" not in masked and "ACME" not in masked and "1,234.56" not in masked
-    assert "Balance" in masked and "Date" in masked
+    assert "Balance" in masked and "Date" in masked          # structural words stay readable in a header line
     view = masked + " L1 p1 y20: 1@40-59:Date"
     ai.assert_masked(view, real)
     with pytest.raises(PermissionError):
@@ -134,6 +134,61 @@ def test_mask_text_and_assert_masked():
         ai.assert_masked(view + " Grocery", real)
     with pytest.raises(PermissionError):
         ai.assert_masked(view + " 1,234.56", real)
+
+
+# ---------------------------------------------------------------- item C (round 6): a description holding a header word
+
+COLLIDING = [("04/03/2024", "ATM Deposit Balance Credit", "10.00", "", "90.00")]
+
+
+def test_a_description_holding_a_header_word_does_not_empty_the_privacy_screen():
+    """A description of header words ("ATM Deposit Balance Credit") made all five tries fail the mask guard, so the
+    privacy screen showed 0 prompts for a statement it should have sent.
+
+    The description's own copies were always masked. The copies that failed the guard were the header line's, because
+    a structural line keeps its lexicon words while the same token is sensitive in a description. The view now masks
+    a kept word when the token is sensitive anywhere else in the statement; the guard itself is unchanged, so it still
+    refuses the token wherever it does appear.
+    """
+    pages, _sizes = words.read(statement(COLLIDING))
+    real = ai._sensitive_words(pages)
+    letters, _numbers = ai._sensitive(real)
+    assert {"Balance", "Credit", "Deposit", "ATM"} <= letters      # the description's words: all sensitive
+
+    prompts = ai.outgoing(pages)
+    assert len(prompts) == ai.TRIES, "the privacy screen showed nothing for a statement it can send"
+    for k in range(ai.TRIES):
+        view, _gid = ai.word_view(pages, variant=k)
+        assert not (letters & set(ai._SENSITIVE_WORD.findall(view)))
+        ai.assert_masked(view, real)                              # never raises
+
+    view, _gid = ai.word_view(pages)
+    assert "Balance" not in view and "Credit" not in view         # the token is gone from the prompt
+    assert "Date" in view and "Description" in view and "Debit" in view   # the rest of the header still reads
+    with pytest.raises(PermissionError):                          # and the guard is not loosened
+        ai.assert_masked(view + " Balance", real)
+
+
+def test_a_statement_without_the_collision_keeps_its_readable_header():
+    """The masking is per token, not per line: a statement whose description is not a header word keeps every header
+    word it kept before, so the 19 statement views stay byte-identical."""
+    pages, _sizes = words.read(statement([("04/03/2024", "Coffee", "10.00", "", "90.00")]))
+    view, _gid = ai.word_view(pages)
+    for word in ("Date", "Description", "Debit", "Credit", "Balance", "Opening", "balance"):
+        assert word in view
+    assert "Coffee" not in view
+
+
+def test_the_view_masks_against_the_guards_own_set():
+    """One definition of sensitivity: the set a view masks against is `_sensitive` of `_sensitive_words`, the set the
+    guard charges. If they drifted, a word kept for a structural line would be refused (an empty screen), or a
+    sensitive word could be kept and pass."""
+    for rows in (COLLIDING, [("04/03/2024", "Coffee", "10.00", "", "90.00")]):
+        pages, _sizes = words.read(statement(rows))
+        lines = ai.build_lines(pages)
+        assert ai._sensitive_letters(lines) == ai._sensitive(ai._sensitive_words(pages))[0]
+        view, _gid = ai.word_view(pages)
+        assert not (ai._sensitive_letters(lines) & set(ai._SENSITIVE_WORD.findall(view)))
 
 
 def test_propose_accepts_the_first_reconciling_candidate(conn, brain, monkeypatch):

@@ -87,7 +87,8 @@ uv run python scripts/check.py full --part 2   # then tests/test_gates.py (the l
   and anything you couldn't verify.
 
 Remotes: `origin` is the private development repository (all branches; CI runs on every push). Agents may push their
-own `ci/<name>` branches there without asking, to run the suite on GitHub instead of locally. `public` is release-only
+own `ci/<name>` branches there without asking (when private minutes run out, a run is refused in seconds and the push
+is a backup only; release evidence is the export PR's CI on `public`, see docs/releasing.md). `public` is release-only
 (its push URL is disabled): never push to it. Release Please and the weekly demo are skipped in the private repository.
 
 Releases follow the squashed public export loop in [docs/releasing.md](docs/releasing.md); sync public release versions before the next export.

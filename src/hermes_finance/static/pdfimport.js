@@ -45,7 +45,8 @@
   // A refusal's title, its file line, and the copy under it. The message from the server is used for every refusal
   // it doesn't draw (the frame's own words for the six it does).
   const TITLE = {
-    no_text_layer: 'Can\u2019t read this PDF', pdf_unreadable: 'Can\u2019t read this PDF', too_big: 'Can\u2019t read this PDF',
+    no_text_layer: 'Can\u2019t read this PDF', pdf_unreadable: 'Can\u2019t read this PDF', pdf_too_complex: 'Can\u2019t read this PDF',
+    too_big: 'Can\u2019t read this PDF',
     no_header: 'Can\u2019t read this PDF', no_rows: 'Can\u2019t read this PDF', unreadable_date: 'Can\u2019t read this PDF',
     no_period: 'Can\u2019t read this PDF',
     credit_card: 'Can\u2019t import this PDF', multi_account: 'Can\u2019t import this PDF',
@@ -58,7 +59,8 @@
     no_text_layer: 'A picture of a page', credit_card: 'Credit card statement', multi_account: 'More than one account',
     no_balances: 'No balances printed', does_not_reconcile: 'The rows don\u2019t add up', unreadable_date: 'Dates not found',
     no_period: 'No year or period', no_header: 'The table wasn\u2019t recognized', no_rows: 'No transactions found',
-    template_invalid: 'Saved layout doesn\u2019t fit', pdf_unreadable: 'Not a readable PDF', too_big: 'Over 10 MB',
+    template_invalid: 'Saved layout doesn\u2019t fit', pdf_unreadable: 'Not a readable PDF', pdf_too_complex: 'Too large to read safely',
+    too_big: 'Over 10 MB',
     ai_unavailable: 'AI isn\u2019t available', ai_failed: 'The AI\u2019s layout doesn\u2019t add up',
     missing_extra: 'An add-on is missing',
   };
