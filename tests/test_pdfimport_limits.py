@@ -318,12 +318,16 @@ def test_a_header_phrase_is_matched_on_a_bounded_prefix(monkeypatch):
 
 
 def test_build_lines_keeps_a_running_mean_not_a_recomputed_one():
-    """The mean of the line was recomputed for every word (O(words^2)); it runs on every parse and every AI try."""
+    """The mean of the line was recomputed for every word (O(words^2)); it runs on every parse and every AI try.
+
+    CPU, not wall: 0.01 s here and 0.413 s on a CI runner for the same build, so wall time on a loaded runner is the
+    runner's load, not this loop (same reason the round-3 money-words test bounds `process_time`).
+    """
     page = [{"text": "a", "x0": float(i), "x1": float(i) + 1.0, "top": 10.0, "bottom": 20.0} for i in range(20_000)]
-    started = time.monotonic()
+    started = time.process_time()
     lines = words.build_lines([page])
     assert len(lines) == 1 and len(lines[0].words) == 20_000
-    assert time.monotonic() - started < 1.0
+    assert time.process_time() - started < 1.0
 
 
 def test_a_million_character_word_is_refused_by_the_child_read():

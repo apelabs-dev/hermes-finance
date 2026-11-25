@@ -120,13 +120,32 @@ def get_json(b, path: str):
     return b.js(f"fetch({json.dumps(path)}).then((r) => r.json())")
 
 
-def tap(b, selector):
-    box = b.js(f"""(() => {{const el=document.querySelector({json.dumps(selector)});
-        el.scrollIntoView({{block:'center'}}); const r=el.getBoundingClientRect();
-        return {{x:r.x+r.width/2,y:r.y+r.height/2}};}})()""")
-    b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
-    b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
-    b.settle()
+TAP_BOX = """(() => { const el = document.querySelector(%s); if (!el) return null;
+  el.scrollIntoView({block: 'center', behavior: 'instant'});
+  const r = el.getBoundingClientRect(), box = {x: r.x + r.width / 2, y: r.y + r.height / 2};
+  const prev = window.__tapBox; window.__tapBox = box;
+  return prev && Math.abs(prev.x - box.x) < 0.5 && Math.abs(prev.y - box.y) < 0.5 ? box : null; })()"""
+
+
+def tap(b, selector, opened: str | None = None):
+    """Click the element's centre; with `opened`, click again if the click was lost.
+
+    The old helper read the rect immediately after `scrollIntoView({block:'center'})` and clicked once, so at 390 px a
+    scroll (or any layout change under it) that had not finished moved the target between the read and the mouse
+    event: the billed group's popover never opened and `heads` came back empty (Nightly 45589087302).
+    `behavior:'instant'` keeps the scroll from animating and `until` waits for two reads of the box to agree; the retry
+    covers a layout shift after that read. A retry only happens while the popover is absent, so it can never toggle
+    an open one shut.
+    """
+    for _ in range(3):
+        box = b.until(TAP_BOX % json.dumps(selector))
+        assert box, f"the click point for {selector} never settled"
+        b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
+        b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
+        b.settle()
+        if opened is None or b.until(opened, timeout=2.0):
+            return
+    assert b.until(opened, timeout=0.1), f"the click on {selector} never produced {opened}"
 
 
 def key(b, name):
@@ -182,7 +201,9 @@ def test_a_groups_details_popover(tmp_path, width, food):
         d = get_json(b, "/api/budgets")
         g = group(d, "Food")
         sizes_ok(b)
-        tap(b, f'{FOOD} .help-trigger[data-help="budget-group"]')
+        tap(b, f'{FOOD} .help-trigger[data-help="budget-group"]',
+            opened=f"!!document.querySelector({json.dumps(PANEL)})")
+        assert b.until(f"!!document.querySelector({json.dumps(PANEL)})"), "the Food group's popover opened"
         assert q(b, PANEL, "el.getAttribute('aria-label')") == "Details for Food"
         # 1. the group's six bars, the dashed line at the group budget or the caps' sum
         assert b.js(f"document.querySelectorAll({json.dumps(PANEL + ' .hist .hc')}).length") == len(d["history"]["months"]) == 6
@@ -236,7 +257,8 @@ def test_a_groups_details_popover(tmp_path, width, food):
         billed = group(d, named[0])
         merged = [bill for n in billed["categories"] for bill in (cats.get(n) or {}).get("bills_due", [])]
         sel = f'tr.g[data-group={json.dumps(billed["name"])}] .help-trigger[data-help="budget-group"]'
-        tap(b, sel)
+        tap(b, sel, opened=f"!!document.querySelector({json.dumps(PANEL + ' h4')})")
+        assert b.until(f"!!document.querySelector({json.dumps(PANEL + ' h4')})"), "the billed group's popover opened"
         heads = b.js(f"[...document.querySelectorAll({json.dumps(PANEL + ' h4')})].map((e) => e.textContent)")
         assert "Still due" in heads and "This month" in heads, heads
         assert b.js(f"document.querySelectorAll({json.dumps(PANEL + ' .help-bill')}).length") == len(merged) > 0

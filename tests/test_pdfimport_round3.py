@@ -188,13 +188,17 @@ def test_parse_does_not_scan_the_line_money_words_for_every_word():
 
     Built as words, not read from a PDF: at 19,500 words the read itself is past the guard child's clock, and the
     quadratic step under test is the parent's per-word identity scan over the line's own money words.
+
+    Bounded by this process's CPU, as the tests above bound their child's: wall time on a loaded runner measures the
+    runner's other work too (1.55 s and 2.14 s in two Nightlies against 0.18 s here, the no-browser phase sharing the
+    machine with two browser workers and three Chromes), so it is not the parse's time.
     """
     pages, sizes = _money_line_pages(20_000)
-    started = time.monotonic()
+    started = time.process_time()
     parsed = layout.parse(pages, sizes)
-    elapsed = time.monotonic() - started
+    elapsed = time.process_time() - started
     assert parsed is not None
-    assert elapsed < 1.5, f"the parent spent {elapsed:.2f} s parsing one line of 20,000 money words"
+    assert elapsed < 1.5, f"the parent spent {elapsed:.2f} s of CPU parsing one line of 20,000 money words"
 
 
 def test_the_running_median_answers_exactly_what_statistics_median_did():

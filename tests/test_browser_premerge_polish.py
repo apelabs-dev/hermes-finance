@@ -318,7 +318,13 @@ def open_cli(b, srv: Server, width: int = 1280, theme: str = "dark") -> None:
     b.goto(f"{srv.url}/?t={time.time():.6f}#/settings")
     b.js(f"window.HFTheme.set({json.dumps(theme)})")
     b.settle()
-    b.js("""[...document.querySelectorAll('[aria-label="AI provider"] button')].find((x) => x.textContent === 'CLI').click()""")
+    # Wait for the provider control itself, then click it. `settle()` is frames plus 60 ms, and the segmented control
+    # is drawn from the page's `/api/settings/page` answer: on a loaded runner that answer lands later, `.find()`
+    # returned undefined and the click threw `Cannot read properties of undefined (reading 'click')` (Nightly
+    # 45589087302; the sibling test hit it in 45549226925). Same find-click-and-report shape as `open_chooser`.
+    wait_for(b, """(() => { const e = [...document.querySelectorAll('[aria-label="AI provider"] button')]
+      .find((x) => x.textContent === 'CLI'); if (e) e.click(); return Boolean(e); })()""",
+             "the CLI provider button")
     wait_for(b, "document.querySelector('.aibody .aist')", "the CLI card")
     b.settle()
 
