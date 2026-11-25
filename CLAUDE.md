@@ -109,7 +109,7 @@ uv run python scripts/check.py full --part 2 --kinds full,nocaps   # the gates o
 
 ## The database
 
-`src/hermes_finance/db.py`. `SCHEMA_VERSION` is **20**, kept in `PRAGMA user_version`. The next migration is 21.
+`src/hermes_finance/db.py`. `SCHEMA_VERSION` holds the current number, kept in `PRAGMA user_version`; the next migration is that plus one.
 
 - `db.connect()` creates the data directory (0700) and the file (0600), turns on WAL, and calls `init_schema()` when
   the stored version is behind. `init_schema()` is idempotent and keeps every row: `CREATE TABLE IF NOT EXISTS`,

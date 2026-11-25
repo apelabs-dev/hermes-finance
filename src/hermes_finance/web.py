@@ -30,6 +30,7 @@ from . import access, admin, api, auth, config, db, link, logos, manual, photos,
 from . import clibrain  # CLI brains: the server's SIGTERM/atexit cleanup of a child a turn may run
 from . import features  # TASK-19 (Batch C): goals, splits / notes / tags / saved filters, bills calendar, rollover, Alpaca
 from . import chat      # TASK-23: the Ask panel (/api/chat*)
+from . import reports_page  # 0.5 B2: the Reports pages' GET payloads (Spending year view, Cash flow, Forecast)
 from .plaid import PlaidClient, PlaidError
 
 log = logging.getLogger(__name__)
@@ -97,6 +98,8 @@ FEATURE_FILES = ("iconpick", "goals", "txmeta", "billcal", "rollover", "alpaca",
                  "wherewent",                                                      # + polish P2b's grouped spending card
                  "simplefin",                                                      # + v21's SimpleFIN chooser and sheets
                  "settingsskel",                                                   # + polish: Settings' loading skeleton
+                 "reports",                                                        # + 0.5 B2's Reports pages
+                 "pdfimport",                                                      # + 0.5's PDF import screens
                  "budgets")                                                        # + polish P2A's grouped Budgets (last)
 STATIC_FILES["popclose.js"] = "text/javascript; charset=utf-8"   # B2: one close-on-scroll rule for every popover (no CSS)
 STATIC_FILES.update({f"{n}.js": "text/javascript; charset=utf-8" for n in FEATURE_FILES})
@@ -321,7 +324,14 @@ class App:
                 return self._json(400, {"error": "expected a JSON object"})
             return self._post(path, data, req)
         except api.ApiError as e:
-            return self._json(e.status, {"error": str(e), **({"field": e.field} if e.field else {})})
+            # extras may add detail; the reserved keys come from the exception only, never from its payload
+            body = {k: v for k, v in e.extra.items() if k not in ("error", "field", "code")}
+            body["error"] = str(e)
+            if e.field:
+                body["field"] = e.field
+            if e.code:
+                body["code"] = e.code
+            return self._json(e.status, body)
         except link.LinkRefused as e:
             return self._json(e.status, {"error": str(e)})
         except PlaidError as e:
@@ -418,7 +428,8 @@ class App:
         if m:
             found = photos.file_bytes(self.db_path, m[1])
             return (200, *found) if found else self._json(404, {"error": "not found"})
-        route = api.GET_ROUTES.get(path) or features.GET_ROUTES.get(path)  # TASK-19: its routes
+        route = (api.GET_ROUTES.get(path) or features.GET_ROUTES.get(path)
+                 or reports_page.GET_ROUTES.get(path))  # TASK-19: its routes; 0.5 B2: the Reports payloads
         if route is None:
             return self._json(404, {"error": "not found"})
         # polish P1: the Transactions page's picks may repeat (?category=A&category=B), each as a list
@@ -582,7 +593,8 @@ def _e(v: Any) -> str:
 # Goals, then Accounts, Recurring, Investments, Loans & debt). The desktop sidebar keeps this order: Goals (TASK-19)
 # under Budgets (HOTFIX-1: the drawer's too); the bills calendar is on Recurring.
 PAGES = (("overview", "Overview", "grid", "Overview"), ("transactions", "Transactions", "swap", "Transactions"),
-         ("budgets", "Budgets", "target", "Budgets"), ("goals", "Goals", "flag", None),
+         ("budgets", "Budgets", "target", "Budgets"), ("reports", "Reports", "bars", None),
+         ("goals", "Goals", "flag", None),
          ("recurring", "Recurring", "repeat", None),
          ("accounts", "Accounts", "landmark", "Accounts"), ("investments", "Investments", "linechart", None),
          ("debt", "Loans & debt", "handcoins", None))

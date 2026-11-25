@@ -82,6 +82,27 @@ def _add_months_day(d: date, n: int, anchor_day: int) -> date:
     return date(y, m, min(anchor_day, calendar.monthrange(y, m)[1]))
 
 
+def _cycle(nxt: date, cadence: str, k: int) -> date:
+    """The date of the k-th cycle after `next_expected` at `cadence` (month steps keep the anchor day, clamped)."""
+    if cadence in STEP_DAYS:
+        return nxt + timedelta(days=STEP_DAYS[cadence] * k)
+    return _add_months_day(nxt, STEP_MONTHS[cadence] * k, nxt.day)
+
+
+def _first_cycle_at_or_after(nxt: date, cadence: str, start: date) -> int:
+    """The smallest k whose cycle is on or after `start`. The walk starts there instead of at `next_expected`, so a
+    years-stale bill does not spend the whole 400-step budget before it reaches the window."""
+    if cadence in STEP_DAYS:
+        days = STEP_DAYS[cadence]
+        return max(0, -((start - nxt).days // -days))       # ceil((start - nxt) / days)
+    months = STEP_MONTHS[cadence]
+    ahead = (start.year - nxt.year) * 12 + (start.month - nxt.month)
+    k = max(0, ahead // months - 1)          # one cycle early; the loop below lands on the first one at or after it
+    while _add_months_day(nxt, months * k, nxt.day) < start:
+        k += 1
+    return k
+
+
 def occurrences(item: dict[str, Any], start: date, end: date, today: date) -> list[dict[str, Any]]:
     """One recurring item's chips from `start` to `end` (inclusive)."""
     out = []
@@ -90,17 +111,15 @@ def occurrences(item: dict[str, Any], start: date, end: date, today: date) -> li
         out.append({"date": last.isoformat(), "state": "paid", "projected": False})
     nxt = date.fromisoformat(item["next_expected"])
     step = item["cadence"]
-    k = 0
-    d = nxt
-    while d <= end and k < 400:
+    k = _first_cycle_at_or_after(nxt, step, start) if nxt < start else 0
+    d = _cycle(nxt, step, k)
+    limit = k + 400       # at most 400 cycles drawn per window; the jump is what keeps a stale bill inside it
+    while d <= end and k < limit:
         if d >= start:
             state = "late" if item["status"] == "late" and k == 0 else "due"
             out.append({"date": d.isoformat(), "state": state, "projected": k > 0})
         k += 1
-        if step in STEP_DAYS:
-            d = nxt + timedelta(days=STEP_DAYS[step] * k)
-        else:
-            d = _add_months_day(nxt, STEP_MONTHS[step] * k, nxt.day)
+        d = _cycle(nxt, step, k)
     return out
 
 

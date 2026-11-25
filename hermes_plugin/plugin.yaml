@@ -13,6 +13,9 @@ provides_tools:
   - finance_loans
   - finance_holdings
   - finance_cashflow
+  - finance_reports_spending
+  - finance_reports_cashflow
+  - finance_reports_forecast
   - finance_status
   - finance_goals
   - finance_rules

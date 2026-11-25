@@ -52,6 +52,8 @@ os.environ["FINANCE_HERMES_BIN"] = str(Path(tempfile.gettempdir()) / "hermes-fin
 # Nor a real Claude Code or Codex CLI (clibrain.executable): the whole CLI brain is off, in every process a test starts
 # too. A CLI-brain test lifts the switch and points FINANCE_CLAUDE_BIN / FINANCE_CODEX_BIN at its own stub.
 os.environ["HERMES_CLI_BRAINS"] = "off"
+# Nor the PDF importer's opt-in AI layout proposal: no test can reach a model, even one that passes ai_template=True.
+os.environ["FINANCE_PDF_AI"] = "off"
 
 from hermes_finance import alpaca, cdp_client, config, db, photos, valuation  # noqa: E402
 from hermes_finance.config import Settings  # noqa: E402

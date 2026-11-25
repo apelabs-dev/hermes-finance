@@ -98,8 +98,8 @@ database and refuses an old one with a clear message.
 
 ## Verification at the release head
 
-The figures below come from GitHub Actions run 45078494839 of the manual Nightly workflow (macOS runner, four
-headless Chromes), which ran on commit `dd317ef`. The commit after it changes one expected count in a browser test
+The figures below come from GitHub Actions run 45078494839 of the manual Nightly workflow (macOS runner; up to
+three headless Chromes in part 1 and four in part 2), which ran on commit `dd317ef`. The commit after it changes one expected count in a browser test
 (see the end of this section), one code comment and this page, and no app code, so a checkout of `dd317ef`
 reproduces them with:
 

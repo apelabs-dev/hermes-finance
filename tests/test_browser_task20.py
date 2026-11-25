@@ -43,7 +43,7 @@ def test_goals_and_the_bills_calendar_are_reachable_from_the_sidebar_and_the_pho
     goto(browser, features, "overview", 1280)
     side = browser.js("""[...document.querySelectorAll('#nav a')].filter((a) => a.getClientRects().length)
       .map((a) => a.dataset.pg)""")
-    assert side == ["overview", "transactions", "budgets", "goals", "recurring", "accounts", "investments", "debt"]
+    assert side == ["overview", "transactions", "budgets", "reports", "goals", "recurring", "accounts", "investments", "debt"]
     browser.js("document.querySelector('#nav a[data-pg=goals]').click()")
     browser.js("new Promise((r) => setTimeout(r, 500))")
     assert browser.js("location.hash") == "#/goals" and browser.js("Boolean(document.querySelector('#page .card.goal'))")
@@ -80,7 +80,9 @@ def test_every_extension_runs_once(browser, features):
     # + (v23) iconpick, the shared 100-icon picker that Goals and the categories card both use
     # + (v24) catcolour, the New category sheet's Colour row
     # + settingsskel, the Settings loading skeleton
-    assert browser.js("window.HF_EXT.length") == 18
+    # + (0.5) reports, the Reports pages
+    # + (0.5) pdfimport, the PDF statement screens
+    assert browser.js("window.HF_EXT.length") == 20
     assert browser.problems() == []
 
 

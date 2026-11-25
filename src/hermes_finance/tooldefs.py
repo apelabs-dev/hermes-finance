@@ -32,10 +32,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
-from . import api, bills, catops, classify, config, db, goals, reads, redact, report, rulebook, syncnow
+from . import api, bills, catops, classify, config, db, goals, reads, redact, report, reports, rulebook, syncnow
 
 DEFAULT_NEXT = "14d"       # finance bills --next
 DEFAULT_MONTHS = 6         # finance cashflow --months
+DEFAULT_FORECAST = reports.FORECAST_DAYS   # finance_reports_forecast days
 
 
 class ToolError(Exception):
@@ -183,6 +184,18 @@ def _bills(conn, a, today):
 
 def _cashflow(conn, a, today):
     return reads.cashflow(conn, today, a.get("months", DEFAULT_MONTHS))
+
+
+def _reports_spending(conn, a, today):
+    return reads.spending_report(conn, reads.parse_period(today, a.get("month"), a.get("since"), a.get("until")), today)
+
+
+def _reports_cashflow(conn, a, today):
+    return reads.cashflow_report(conn, reads.parse_period(today, a.get("month"), a.get("since"), a.get("until")), today)
+
+
+def _reports_forecast(conn, a, today):
+    return reads.forecast_report(conn, today, a.get("days", DEFAULT_FORECAST))
 
 
 def _status(conn, a, today):
@@ -500,6 +513,22 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
     Tool("finance_cashflow", "Income vs spending per month, oldest first, ending with this month (income positive).",
          {"months": {"type": "integer", "minimum": 1, "maximum": reads.MAX_MONTHS,
                      "description": f"how many months (default {DEFAULT_MONTHS})"}}, _cashflow, "cashflow"),
+    Tool("finance_reports_spending",
+         "Spending by category for a period: gross, refunds and net (refunds net against their category). A category "
+         "below zero is a 'Refunds over spending' source; another currency is listed separately, never added. Default: "
+         "this month.",
+         {**PERIOD}, _reports_spending, "reports-spending"),
+    Tool("finance_reports_cashflow",
+         "Money in by source, net spending per category group, and what is left after spending (income minus net "
+         "spending, exact for the period); the money moved between accounts is listed, not drawn. Refunds are never "
+         "income. Default: this month.",
+         {**PERIOD}, _reports_cashflow, "reports-cashflow"),
+    Tool("finance_reports_forecast",
+         "The next N days' available balance on the chosen cash accounts: bills, paychecks the user added (a detected "
+         "one waits for an answer), and the lower / higher everyday-spending lines with their end balances.",
+         {"days": {"type": "integer", "minimum": 1, "maximum": reports.MAX_FORECAST_DAYS,
+                   "description": f"how many days (default {DEFAULT_FORECAST})"}},
+         _reports_forecast, "reports-forecast"),
     Tool("finance_status",
          "Connected banks: status, errors, last sync, accounts with balances, bank connection slots used.",
          {}, _status, "status"),

@@ -38,6 +38,9 @@ below; never from memory, never estimated.
 | `finance_loans` | loans: remaining, APR, payment, payoff estimate, last matched payment |
 | `finance_holdings` | investment accounts and holdings with value and % of the portfolio |
 | `finance_cashflow` | income vs spending per month (`months`, default 6) |
+| `finance_reports_spending` | Gross / Refunds / Net spending per category for a period (refunds net against their category; a category below zero is a "Refunds over spending" source; another currency is its own list) |
+| `finance_reports_cashflow` | money in by source, net spending per category group, what is left after spending (income minus net spending, exact for the period), and the moves between accounts |
+| `finance_reports_forecast` | the next N days of available balance on the chosen cash accounts (`days`, default 30): bills, added paychecks, and the lower / higher everyday-spending lines with their end balances; a detected paycheck waits for the user's answer |
 | `finance_status` | connected banks, errors, last sync, balances |
 | `finance_goals` | the user's goals (save up, pay off, monthly savings): progress, what's left, pace |
 | `finance_rules` | categorization rules (label, category, yours or AI, matches now) and suggested rules; deleting one is for the user in Settings |

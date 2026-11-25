@@ -39,6 +39,9 @@ Every `finance` command, with its `--help` exactly as the code prints it. Run th
 | [`loans`](#finance-loans) | loans: remaining, APR, payment, payoff, last matched payment |
 | [`holdings`](#finance-holdings) | investment accounts and holdings with value and % of portfolio |
 | [`cashflow`](#finance-cashflow) | income vs spending per month |
+| [`reports-spending`](#finance-reports-spending) | Gross / Refunds / Net per category, and refunds over spending |
+| [`reports-cashflow`](#finance-reports-cashflow) | money in by source, spending groups, remaining after spending |
+| [`reports-forecast`](#finance-reports-forecast) | the next N days of available balance, bills and the everyday-spending lines |
 | [`mcp`](#finance-mcp) | MCP server on stdio (the finance_* tools; read-only) |
 | [`settings`](#finance-settings) | the Settings page's values (read-only; --json for the crons) |
 | [`access`](#finance-access) | who can open the app: this computer only, a proxy login, or the built-in login |
@@ -54,13 +57,13 @@ Every `finance` command, with its `--help` exactly as the code prints it. Run th
 
 ```text
 usage: finance [-h] [-v]
-               {serve,sync,status,simplefin,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,categories,rules}
+               {serve,sync,status,simplefin,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,reports-spending,reports-cashflow,reports-forecast,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,categories,rules}
                ...
 
 Plaid -> local SQLite budgeting pipeline
 
 positional arguments:
-  {serve,sync,status,simplefin,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,categories,rules}
+  {serve,sync,status,simplefin,query,export,classify-apply,unclassified,set-category,add-rule,ai-queue,ai-apply,manual,networth-custom,account-policy,match-payments,loan-match,loan-apply,loan-unapply,revalue,photos,api-usage,refresh-institutions,refresh-logos,spend,budget-status,txns,networth,bills,loans,holdings,cashflow,reports-spending,reports-cashflow,reports-forecast,mcp,settings,access,goals,alpaca-sync,doctor,backup,restore,categories,rules}
     serve               local budgeting dashboard; connect / reconnect banks
     sync                pull transactions, balances, liabilities, holdings (Plaid and SimpleFIN)
     status              items, accounts, balances, errors, slots used
@@ -99,6 +102,10 @@ positional arguments:
     loans               loans: remaining, APR, payment, payoff, last matched payment
     holdings            investment accounts and holdings with value and % of portfolio
     cashflow            income vs spending per month
+    reports-spending    Gross / Refunds / Net per category, and refunds over spending
+    reports-cashflow    money in by source, spending groups, remaining after spending
+    reports-forecast    the next N days of available balance, bills and the everyday-spending
+                        lines
     mcp                 MCP server on stdio (the finance_* tools; read-only)
     settings            the Settings page's values (read-only; --json for the crons)
     access              who can open the app: this computer only, a proxy login, or the built-in
@@ -981,6 +988,108 @@ JSON: {today, months: [{month, income, spending, net, coverage: full|partial, mi
   names those banks, first_dates has each bank's first day).
 ```
 
+## `finance reports-spending` {#finance-reports-spending}
+
+```text
+usage: finance reports-spending [-h] [--json] [--month YYYY-MM] [--since 30d|YYYY-MM-DD]
+                                [--until YYYY-MM-DD]
+
+Gross / Refunds / Net per category, and refunds over spending. Read-only (the database is opened read-only; never calls Plaid). Same numbers as the dashboard. Money is signed as in the app: spend and money out positive, refunds and income negative. Dates are local. Bad arguments exit 2.
+
+options:
+  -h, --help            show this help message and exit
+  --json                print the JSON described below
+
+period:
+  --month YYYY-MM       one calendar month
+  --since 30d|YYYY-MM-DD
+                        from that day, through --until or today (Nd = the last N days, today
+                        included)
+  --until YYYY-MM-DD    through that day (inclusive; not with --month)
+
+Spending for the period as Gross / Refunds / Net per category (the Reports Spending page's table).
+Spending is every category except Income and Transfers, and refunds net against their own category; a category whose
+refunds beat its spending has a net below zero and appears in `refunds_over`, the "Refunds over spending" source.
+Another currency is reported per currency in `foreign` and is never added to the display currency.
+
+JSON: {today, period: {kind, month, start, end, days}, currency, start, end,
+       categories: [{category, category_id, group, group_id, group_rgb, icon, gross, refunds, net, count, share}],
+       refunds_over: [{category, category_id, group, label, amount, count}], totals: {gross, refunds, net, count},
+       foreign: [{currency, categories: [...], totals: {gross, refunds, net, count}}]}
+  refunds is negative; net = gross + refunds; share is % of the period's net spending (null when it is not above 0).
+```
+
+## `finance reports-cashflow` {#finance-reports-cashflow}
+
+```text
+usage: finance reports-cashflow [-h] [--json] [--month YYYY-MM] [--since 30d|YYYY-MM-DD]
+                                [--until YYYY-MM-DD]
+
+Money in by source, spending groups, remaining after spending. Read-only (the database is opened read-only; never calls Plaid). Same numbers as the dashboard. Money is signed as in the app: spend and money out positive, refunds and income negative. Dates are local. Bad arguments exit 2.
+
+options:
+  -h, --help            show this help message and exit
+  --json                print the JSON described below
+
+period:
+  --month YYYY-MM       one calendar month
+  --since 30d|YYYY-MM-DD
+                        from that day, through --until or today (Nd = the last N days, today
+                        included)
+  --until YYYY-MM-DD    through that day (inclusive; not with --month)
+
+The Reports Cash flow page's numbers: money in by source, spending per category group, and what is left after
+spending = income - net spending, exact for the period (never an average). A category below zero is a "Refunds over
+spending" source in `refunds_over`, and refunds are never income (a tax refund stays income). Money moved between the
+user's accounts is listed in `moves` and never drawn as income or spending.
+
+JSON: {today, period: {kind, month, start, end, days}, currency, start, end,
+       income: {total, sources: [{source: paychecks|interest_tax_refunds|other, label, amount, count, share}]},
+       spending: {gross, refunds, net, count},
+       groups: [{group, group_id, rgb, net, count, share, categories}],
+       refunds_over: [{category, label, amount, count}],
+       money_in, money_out, remaining, remaining_share, short,
+       moves: {rows: [{date, label, amount, account_id}], shown, count, total, limit, truncated, note}}
+  money_in = income + refunds_over; money_out = the groups' net; remaining = money_in - money_out. remaining_share is
+  % of income (null with no income). moves.rows is the newest `limit` moves, oldest first; count and total cover every
+  move in the period, shown is how many rows are listed, and when truncated is true, note says so in words.
+```
+
+## `finance reports-forecast` {#finance-reports-forecast}
+
+```text
+usage: finance reports-forecast [-h] [--json] [--days N]
+
+The next N days of available balance, bills and the everyday-spending lines. Read-only (the database is opened read-only; never calls Plaid). Same numbers as the dashboard. Money is signed as in the app: spend and money out positive, refunds and income negative. Dates are local. Bad arguments exit 2.
+
+options:
+  -h, --help  show this help message and exit
+  --json      print the JSON described below
+  --days N    how many days, 1-90 (default 30)
+
+The Reports Forecast page's numbers: the next N days of available balance on the chosen cash accounts (checking
+first; savings only when ticked in), using the bank's available balance. Loans, cards and investments are out, and an
+account in another currency is its own line, never added. Bills expected in the window are events (a late bill is one
+charge today, then the cycles in the window); a detected paycheck (three or more deposits on a steady cadence) is only
+listed until the owner adds it (one answer per source, bound to its account and currency). Everyday spending is one
+daily rate from the last three complete months (fixed bills and recurring charges left out); the two named lines give
+its end balances.
+
+JSON: {today, horizon: {days, start, end}, currency, accounts: [...], opening: {balance, as_of, stale_days, stale,
+       accounts: [...]}, everyday: {start, end, days, total, rate, lower, higher, coverage, history_from, excluded},
+       events: [{date, label, kind: bill|subscription|paycheck, amount, category, variable, source, confirmed, overdue}],
+       paychecks: {detected: [{key, key_label, label, amount, cadence, cadence_label, last_date, next_expected,
+                                days_until, count, account_id, answer}], included: [...],
+                   excluded_by_account: [{key, label, amount, cadence, cadence_label, last_date, account_id,
+                                          account_name}], answers_dropped},
+       expected: {in, out, net}, lines: {lower, expected, higher: {label, daily, points: [{date, balance}], end,
+       lowest}}, available, available_date, lowest: {date, balance}, other_currencies: [{currency, available,
+       accounts}], unavailable_accounts: [...], warnings: [...]}
+  amounts are signed: money out negative, money in positive. The lines are scenario paths, not a confidence range.
+  an Add answer on a source whose account is not in the line is listed in excluded_by_account and not drawn; answers past
+  the 200-answer cap are counted, not read, in answers_dropped.
+```
+
 ## `finance mcp` {#finance-mcp}
 
 ```text
@@ -999,7 +1108,8 @@ options:
 Serves the finance_* tools over the Model Context Protocol on stdin/stdout, for an MCP client that starts it
 (Claude Desktop, Cursor, Codex, ...). The same tools as the Hermes plugin and the same numbers as `finance <command>
 --json`: finance_spend, finance_budget_status, finance_transactions, finance_networth, finance_bills, finance_loans,
-finance_holdings, finance_cashflow, finance_status, finance_goals, finance_rules, finance_categories. Read-only (the
+finance_holdings, finance_cashflow, finance_reports_spending, finance_reports_cashflow, finance_reports_forecast,
+finance_status, finance_goals, finance_rules, finance_categories. Read-only (the
 database is opened read-only; never calls Plaid).
 `finance serve` also serves them over streamable HTTP at /mcp, behind its access gate.
 

@@ -196,7 +196,7 @@ type: on a credit card, a purchase is positive and a card payment is negative. I
 | `institutions` | Bank logo cache, PK `institution_id`: `name`, `logo_png` (the checked image bytes: PNG, or the site's JPEG/GIF/WebP/ICO), `logo_source` (`plaid` / `site` / `none`), `primary_color`, `url`, `fetched_at`. |
 | `security_logos` | Holding logo cache, PK `ticker`: `png` (NULL on a miss), `source` (`fmp` / `none`), `fetched_at`. A miss is retried after 30 days. |
 
-`SCHEMA_VERSION` is 9 (v2 added `balance_snapshots`, v3 the three `ai_*` tables, v4 the manual accounts, loan payments and holding snapshots, v5 the two logo caches, v6 `settings`: dashboard preferences shared by every device, one JSON value per key; today only `chart_excluded_categories`; v7 the valuation columns, `asset_valuations`, `api_usage`, `api_calls`, `vin_decodes`; v8 Carfax / Redfin in `asset_valuations` (rebuilt with every row kept: SQLite can't change a CHECK) and `vehicle_condition`; v9 `linked_loan_id` and `asset_images`: the upgrade links a vehicle to its loan when there is exactly one active vehicle and one active auto loan, a property when there is one property and one mortgage, and nothing otherwise). Upgrades keep every row: `db.connect` applies
+`SCHEMA_VERSION` moves with the schema (the comment on it in `db.py` lists every step; v2 added `balance_snapshots`, v3 the three `ai_*` tables, v4 the manual accounts, loan payments and holding snapshots, v5 the two logo caches, v6 `settings`: dashboard preferences shared by every device, one JSON value per key; today only `chart_excluded_categories`; v7 the valuation columns, `asset_valuations`, `api_usage`, `api_calls`, `vin_decodes`; v8 Carfax / Redfin in `asset_valuations` (rebuilt with every row kept: SQLite can't change a CHECK) and `vehicle_condition`; v9 `linked_loan_id` and `asset_images`: the upgrade links a vehicle to its loan when there is exactly one active vehicle and one active auto loan, a property when there is one property and one mortgage, and nothing otherwise). Upgrades keep every row: `db.connect` applies
 the schema with `CREATE ... IF NOT EXISTS` and recreates the views when `PRAGMA user_version` is behind,
 so the live DB upgrades itself on the next `finance serve` / `finance sync` without touching existing rows.
 
@@ -563,8 +563,9 @@ agent tools return, and exit 2 with a one-sentence `error:` when a change is ref
 
 ## Agent read commands
 
-`spend`, `budget-status`, `txns`, `networth`, `bills`, `loans`, `holdings` and `cashflow` are how Hermes reads
-the data: plain CLI calls on the same machine, so they keep working when the dashboard is down. They:
+`spend`, `budget-status`, `txns`, `networth`, `bills`, `loans`, `holdings`, `cashflow`, `reports-spending`,
+`reports-cashflow` and `reports-forecast` are how Hermes reads the data: plain CLI calls on the same machine, so they
+keep working when the dashboard is down. They:
 
 - open the DB **read-only** (`mode=ro` + `query_only` + the read authorizer, like `finance query`), never
   upgrade its schema, and never call Plaid. A missing DB or an older schema exits 1 and changes nothing;
@@ -573,7 +574,9 @@ the data: plain CLI calls on the same machine, so they keep working when the das
   is `insights.category_spend` / `budgets` / `pace_projection`, `txns` is `api.transaction_page` (the
   Transactions page's query and rows), `networth` is `insights.net_worth` + `manual.summary`, `bills` is
   `insights.recurring`, `loans` is `portfolio.debt`, `holdings` is `portfolio.investments`, `cashflow` is
-  `insights.cashflow`. `tests/test_reads.py` builds both on the same fixture DB and compares them;
+  `insights.cashflow`, and the three `reports-*` commands are the `reports.py` numbers below (Gross / Refunds / Net,
+  remaining after spending, the forecast lines). `tests/test_reads.py` and `tests/test_reports_numbers.py` build
+  both on the same fixture DB and compare them;
 - print a short table, or with `--json` a stable shape that each command's `--help` documents field by field;
 - sign money as the app does (spend and money out positive, refunds and income negative) and use local dates.
 
@@ -641,19 +644,60 @@ finance networth-custom --exclude acc_123 manual:4     # leave these out of Cust
 finance bills --next 7d
 ```
 
+## Reports numbers: gross, refunds, net, remaining, forecast
+
+The Reports pages are drawn from one module, `src/hermes_finance/reports.py`, one function per number; the dashboard,
+`reads.py` and the agent tools call those functions instead of repeating the math. The owner's decisions of
+2026-11-20 are the rules:
+
+- **Gross / Refunds / Net** (`category_totals`): spending is every category except Income and Transfers; a refund
+  (money back on a spending category) is negative and nets against **its own** category, so Net = Gross + Refunds.
+  A category whose refunds beat its spending nets below zero: it is not drawn as negative spending but becomes its own
+  **"Refunds over spending"** source (`refunds_over`), which the cash flow adds to money in. Refunds are never income;
+  a tax refund stays income (the 0.4.0 rule). A charge in one month and its refund in the next stay in their own
+  months: a range only sees what falls inside it.
+- **Remaining after spending** (`remaining_after_spending`): income minus net spending, exactly, for any range —
+  no averaging and no projection. It goes negative (`short`) instead of clamping to zero. Moving money between your
+  own accounts is neither income nor spending: `moves` lists those rows under the diagram and never draws them.
+- **Money in by source** (`income_sources`): Paychecks (`INCOME_WAGES`), Interest and tax refunds
+  (`INCOME_INTEREST_EARNED`, `INCOME_TAX_REFUND`), Other income — the shares are of income.
+- **Forecast** (`forecast`): the chosen cash accounts (checking first; savings only when ticked in) at the bank's
+  **available** balance (`forecast_accounts`). Loans, cards and investments are out; an account in another currency is
+  its own line and is never added to the display currency. Bills and subscriptions expected in the window are events.
+  A **detected paycheck** (`detected_paychecks`) needs three or more deposits on a steady cadence, like the bill
+  detection (`insights.recurring`), and is only listed until the owner answers it — one answer per source, `add` /
+  `omit`, kept in the `reports_paychecks` setting under a key bound to its account and currency
+  (`account_id|currency|description`), so an Add never follows a same-named source on another account — and only
+  `add` puts it in the line. Everyday spending is
+  one daily rate from the last three complete months, leaving out fixed bill categories and recurring bills (they are
+  drawn as their own events); it is drawn three ways: **Expected**, **Lower everyday spending** and **Higher
+  everyday spending**, each a daily path with its end balance. They are scenarios, never a confidence interval; no
+  percentage is attached. An opening balance older than three days is flagged (`stale`, and a warning names the date).
+
+```sh
+finance reports-spending --month 2026-11            # Gross / Refunds / Net per category
+finance reports-cashflow --since 2026-08-01 --until 2026-11-30 --json
+finance reports-forecast --days 30                  # available balance, bills, the two everyday lines
+finance reports-forecast --json                     # every point, event and warning, field by field in --help
+```
+
+Every total is in the display currency; every amount follows the app's sign convention (money out positive for
+spending, negative for income in `spend`; the forecast's events are signed the other way — money out negative).
+
 ## Agent tools: Hermes plugin and MCP server
 
 The read commands above are also agent tools, with the same names in both adapters and the same answers as the
 command's `--json`: `finance_spend`, `finance_budget_status`, `finance_transactions` (`txns`), `finance_networth`,
-`finance_bills`, `finance_loans`, `finance_holdings`, `finance_cashflow` and `finance_status`. Their arguments are
+`finance_bills`, `finance_loans`, `finance_holdings`, `finance_cashflow`, `finance_reports_spending`,
+`finance_reports_cashflow`, `finance_reports_forecast` and `finance_status`. Their arguments are
 the commands' flags (`month`, `since`, `until`, `category`, `merchant`, `account`, `limit`, `by`, `search`,
-`flagged`, `uncategorized`, `history`, `custom`, `next`, `months`). Four write tools: `finance_set_category`,
+`flagged`, `uncategorized`, `history`, `custom`, `next`, `months`, `days`). Four write tools: `finance_set_category`,
 `finance_add_rule` (regex by default; a pattern matching no transaction is refused), `finance_set_cap` and
 `finance_track_bill` (`action` track / update / stop, `merchant`, `every`, `varies`, `usually`), plus the three
 category tools `finance_create_category`, `finance_update_category` and `finance_delete_category` (`id`, `name`,
 `icon`, `group`, `hidden`). `finance_sync`
 (`refresh`) syncs now and says what changed, with `data_age` (also in `finance_status`): no approval,
-except `refresh=true` on a paid Plaid plan (Plaid bills each refresh). 20 tools. One
+except `refresh=true` on a paid Plaid plan (Plaid bills each refresh). 23 tools. One
 definition each, in `src/hermes_finance/tooldefs.py`, shared by:
 
 - **The Hermes plugin** (`hermes_plugin/`, a standalone plugin directory): the reads open the database read-only; each
@@ -692,7 +736,11 @@ and the connections footer with **Add account** and **Settings**. Settings holds
 security, the AI provider, Connect other agents (MCP), Sync & alerts, Valuations, Region (currency and locale for every
 amount and date), Appearance (dark / light / system) and Data (export CSV, backup, import); everything saves as it
 changes. Add account → **Import a file** reads a bank's CSV (the columns are matched in a preview), OFX or QFX into a
-manual account; rows already there are skipped. Imported rows go through your rules like synced ones; one no rule matches lands in Other (Needs review), except money coming in on an OFX / QFX row whose type says what it is: a direct deposit, deposit or payroll, or interest is filed under Income (a generic credit is not: a bank statement's credit and a refund stay in Other, while a card statement's own payment line is filed as a transfer). The look: Inter (self-hosted), 15px body, icon card titles,
+manual account; rows already there are skipped. A PDF bank statement can be imported too, for one deposit account with
+a text layer and printed balances: the parser is local and generic, it refuses scans, card statements, more than one
+account and anything whose transactions don't add up to the printed balances, and it never guesses. Teaching a layout
+once saves a template for the next statement that looks the same; an opt-in AI template proposal sends a masked shape
+of the layout only, never a number or a description. See [PDF statements](pdf-import.md). Imported rows go through your rules like synced ones; one no rule matches lands in Other (Needs review), except money coming in on an OFX / QFX row whose type says what it is: a direct deposit, deposit or payroll, or interest is filed under Income (a generic credit is not: a bank statement's credit and a refund stay in Other, while a card statement's own payment line is filed as a transfer). The look: Inter (self-hosted), 15px body, icon card titles,
 rings, bars, sparklines and category badges, no glows and no motion (charts draw once).
 
 - **Overview**: left to spend + daily allowance, on-pace projection (and how it's made), month-to-date vs

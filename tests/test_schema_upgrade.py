@@ -808,9 +808,10 @@ def test_upgrade_from_v13_to_v14_adds_rule_deletions_and_keeps_every_row(data_di
 def test_upgrade_from_v23_adds_categories_colour_and_keeps_every_row(data_dir):
     """v24 (categories.colour): a v23 database (tests/fixtures/schema_v23.sql, dumped from the tree before the change),
     with a hand-made category, a cap, a hidden one, a group budget, a rule, a classification and a goal, gets one new
-    nullable column and nothing else: every row and every value of every table is as it was, the colour is NULL
-    everywhere (follow the group), the upgraded definitions are a new database's, and a rerun or an interrupted run
-    changes nothing. A read-only connection refuses it."""
+    nullable column and nothing else from the colour step, and then goes on to v25 (pdf_templates, empty, and imports
+    rebuilt with the same rows): every row and every value of every table is as it was, the colour is NULL everywhere
+    (follow the group), the upgraded definitions are a new database's, and a rerun or an interrupted run changes nothing.
+    A read-only connection refuses it."""
     path = config.db_path()
     raw = _old_db(path, "schema_v23.sql", 23)
     ts = "2026-08-05T00:00:00Z"
@@ -842,11 +843,11 @@ def test_upgrade_from_v23_adds_categories_colour_and_keeps_every_row(data_dir):
     from hermes_finance import tooldefs
     with pytest.raises(tooldefs.ToolError) as refused:
         tooldefs.read_connection(path)
-    assert "schema v23" in str(refused.value) and f"v{db.SCHEMA_VERSION}" in str(refused.value)
+    assert "schema v23" in str(refused.value) and f"need v{db.SCHEMA_VERSION}" in str(refused.value)
     assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 23
 
     conn = db.connect(path)
-    assert db.SCHEMA_VERSION == 24 and conn.execute("PRAGMA user_version").fetchone()[0] == 24
+    assert db.SCHEMA_VERSION == 25 and conn.execute("PRAGMA user_version").fetchone()[0] == 25
     cols = [r[1] for r in conn.execute("PRAGMA table_info(categories)")]
     assert cols[-1] == "colour" and cols.count("colour") == 1
     assert next(r[2:] for r in conn.execute("PRAGMA table_info(categories)") if r[1] == "colour")[:1] == ("TEXT",)
@@ -873,7 +874,7 @@ def test_upgrade_from_v23_adds_categories_colour_and_keeps_every_row(data_dir):
         conn.execute("PRAGMA user_version = 23")                    # as if the run stopped before the version was written
     conn.close()
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 24
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 25
     assert conn.execute("SELECT colour FROM categories WHERE name = 'Kids'").fetchone()[0] == "#ff7b7b"   # kept, not reset
     assert conn.execute("SELECT COUNT(*) FROM categories WHERE colour IS NOT NULL").fetchone()[0] == 1
     conn.close()

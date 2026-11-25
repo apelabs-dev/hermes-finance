@@ -9,6 +9,7 @@ synthetic fixture (us-01) gives the real text layer.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -17,6 +18,11 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("pdfplumber")
+
+# Arm DA wraps the PDF in Docling's DocumentStream even when the converter is faked, so those tests need Docling
+# itself. The dev group carries pdfplumber (PDF import) but not Docling, which lives only in the spike's venv.
+needs_docling = pytest.mark.skipif(importlib.util.find_spec("docling") is None,
+                                   reason="Docling is only in the disposable spike venv")
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures" / "pdfspike"
@@ -138,6 +144,7 @@ def test_model_usage_keys_come_from_the_last_result_event():
 
 # --- arm DA: Docling's tables are sent, the text layer anchors -------------------------------------------------------
 
+@needs_docling
 def test_da_sends_docling_tables_and_anchors_on_the_text_layer():
     document = _FakeDocument(tables=["| Date | Amount |\n|---|---|\n| 01/01 | 1.00 |"], markdown="ignored")
     send, seen = _send(_good_reply())
@@ -154,6 +161,7 @@ def test_da_sends_docling_tables_and_anchors_on_the_text_layer():
     assert saved["anchor_text"] not in seen["body"].decode()
 
 
+@needs_docling
 def test_da_balances_printed_only_by_docling_are_unanchored():
     # Docling's table "prints" 99999.99 but the PDF's text layer does not: the reply is refused.
     fake_opening = "99999.99"
@@ -166,6 +174,7 @@ def test_da_balances_printed_only_by_docling_are_unanchored():
     assert refused.value.tokens_in == 100
 
 
+@needs_docling
 def test_da_sends_markdown_when_docling_found_no_table():
     document = _FakeDocument(tables=[], markdown="# Statement\nsome text")
     send, seen = _send(_good_reply())
@@ -178,6 +187,7 @@ def test_da_sends_markdown_when_docling_found_no_table():
     assert "THE STATEMENT PDF CONVERTED TO MARKDOWN" in seen["body"].decode()
 
 
+@needs_docling
 def test_da_refuses_no_rows_when_docling_found_nothing_and_makes_no_call():
     send, seen = _send(_good_reply())
     with pytest.raises(extract.ExtractionError) as refused:
@@ -187,6 +197,7 @@ def test_da_refuses_no_rows_when_docling_found_nothing_and_makes_no_call():
     assert seen == {}
 
 
+@needs_docling
 def test_da_prompt_goes_through_the_clibrain_seam(monkeypatch):
     calls = []
     real = clibrain.request
@@ -216,6 +227,7 @@ def _da_converter(monkeypatch, document):
     monkeypatch.setattr(run4, "_CONVERTER", _FakeConverter(document))
 
 
+@needs_docling
 def test_measure_saves_the_exact_request_and_the_served_model(scratch, monkeypatch):
     _da_converter(monkeypatch, _FakeDocument(tables=["| a |"]))
     send, seen = _send(_good_reply())
@@ -240,6 +252,7 @@ def test_measure_arm_ah_saves_the_statement_text(scratch):
     assert saved["model_usage_keys"] == ["claude-haiku-5-5"]
 
 
+@needs_docling
 def test_a_reply_from_another_model_is_saved_logged_then_stops_the_run(scratch, monkeypatch):
     _da_converter(monkeypatch, _FakeDocument(tables=["| a |"]))
     send, _seen = _send(_good_reply(), models=("claude-sonnet-5-5",))
@@ -250,6 +263,7 @@ def test_a_reply_from_another_model_is_saved_logged_then_stops_the_run(scratch, 
     assert run4.calls_logged() == 1
 
 
+@needs_docling
 def test_a_transport_error_is_errored_not_a_wrong_model(scratch, monkeypatch):
     _da_converter(monkeypatch, _FakeDocument(tables=["| a |"]))
 
@@ -262,6 +276,7 @@ def test_a_transport_error_is_errored_not_a_wrong_model(scratch, monkeypatch):
     assert saved["reply"] is None and saved["model_usage_keys"] == []
 
 
+@needs_docling
 def test_no_rows_is_recorded_as_a_refusal_without_a_call(scratch, monkeypatch):
     _da_converter(monkeypatch, _FakeDocument())
     send, seen = _send(_good_reply())
@@ -272,6 +287,7 @@ def test_no_rows_is_recorded_as_a_refusal_without_a_call(scratch, monkeypatch):
 
 # --- rescore: offline, anchored on what was saved ----------------------------------------------------------------------
 
+@needs_docling
 def test_rescore_rejudges_a_saved_da_reply_against_its_saved_text_layer(scratch, monkeypatch):
     _da_converter(monkeypatch, _FakeDocument(tables=["| a |"]))
     send, _seen = _send(_good_reply())

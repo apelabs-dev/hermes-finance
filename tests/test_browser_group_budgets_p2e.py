@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 import demo_data
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, find_chrome, tap
 from factory import tx
 from hermes_finance import db, groupbudget, insights
 
@@ -114,15 +114,6 @@ def site(path: Path, width: int):
             yield b, server.url
     finally:
         server.close()
-
-
-def tap(b, selector):
-    box = b.js(f"""(() => {{const el=document.querySelector({json.dumps(selector)});
-        el.scrollIntoView({{block:'center'}}); const r=el.getBoundingClientRect();
-        return {{x:r.x+r.width/2,y:r.y+r.height/2}};}})()""")
-    b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
-    b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
-    b.settled()   # (not settle(): a fixed two frames; a loaded CI runner re-rendered after it)
 
 
 VK = {"Enter": 13, "Escape": 27, " ": 32, "Backspace": 8}

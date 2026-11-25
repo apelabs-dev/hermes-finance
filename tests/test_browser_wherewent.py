@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 import demo_data
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, click_when_present, find_chrome
 from hermes_finance import db
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason='Chrome is not installed')
@@ -78,7 +78,7 @@ def test_groups_drill_filters_and_screenshots(site, width):
         # The drilled group is remembered (hf.wherewent.group): the reload comes back to Food, so go back to the groups.
         b.js("(() => { const b = document.querySelector('[data-wwfocus=back]'); if (b) b.click(); })()")
         b.settle()
-        b.js("document.querySelector('[aria-label=\"View Food payments\"]').click()")
+        assert click_when_present(b, "[aria-label=\"View Food payments\"]"), "the Food payments control never appeared"
         b.settle()
         assert 'group=Food' in b.js('location.hash')
         assert b.js('document.documentElement.scrollWidth <= innerWidth')

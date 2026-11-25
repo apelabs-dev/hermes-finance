@@ -299,9 +299,14 @@ const place = (el, node) => {
   if (lgr && title === 'Portfolio breakdown') return {kind: 'breakdown', key: first(lgr.querySelector('.grow > b'))};
   const li = el.closest('.li');
   if (li && title === 'Holdings') return {kind: 'holding', key: first(li.querySelector('.grow > b'))};
-  if (el.closest('.herohead') && title === null && el.closest('.pill')) return {kind: 'change',
+  // The Investments hero is the card titled "Total investments"; its pill is the range's change ("+$54.90 (12.6%) past month").
+  if (el.closest('.herohead') && (title === null || title === 'Total investments') && el.closest('.pill')) return {kind: 'change',
     range: (document.querySelector('#page .seg button[aria-pressed=true][data-r]') || {dataset: {}}).dataset.r};
-  if (title === 'Goals' && el.closest('.tl2')) return {kind: 'goals_tile', key: /of \$/.test(node) ? 'monthly' : 'top'};
+  // The tile's two lines (goals.js HOOKS.tiles): "Saved in Nov · <b>20% of $800</b>" is the monthly savings one; a Save up
+  // goal's is "<b>Splurge</b> 20% of $500" (with no monthly goal, the only line) or "Splurge 20%" beside it. Both read
+  // "% of $": which line it is comes from where the figure sits, never from the words.
+  if (title === 'Goals' && el.closest('.tl2')) return {kind: 'goals_tile',
+    key: el.tagName === 'B' && /^Saved in/.test(T(el.parentElement)) ? 'monthly' : 'top'};
   const gcard = el.closest('[data-goal]');
   if (gcard) return {kind: 'goal', key: gcard.dataset.goal};
   if (el.closest('.gsum')) return {kind: 'goals_total'};
@@ -1307,9 +1312,24 @@ def pct_want(p: dict, ov: dict, bp: dict, debt: dict, inv: dict, acc: dict, goal
         of = inv.get("priced_total") or total
         return (v / of * 100, f"{key} / portfolio priced total") if v is not None and of else (None, "")
     if kind == "change":
-        ch = inv["changes"].get(p.get("range") or "1m")
-        return (abs(ch["pct"]), "change / value at the start of the range") if ch and ch.get("pct") is not None else (None, "")
+        return change_pct(inv, p.get("range") or "1m")
     return None, ""
+
+
+def change_pct(inv: dict, rng: str) -> tuple[float | None, str]:
+    """The Investments pill's "(33.5%)": the change over the range / the portfolio's value at the START of it (portfolio.py
+    change(): (end - start) / start of the accounts held at both ends), shown unsigned. Worked out here from the history
+    points, not read back from the API's own pct (the pill shows that, so it could never disagree). The start is the
+    history's value on the range's first day; when an account came or went in between, the history's two ends differ by
+    more than the change, the base isn't in the points, and the API's pct is the only reference left."""
+    ch = (inv.get("changes") or {}).get(rng)
+    if not ch or ch.get("pct") is None:
+        return None, ""
+    hist = {x["date"]: x["value"] for x in inv.get("history") or []}
+    a, b = hist.get(ch["from"]), hist.get(ch["to"])
+    if a and b is not None and abs((b - a) - ch["amount"]) <= TOL + 1e-9:
+        return abs(ch["amount"]) / a * 100, f"change {ch['amount']:+.2f} / value at the start of the range ({ch['from']}: {a:,.2f})"
+    return abs(ch["pct"]), "change / value at the start of the range (the API's: other accounts at the ends, same accounts only)"
 
 
 def goal_pct(p: dict, ov: dict, goals: dict) -> tuple[float | None, str]:
@@ -2079,8 +2099,25 @@ def check_worth_modes(A: Audit, ov: dict, acc: dict, debt: dict, dom: dict, cli:
 SOURCE_PROVIDER = {"Carfax": "carfax", "Redfin": "redfin", "Photos": "commons"}   # admin.VALUATIONS -> api_usage
 
 
+SLOTS_CHECK = "slots = every Plaid Item ever exchanged + each blocked duplicate Plaid counted (the file)"
+
+
+def file_slots(conn: sqlite3.Connection) -> int:
+    """The Plaid Trial slots used, from the file: every Plaid Item row (a removed one keeps its slot), plus every blocked
+    duplicate the owner confirmed Plaid counted anyway (link_attempts.outcome = 'duplicate_counted': no Item row, no
+    token). A duplicate not confirmed either way ('duplicate_blocked') is a warning, not a slot. (db.slots_used)"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(items)")}
+    items = conn.execute("SELECT COUNT(*) FROM items" + (" WHERE provider = 'plaid'" if "provider" in cols else "")).fetchone()[0]
+    dupes = conn.execute("SELECT COUNT(*) FROM link_attempts WHERE outcome = 'duplicate_counted'").fetchone()[0]
+    return items + dupes
+
+
+def check_slots(A: Audit, used: int, conn: sqlite3.Connection) -> None:
+    A.eq(SLOTS_CHECK, used, file_slots(conn), tol=0)
+
+
 def check_settings(A: Audit, S: Site, d: dict, db: Path | None) -> None:
-    """The Settings page (TASK-18): the Plaid slots it shows = /api/status (= every Item ever exchanged, from the file);
+    """The Settings page (TASK-18): the Plaid slots it shows = /api/status (= every Plaid Item ever exchanged, plus each blocked duplicate Plaid counted: file_slots);
     each value source's "Used this month N / cap" and its meter = `finance api-usage` (the calls this month and the cap
     that stops them); a switch = `finance settings` unless the env file sets it (then it's locked and says so); the
     export's count = every transaction the Transactions page counts (= the file's rows not removed)."""
@@ -2097,7 +2134,7 @@ def check_settings(A: Audit, S: Site, d: dict, db: Path | None) -> None:
         usage = {p["provider"]: p for p in run_cli(db, "api-usage")["providers"]}
         prefs_cli = run_cli(db, "settings")["valuations"]
         conn = sqlite3.connect(f"file:{db.resolve()}?mode=ro", uri=True)
-        A.eq("slots = every Item ever exchanged (the file)", used, conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], tol=0)
+        check_slots(A, used, conn)
         rows = conn.execute("SELECT COUNT(*) FROM transactions WHERE removed = 0").fetchone()[0]
         conn.close()
     page = S.get("/api/settings/page")
@@ -2155,6 +2192,9 @@ def check_percentages(A: Audit, dom: dict, ov: dict, bp: dict, debt: dict, inv: 
                 A.ok(f"{where} (checked above, over the included total)", True, got=shown, want="row check")
                 continue
             want, how = pct_want(p, ov, bp, debt, inv, acc, goals)
+            if p["kind"] == "change" and want is not None:   # "-$335.00 (33.5%) past month": the amount beside the %
+                ch = (inv.get("changes") or {}).get(p.get("range") or "1m") or {}
+                A.eq(f"{where} amount = the range's change", money(p["node"]), ch.get("amount"), tol=TOL)
             if want is None:
                 unknown += 1
                 A.ok(f"{where}: a percentage the audit can't place (kind {p['kind']}) in '{p['row'][:90]}'", False,

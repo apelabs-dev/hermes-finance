@@ -61,6 +61,7 @@ exclude_docs: |
 not_in_nav: |
   releasing.md
   release-0.4.0.md
+  pdf-teach-once.md
 
 # Fails the build while docs/reference/*.md is stale (scripts/gen_docs_reference.py writes them from the code).
 hooks:
@@ -75,6 +76,7 @@ nav:
   - Security model: security.md
   - Settings: settings.md
   - User guide: guide.md
+  - PDF statements: pdf-import.md
   - Static demo: demo.md
   - Guides:
       - Configuration and doctor: configuration.md

@@ -3,7 +3,9 @@
 DIRECTDEP / DEP / PAYROLL -> INCOME_WAGES, INT -> INCOME_INTEREST_EARNED (never CREDIT: it's also card payments and refunds), saved on the
 row as its Plaid category (pfc_primary 'INCOME'), so classify.apply() files it under the one Income category on every
 run, a rule still winning. Money in only: OFX TRNAMT > 0, which the app stores as amount < 0 (Plaid's sign). A CSV row
-is filed exactly as before. Synthetic rows only (the ACCEPTANCE ... names of the onboarding acceptance run)."""
+has no TRNTYPE, so since the QA 0.5 F1/F2 fix its description decides by the same rule a synced inflow gets
+(classify.inflow_hint): a payroll deposit is Income, a money-out row is still Other. Synthetic rows only (the
+ACCEPTANCE ... names of the onboarding acceptance run)."""
 
 from __future__ import annotations
 
@@ -219,15 +221,19 @@ def test_the_same_file_again_adds_nothing_and_refiles_nothing(conn, monkeypatch)
     assert (r["category"], r["category_source"]) == ("Transfers", "user")
 
 
-def test_a_csv_inflow_is_filed_as_before(conn):
+def test_a_csv_inflow_is_filed_by_its_description(conn):
+    """No TRNTYPE in a CSV: since the QA 0.5 F1/F2 fix the synced inflow rule decides (QA 0.5 F1/F2), so a payroll
+    deposit is Income rather than Other - a spending category it counted negatively in."""
     raw = (b"Date,Description,Amount\n09/05/2026,ACCEPTANCE COFFEE,-12.34\n09/15/2026,ACCEPTANCE PAYROLL,1000.00\n")
     assert all(r.trntype is None for r in importer.importfile.csv_rows(
         raw, {"date": 0, "description": 1, "amount": 2}, "%m/%d/%Y", "minus_out", today=TODAY))
     commit(conn, raw, "acceptance.csv")
     r = row(conn, "ACCEPTANCE PAYROLL")
     assert r["amount"] == -1000.0
-    assert (r["category"], r["category_source"], r["pfc_primary"], r["pfc_detailed"]) == ("Other", "plaid", None, None)
-    assert set(r["raw"]) == {"file", "line", "fitid"}
+    assert (r["category"], r["category_source"], r["pfc_primary"], r["pfc_detailed"]) == (
+        "Income", "plaid", "INCOME", "INCOME_OTHER_INCOME")
+    assert set(r["raw"]) == {"file", "line", "fitid"}     # a CSV row still records no TRNTYPE
+    assert (row(conn, "ACCEPTANCE COFFEE")["category"], row(conn, "ACCEPTANCE COFFEE")["pfc_primary"]) == ("Other", None)
 
 
 # --- end to end: the onboarding acceptance file, through the import endpoint the page uses ----------------------------

@@ -14,11 +14,14 @@ from pathlib import Path
 import pytest
 
 import gate_dbs
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, click_when_present, find_chrome
 from hermes_finance import classify, db, goals, insights
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
-TODAY = date.today()
+# A fixed day, never date.today(): the synthetic DB pays wages on the 10th and 25th, so on those calendar days today's
+# USD rows net to money in and the day total renders "+$…" (Nightly 45549226925 failed so on 2026-11-25). The browser's
+# clock is pinned to it too (the chrome fixture), so the month the page draws is the month the fixture has.
+TODAY = date(2026, 11, 24)
 TS = f"{TODAY.isoformat()}T00:00:00Z"
 FIX = Path(__file__).parent / "fixtures" / "import"
 
@@ -60,6 +63,7 @@ def site(tmp_path_factory):
 @pytest.fixture(scope="module")
 def chrome():
     with Chrome() as b:
+        b.pin_clock(TODAY)   # the page's "today" is the fixture's, whatever day this runs on
         yield b
 
 
@@ -232,7 +236,7 @@ def test_a_csv_imported_again_goes_into_the_accounts_it_made(chrome, tmp_path):
         chrome.size(1280, 900)
         chrome.goto(f"{srv.url}/?t={time.time():.3f}#/accounts")
         chrome.settle()
-        chrome.js("document.querySelector('[data-add=home]').click()")
+        assert click_when_present(chrome, "[data-add=home]"), "the Add account control never appeared"
         chrome.js("[...document.querySelectorAll('#sheet .opt')].find((o) => o.textContent.startsWith('Import a file')).click()")
         _drop(chrome, first, "everyday-export.csv")
         assert chrome.js(WAIT.format(sel=json.dumps("#sheet table.map")))

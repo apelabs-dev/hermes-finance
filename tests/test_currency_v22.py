@@ -44,6 +44,8 @@ def test_v21_to_v22_keeps_every_row_and_fills_only_missing_codes(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     after = _rows(conn)
     # A migration never loses a row, and ids stay put.
+    # v25 (PDF import) adds one table, empty; every table that was there keeps its rows and ids.
+    assert after.pop("pdf_templates") == []
     assert {t: len(rows) for t, rows in after.items()} == {t: len(rows) for t, rows in before.items()}
     assert {t: [r[0] for r in after[t]] for t in after} == {t: [r[0] for r in before[t]] for t in before}
 

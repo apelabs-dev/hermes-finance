@@ -1075,11 +1075,11 @@ button.dl:hover { background: var(--card2); border-radius: 12px; }
   .li.wrap:has(> .rt.bill) .grow > span > .cb { display: none; }
   .li.wrap[data-bill]:has(> .rt.bill) { flex-wrap: wrap; row-gap: 8px; }  /* (baseline K1) as the Subscriptions rows */
   .li.wrap[data-bill]:has(> .rt.bill) > .grow { min-width: min-content; }
-  /* the drawer: Overview, Transactions, Budgets, then Goals (HOTFIX-1: under Budgets, as in the desktop sidebar), then
-     Accounts, Recurring, Investments, Loans & debt; Settings stays pinned at its bottom */
+  /* the drawer: Overview, Transactions, Budgets, Reports, Goals (HOTFIX-1: under Budgets, as in the desktop sidebar),
+     then Accounts, Recurring, Investments, Loans & debt; Settings stays pinned at its bottom */
   #nav a[data-pg=overview] { order: 1; } #nav a[data-pg=transactions] { order: 2; } #nav a[data-pg=budgets] { order: 3; }
-  #nav a[data-pg=goals] { order: 4; } #nav a[data-pg=accounts] { order: 5; } #nav a[data-pg=recurring] { order: 6; }
-  #nav a[data-pg=investments] { order: 7; } #nav a[data-pg=debt] { order: 8; }
+  #nav a[data-pg=reports] { order: 4; } #nav a[data-pg=goals] { order: 5; } #nav a[data-pg=accounts] { order: 6; }
+  #nav a[data-pg=recurring] { order: 7; } #nav a[data-pg=investments] { order: 8; } #nav a[data-pg=debt] { order: 9; }
   .tabbar a[aria-current=page] { color: var(--fg); }
   .tabbar a[aria-current=page] svg { color: var(--acc); }
   .tabbar svg.i { width: 23px; height: 23px; }

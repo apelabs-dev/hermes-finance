@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import urllib.parse
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from . import caticons, config
 
-SCHEMA_VERSION = 24  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
+SCHEMA_VERSION = 25  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_reviews;
                      # 4: manual_accounts, manual_balance_history, loan_payments, holding_snapshots;
                      # 5: institutions, security_logos; 6: settings;
                      # 7: manual_accounts vin..value_source, asset_valuations, vin_decodes, api_usage, api_calls;
@@ -54,6 +55,8 @@ SCHEMA_VERSION = 24  # 2: balance_snapshots; 3: ai_runs, ai_run_groups, ai_revie
                      #    (after v22 Currency; this step depends on nothing it adds)
                      # 24 (category colour): categories.colour (ADDED_COLUMNS), NULL = the icon follows its group, else
                      #    one of the eight swatches (caticons.COLOURS); _v24_schema keeps only those eight
+                     # 25 (PDF import): pdf_templates (teach-once layouts, masked fingerprints, no numbers); imports.kind
+                     #    gains 'pdf' (_v25_pdf rebuilds the v11 CHECK when it is still there)
 
 # Estimated values of manual vehicles (the Carfax trade-in) and properties (the Redfin Estimate): one row per successful
 # lookup, never updated. Rows 'marketcheck' / 'rentcast' (before TASK-13b) stay as history, never shown or used.
@@ -558,7 +561,7 @@ CREATE TABLE IF NOT EXISTS imports (
     id                INTEGER PRIMARY KEY,
     created_at        TEXT NOT NULL,
     filename          TEXT,
-    kind              TEXT NOT NULL CHECK (kind IN ('csv', 'ofx')),
+    kind              TEXT NOT NULL CHECK (kind IN ('csv', 'ofx', 'pdf')),
     manual_account_id INTEGER NOT NULL REFERENCES manual_accounts(id),
     rows_new          INTEGER NOT NULL,
     rows_skipped      INTEGER NOT NULL
@@ -906,6 +909,52 @@ def _v24_schema(conn: sqlite3.Connection) -> None:
                  caticons.COLOURS)
 
 
+V25_SCHEMA = """
+-- A taught PDF statement layout (PDF import): the masked layout fingerprint and the validated parser config. No
+-- statement text, description or number is stored: header roles/words are generic, config is column extents and rules.
+CREATE TABLE IF NOT EXISTS pdf_templates (
+    id          TEXT PRIMARY KEY,          -- template_id = sha1 of layout_id and the canonical config
+    layout_id   TEXT NOT NULL UNIQUE,      -- sha1 of the layout fingerprint
+    fingerprint TEXT NOT NULL,             -- JSON, masked/generic only, no statement text or numbers
+    config      TEXT NOT NULL,             -- JSON, validated shape, no numbers
+    source      TEXT NOT NULL CHECK (source IN ('user', 'ai')),
+    created_at  TEXT NOT NULL
+);
+"""
+
+# The fresh imports statement, exactly as TASK18_SCHEMA has it: the PDF rebuild makes the table from this same text, so an
+# upgraded database's sqlite_master holds the new database's CREATE TABLE imports byte for byte (a RENAME would leave
+# a quoted "imports" behind).
+IMPORTS_TABLE = re.search(r"CREATE TABLE IF NOT EXISTS imports \(.*?\n\);", TASK18_SCHEMA, re.S).group(0)
+IMPORTS_COLUMNS = "id, created_at, filename, kind, manual_account_id, rows_new, rows_skipped"
+
+
+def _v25_pdf(conn: sqlite3.Connection) -> None:
+    """v24 -> v25 (PDF import): pdf_templates, and imports.kind gains 'pdf'. The v11 CHECK can't be altered in place, so
+    an imports that still predates PDF imports is rebuilt with every row kept: the rows go to a holding table, imports
+    is dropped and made again from TASK18_SCHEMA's own statement (so its definition is a new database's), and the rows come
+    back with their ids. No index or trigger is on imports, and transactions.import_id's REFERENCES imports(id) names
+    the table, so it holds again once imports is back. One savepoint: an interrupted run leaves the old table as it
+    was. Idempotent: CREATE IF NOT EXISTS and a rebuild only when 'pdf' is still missing."""
+    conn.executescript(V25_SCHEMA)
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'imports'").fetchone()
+    if row is None or "'pdf'" in (row[0] or ""):
+        return
+    conn.execute("SAVEPOINT v25_imports")
+    try:
+        conn.execute("DROP TABLE IF EXISTS imports_v25")
+        conn.execute(f"CREATE TABLE imports_v25 AS SELECT {IMPORTS_COLUMNS} FROM imports")
+        conn.execute("DROP TABLE imports")
+        conn.execute(IMPORTS_TABLE)
+        conn.execute(f"INSERT INTO imports ({IMPORTS_COLUMNS}) SELECT {IMPORTS_COLUMNS} FROM imports_v25 ORDER BY id")
+        conn.execute("DROP TABLE imports_v25")
+    except BaseException:
+        conn.execute("ROLLBACK TO v25_imports")
+        conn.execute("RELEASE v25_imports")
+        raise
+    conn.execute("RELEASE v25_imports")
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     before = conn.execute("PRAGMA user_version").fetchone()[0]
     with conn:
@@ -953,6 +1002,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             _v23_schema(conn)
         if before < 24:   # the column was added above; only a stray value needs reading as NULL
             _v24_schema(conn)
+        _v25_pdf(conn)    # idempotent: pdf_templates, and imports.kind gains 'pdf'
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

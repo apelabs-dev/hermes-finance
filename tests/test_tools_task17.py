@@ -63,6 +63,12 @@ READ_CALLS = [
     ("finance_bills", {}), ("finance_bills", {"next": "60d"}), ("finance_bills", {"next": "0"}),
     ("finance_loans", {}), ("finance_holdings", {}),
     ("finance_cashflow", {}), ("finance_cashflow", {"months": 24}),
+    # 0.5 Reports numbers
+    ("finance_reports_spending", {}), ("finance_reports_spending", {"month": "2026-08"}),
+    ("finance_reports_spending", {"since": "2026-08-01", "until": "2026-08-31"}),
+    ("finance_reports_cashflow", {}), ("finance_reports_cashflow", {"month": "2026-08"}),
+    ("finance_reports_cashflow", {"since": "2026-01-01", "until": "2026-09-30"}),
+    ("finance_reports_forecast", {}), ("finance_reports_forecast", {"days": 14}),
     ("finance_status", {}),
     ("finance_goals", {}), ("finance_transactions", {"tag": "trip"}),  # TASK-19
     ("finance_rules", {}),  # TASK-24
@@ -122,6 +128,8 @@ def test_the_tools_defaults_and_arguments_are_the_cli_flags(capsys):
         "finance_spend": "spend", "finance_budget_status": "budget-status", "finance_transactions": "txns",
         "finance_networth": "networth", "finance_bills": "bills", "finance_loans": "loans",
         "finance_holdings": "holdings", "finance_cashflow": "cashflow", "finance_status": "status",
+        "finance_reports_spending": "reports-spending", "finance_reports_cashflow": "reports-cashflow",
+        "finance_reports_forecast": "reports-forecast",
         "finance_goals": "goals", "finance_rules": "rules", "finance_categories": "categories"}
     assert all(len(t.description) <= 260 for t in tooldefs.TOOLS.values())          # sent on every API call
 

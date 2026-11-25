@@ -444,12 +444,12 @@ TABS = """(() => { const acc = getComputedStyle(document.documentElement).getPro
 def test_goals_sits_under_budgets_in_the_sidebar_and_the_drawer(chrome, site):
     b, s = chrome, site()
     go(b, s, width=1440)
-    assert b.js(ORDER) == ["overview", "transactions", "budgets", "goals", "recurring", "accounts", "investments", "debt"]
+    assert b.js(ORDER) == ["overview", "transactions", "budgets", "reports", "goals", "recurring", "accounts", "investments", "debt"]
     for width in (390, 768):
         go(b, s, width=width)
         b.js("document.getElementById('menu').click()")
         time.sleep(0.4)
-        assert b.js(ORDER) == ["overview", "transactions", "budgets", "goals", "accounts", "recurring", "investments", "debt"]
+        assert b.js(ORDER) == ["overview", "transactions", "budgets", "reports", "goals", "accounts", "recurring", "investments", "debt"]
     assert b.problems() == []
 
 

@@ -35,6 +35,7 @@ logging.getLogger("ofxtools").setLevel(logging.WARNING)
 
 MAX_BYTES = 10 * 1024 * 1024      # 10 MB
 SAMPLE_ROWS = 5
+PDF_MAGIC = b"%PDF-"
 
 FIELDS = ("date", "description", "amount", "debit", "credit", "account")
 SIGNS = ("minus_out", "minus_in", "split")
@@ -121,6 +122,19 @@ class OfxStatement:
     rows: list[Row]
 
 
+def _pdf_preamble_is_blank(preamble: bytes) -> bool:
+    """Whether the bytes before %PDF- are only whitespace/control or a UTF-8 BOM; printable text means it isn't a PDF."""
+    if preamble.startswith(b"\xef\xbb\xbf"):
+        preamble = preamble[3:]
+    return all(b < 0x20 or b == 0x7f for b in preamble)
+
+
+def is_pdf(data: bytes) -> bool:
+    """Whether these bytes are a PDF. The importer routes PDFs to pdfimport before sniff(), which still refuses them."""
+    offset = data.find(PDF_MAGIC, 0, 1024)
+    return offset >= 0 and _pdf_preamble_is_blank(data[:offset])
+
+
 # --- bytes -> text ------------------------------------------------------------------------------------------------
 
 def _check_bytes(data: bytes, ext: str = "") -> None:
@@ -129,7 +143,7 @@ def _check_bytes(data: bytes, ext: str = "") -> None:
         raise ImportFileError(_EMPTY)
     if len(data) > MAX_BYTES:
         raise ImportFileError(_TOO_BIG)
-    if data.startswith(b"%PDF"):
+    if is_pdf(data):
         raise ImportFileError(_PDF)
     if data.startswith(_OLE2):
         raise ImportFileError(_SPREADSHEET)

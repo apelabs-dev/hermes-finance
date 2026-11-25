@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import gate_dbs
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, find_chrome, tap
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
 WIDTHS = [360, 390, 430, 768, 1024, 1280, 1440]
@@ -41,11 +41,7 @@ def go(b, site, page, width=390):
     b.js("new Promise(r => setTimeout(r, 200))")
 
 
-def tap(b, selector):
-    box = b.js(f"(() => {{ const e=document.querySelector({json.dumps(selector)}); e.scrollIntoView({{block:'center'}}); const r=e.getBoundingClientRect(); return {{x:r.x+r.width/2,y:r.y+r.height/2}}; }})()")
-    b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
-    b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
-    b.js("new Promise(r => setTimeout(r, 150))")
+HELP_DIALOG = "document.querySelector('.help-panel')?.getAttribute('role') === 'dialog'"
 
 
 def key(b, value):
@@ -78,16 +74,21 @@ def test_calendar_same_name_and_repeated_occurrence_use_exact_key(chrome, site):
         d.bills.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
         window.__expected=d.bills.map(x=>({key:x.key,date:x.date}));
         return new Response(JSON.stringify(d),{headers:{'Content-Type':'application/json'}});};""")
-    b.js("document.querySelector('.calnav button:not([disabled])').click()")
-    b.js("new Promise(r=>setTimeout(r,350))")
+    assert b.until("""(() => { const e = document.querySelector('.calnav button:not([disabled])');
+      if (e) e.click(); return Boolean(e); })()"""), "the calendar's month control"
+    assert b.until("Boolean(window.__expected)"), "the calendar fetched its next month"
     expected = b.js("__expected")
     for i in range(3):
         sel = f".bchip:nth-of-type({i + 1})"  # resolve exact occurrence below, independent of day cell position
+        assert b.until(f"document.querySelectorAll('.bchip').length > {i}"), f"the calendar's chip {i} is drawn"
         b.js(f"window.__entry=[...document.querySelectorAll('.bchip')][{i}]; __entry.focus()")
         assert b.js("__entry.tagName") == "BUTTON", "calendar entries must be keyboard-operable detail buttons"
         assert b.js("document.activeElement===__entry"), b.js("({active:document.activeElement.outerHTML, visible:__entry.getClientRects().length, errors:window.__qaErrors})")
         key(b, "Enter")
-        b.js("new Promise(r=>setTimeout(r,250))")
+        # The sheet keeps its last content in the DOM when it closes, so wait for THIS occurrence's date on an open
+        # modal, not for `.bill-occurrence` to exist (it already does from the previous iteration).
+        assert b.until(f"document.querySelector('#modal.on .bill-occurrence')?.dataset.date === "
+                       f"{json.dumps(expected[i]['date'])}"), f"the sheet shows {expected[i]['date']}"
         assert b.js("__lookups.at(-1)") == expected[i]["key"]
         assert b.js("document.querySelector('#modal').classList.contains('on')")
         assert expected[i]["date"] == b.js("document.querySelector('.bill-occurrence').dataset.date")
@@ -117,11 +118,16 @@ def test_due_details_bounded_and_main_amounts_visible(chrome, site, width, theme
     b.js("location.hash='#/transactions'")
     b.settle()
     b.js("location.hash='#/overview'")
-    b.settle()
+    # The overview's own fetch and redraw, not two frames of it: the trigger exists in both renders, and a help panel
+    # closes on any scroll under it (popclose.js), so a click that lands before the patched redraw is undone by the
+    # redraw's layout shift and the panel then reads back null.
+    b.settled()
     sel = "[data-help='pace']"
-    # (wait for the overview's redraw with the patched data, not a fixed 300 ms: slow-mode run 3 lost that race)
     assert b.until(f"!!document.querySelector({json.dumps(sel)})"), "pace needs a readable details disclosure"
-    tap(b, sel)
+    tap(b, sel, opened=HELP_DIALOG)
+    # The panel is built by the click's handler, so wait for it before reading it: this line used to dereference
+    # `querySelector('.help-panel')` while it was still null and threw instead of asserting (Nightly 45589087302).
+    assert b.until(HELP_DIALOG), "the pace details panel opened as a dialog"
     assert b.js("document.querySelector('.help-panel').getAttribute('role')") == "dialog"
     assert b.js("document.querySelectorAll('.help-panel .help-bill').length") == 60
     assert b.js("document.querySelector('.help-panel').textContent.includes('~')"), "variable estimate remains qualified"
@@ -139,14 +145,17 @@ def test_short_help_focus_touch_outside_and_before_data_action(chrome, site):
     assert b.js("matchMedia('(pointer: coarse)').matches")
     # The Data card carries ONE explanation, in its header; it is reachable before any action and never attached to the
     # download link. Its panel covers export, backup and import.
-    b.js("document.querySelector('[data-help=data]').focus()")
+    assert b.until("""(() => { const e = document.querySelector('[data-help=data]'); if (e) e.focus(); return Boolean(e); })()"""), \
+        "the Data card's help trigger is drawn"
     key(b, "Enter")
+    assert b.until("Boolean(document.querySelector('.help-panel'))"), "the Data help panel opened"
     assert b.js("document.querySelector('.help-panel').textContent.includes('without bank tokens or sign-in secrets')")
     assert b.js("document.querySelector('.help-panel').textContent.includes('reconnect each bank')")
     assert b.js("document.querySelectorAll('.data-actions .help-trigger').length") == 0
     key(b, "Escape")
     assert b.js("document.activeElement.dataset.help") == "data"
-    tap(b, "[data-help=data]")
+    tap(b, "[data-help=data]", opened=HELP_DIALOG)
+    assert b.until(HELP_DIALOG), "the Data help panel opened"
     assert b.js("document.querySelector('.help-panel').getAttribute('role')") == "dialog"
     assert b.js("document.querySelector('[data-help=data]').getAttribute('aria-controls')===document.querySelector('.help-panel').id")
     b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, x=2, y=2)
@@ -157,9 +166,11 @@ def test_short_help_focus_touch_outside_and_before_data_action(chrome, site):
     go(b, site, "settings", 1440)
     b.call('Page.bringToFront')
     # The Data explanation is a dialog: it opens on Enter (a long panel never opens on focus alone), then closes.
-    b.js("document.querySelector('[data-help=data]').focus()")
+    assert b.until("""(() => { const e = document.querySelector('[data-help=data]'); if (e) e.focus(); return Boolean(e); })()"""), \
+        "the Data card's help trigger is drawn"
     key(b, "Enter")
-    assert b.js("!!document.querySelector('.help-panel')"), b.js("({focused:document.hasFocus(),active:document.activeElement.dataset.help})")
+    assert b.until("Boolean(document.querySelector('.help-panel'))"), \
+        b.js("({focused:document.hasFocus(),active:document.activeElement.dataset.help})")
     key(b, "Escape")
     assert b.js("document.activeElement.dataset.help") == "data"
     clean(b)
@@ -304,6 +315,7 @@ def test_budget_planned_buttons_align_down_the_column(chrome, site):
     """
     for width in (1440, 1280, 1024):
         go(chrome, site, 'budgets', width)
+        assert chrome.until("document.querySelectorAll('#page tr.c').length > 0"), "the budgets table draws its rows"
         rows = chrome.js("""[...document.querySelectorAll('#page tr.c')].map(c => {
           const q = (s) => c.querySelector(s).getBoundingClientRect();
           return {name: c.dataset.category, due: Number(c.dataset.due) > 0,
@@ -319,6 +331,7 @@ def test_budget_planned_buttons_align_down_the_column(chrome, site):
 @pytest.mark.parametrize('width', [360, 1024])
 def test_recent_transaction_category_and_date_are_not_clipped(chrome, site, width):
     go(chrome, site, 'overview', width)
+    assert chrome.until("Boolean(document.querySelector('.txgrid .li .grow > span'))"), "a recent transaction row is drawn"
     result = chrome.js("""(() => {
       const row=document.querySelector('.txgrid .li'), meta=row.querySelector('.grow > span');
       row.querySelector('.amt').textContent='$2,252.00';

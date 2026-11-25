@@ -16,7 +16,7 @@ The dashboard and the `finance` CLI work without any of them.
 
 ## Hermes plugin
 
-Install it with [Getting started](getting-started.md#install-the-hermes-plugin). The plugin registers all 20 tools
+Install it with [Getting started](getting-started.md#install-the-hermes-plugin). The plugin registers all 23 tools
 (toolset `hermes-finance`), a `pre_tool_call` hook, the `hermes-finance:usage` skill, and the `hermes finance`
 command group.
 

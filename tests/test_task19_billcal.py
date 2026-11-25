@@ -43,6 +43,24 @@ def test_occurrences(it, month, want):
     assert [(o["date"], o["state"], o["projected"]) for o in billcal.occurrences(it, start, end, TODAY)] == want
 
 
+def test_a_weekly_bill_more_than_400_weeks_late_still_lands_its_cycles_in_the_window():
+    """The 400-step budget counted from next_expected: a weekly bill ~7.7 years stale spent all of it before the
+    window and reported no cycles at all. The walk jumps to the first in-window cycle (security t_cb6c3189 Low 7)."""
+    it = item("Gym", "weekly", "2019-01-05", "2019-01-06", 12.0, status="late")
+    got = [(o["date"], o["state"], o["projected"])
+           for o in billcal.occurrences(it, date(2026, 11, 1), date(2026, 11, 30), TODAY)]
+    assert got == [("2026-11-01", "due", True), ("2026-11-08", "due", True), ("2026-11-15", "due", True),
+                   ("2026-11-22", "due", True), ("2026-11-29", "due", True)]
+
+
+def test_a_very_old_monthly_bill_lands_its_cycle_in_the_window_too():
+    """The monthly branch shared the 400-step budget, which a bill 33+ years stale exhausts before today."""
+    it = item("Water", "monthly", "1985-01-14", "1985-02-14", 40.0, status="late")
+    got = [(o["date"], o["state"], o["projected"])
+           for o in billcal.occurrences(it, date(2026, 11, 1), date(2026, 11, 30), TODAY)]
+    assert got == [("2026-11-14", "due", True)]
+
+
 def test_the_month_total_is_the_sum_of_its_bills_from_the_recurring_endpoint(data_dir):
     path = config.data_dir() / "full.db"
     gate_dbs.build("full", path, TODAY)

@@ -782,12 +782,14 @@ def watchdog(ledger: Path) -> int:
 class Pytest:
     """One pytest run in its own process group, output to a log, counts from its JUnit XML."""
 
-    def __init__(self, name: str, args: list[str], logs: Path, env: dict):
+    def __init__(self, name: str, args: list[str], logs: Path, env: dict, respect_maxfail: bool = True):
         self.name, self.log, self.xml = name, logs / f"{name}.log", logs / f"{name}.xml"
         self.basetemp = logs / f"tmp-{name}"
         # CHECK_MAXFAIL=N: stop at the Nth failure instead of running on (a fix round learns of a failure in minutes,
-        # not at the end of a 40-minute run; the Nightly's on-demand maxfail input sets it)
-        maxfail = [f"--maxfail={int(m)}"] if (m := os.environ.get("CHECK_MAXFAIL", "").strip()) else []
+        # not at the end of a 40-minute run; the Nightly's on-demand maxfail input sets it). A rerun of the failed
+        # browser tests ignores it (respect_maxfail=False): with it, the rerun would stop before the second test it
+        # was started to answer for, and no failure could ever be cleared.
+        maxfail = [f"--maxfail={int(m)}"] if respect_maxfail and (m := os.environ.get("CHECK_MAXFAIL", "").strip()) else []
         cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:randomly", "-p", "no:cacheprovider", "-rfE",
                f"--junitxml={self.xml}", f"--basetemp={self.basetemp}", *maxfail, *args]
         self.t0 = time.monotonic()
@@ -906,6 +908,70 @@ class Pytest:
     def failures(self) -> list[str]:
         lines = self.log.read_text(errors="replace").splitlines() if self.log.exists() else []
         return [ln for ln in lines if ln.startswith(("FAILED", "ERROR"))] or lines[-25:]
+
+
+def failed_nodeids(run: Pytest) -> list[str]:
+    """The node ids of `run`'s failed tests, from pytest's own short summary (`-rfE`), in the log's order, once each.
+
+    pytest writes `FAILED tests/test_x.py::test_y[390] - <message>` (and `ERROR ...` for a teardown error); the node
+    id is exactly what a second run takes. The JUnit XML on this pytest (9.1) carries no file attribute, so the short
+    summary is where the node ids come from.
+    """
+    seen: list[str] = []
+    if not run.log.exists():
+        return seen
+    for line in run.log.read_text(errors="replace").splitlines():
+        if not line.startswith(("FAILED ", "ERROR ")):
+            continue
+        nodeid = line.split(" ", 1)[1].split(" - ", 1)[0].strip()
+        if "::" in nodeid and nodeid not in seen:   # (a collection ERROR names a file, not a test: not rerun by name)
+            seen.append(nodeid)
+    return seen
+
+
+def rerun_failed(run: Pytest, result: dict, logs: Path, env: dict) -> dict:
+    """Run `run`'s failed tests once more (never more than once); a test that passes then is counted passed, and every
+    one that needed the rerun is kept in `result["rerun"]` for the log and the summary.
+
+    A rerun that didn't complete (fewer tests than asked, or its own `why`) clears nothing: an answer it could not give
+    keeps every failure standing, so the run stays red exactly where it was.
+    """
+    nodeids = failed_nodeids(run) if result.get("failed") and not result.get("rerun") else []
+    if not nodeids:
+        return result
+    again = Pytest(f"{run.name}-rerun", nodeids, logs, env, respect_maxfail=False)
+    r2 = again.wait()
+    failed_again = set(failed_nodeids(again))
+    complete = r2["tests"] == len(nodeids) and not r2.get("why") and r2["failed"] == len(failed_again)
+    passed = [n for n in nodeids if complete and n not in failed_again]
+    result["failed"] = max(0, result["failed"] - len(passed))
+    result["rerun"] = {"ran": nodeids, "passed": passed, "failed": [n for n in nodeids if n not in passed],
+                       "secs": r2["secs"], "complete": complete}
+    return result
+
+
+def rerun_lines(result: dict) -> list[str]:
+    """What the run's one rerun must say in the job log: every test that needed it, by node id."""
+    info = result.get("rerun")
+    if not info:
+        return []
+    out = [f"rerun: passed on rerun: {n}" for n in info["passed"]]
+    out += [f"rerun: failed twice: {n}" for n in info["failed"]]
+    if not info["complete"]:
+        out.append("rerun: the second run did not complete, so every failure stands")
+    return out
+
+
+def rerun_note(results: list[dict]) -> str:
+    """The summary line's list of every test the browser tier needed a rerun for (and how it ended)."""
+    infos = [r["rerun"] for r in results if r.get("rerun")]
+    if not infos:
+        return ""
+    passed = [n for i in infos for n in i["passed"]]
+    failed = [n for i in infos for n in i["failed"]]
+    bits = ([f"{len(passed)} passed on rerun: {', '.join(passed)}"] if passed else []) + \
+           ([f"{len(failed)} failed twice: {', '.join(failed)}"] if failed else [])
+    return "; rerun: " + "; ".join(bits)
 
 
 def layout_summary(reports: list[dict]) -> dict:
@@ -1256,6 +1322,10 @@ def _run_existing(args, kinds: list[str], cpu: list[str], browser: list[str], lo
                      Pytest("browser", ["-n", str(BROWSER_WORKERS), "--dist", "loadfile", *browser], logs, safe_env())]
             runs += phase
             results += [r.wait() for r in phase]
+            # (round 9) the browser tier's failures are run once more, never a no-browser file's and never a gate's:
+            # a test that passes on the rerun counts as passed and the run names every test it reran (`rerun_note`);
+            # one that fails twice keeps its failure and the run stays red.
+            results[1] = rerun_failed(phase[1], results[1], logs, safe_env())
         want = kinds or list(ALL_DBS)
         if 2 in parts:   # then the gates, alone with every Chrome (one queue of every DB's states: all busy to the end)
             # (TEST-SPEED review F1: the DBs said, always: every one, or the --kinds; never what the shell had)
@@ -1271,6 +1341,8 @@ def _run_existing(args, kinds: list[str], cpu: list[str], browser: list[str], lo
             print(f"  {r['name']:<10} {r['tests']:>5} tests, {r['failed']} failed, {r['skipped']} skipped in {fmt(r['secs'])}")
             if r.get("why"):
                 print(f"    {r['why']}")
+            for line in rerun_lines(r):
+                print(f"    {line}")
             if r["failed"]:
                 print("    " + "\n    ".join(run.failures()[:30]))
         if reports:
@@ -1284,7 +1356,7 @@ def _run_existing(args, kinds: list[str], cpu: list[str], browser: list[str], lo
         print(f"FULL{f' (part {args.part}{f', {gates}' if kinds else ''})' if args.part else ''}: "
               f"{sum(r['tests'] for r in results)} tests, {lay['checks']} layout checks"
               + (f" ({sc['checked']} states checked, {sc['absent']} reported absent)" if sc else "")
-              + f", {fails} FAIL in {fmt(time.monotonic() - t0)}", flush=True)
+              + f", {fails} FAIL in {fmt(time.monotonic() - t0)}{rerun_note(results)}", flush=True)
         return 0 if fails == 0 else 1
 
     files = args.files if args.files is not None else changed_files(args.base)
@@ -1308,12 +1380,19 @@ def _run_existing(args, kinds: list[str], cpu: list[str], browser: list[str], lo
     # the gates here, on this (main) thread, while the pytest runs go on in their processes: on SIGTERM tests/cdp.py's
     # handler stops the gate's Chromes, then ours unwinds to main()'s `finally`
     gate = run_gate_subset(p, logs) if p.numbers or p.kinds() else {}
-    results = [r.wait() for r in runs]
+    results = []
+    for run in runs:
+        r = run.wait()
+        if run.name == "browser":   # (round 9) once more for a failed browser test, never for the no-browser files
+            r = rerun_failed(run, r, logs, safe_env())
+        results.append(r)
     fails = sum(r["failed"] for r in results)
     for r, run in zip(results, runs):
         print(f"  {r['name']:<10} {r['tests']:>5} tests, {r['failed']} failed, {r['skipped']} skipped in {fmt(r['secs'])}")
         if r.get("why"):
             print(f"    {r['why']}")
+        for line in rerun_lines(r):
+            print(f"    {line}")
         if r["failed"]:
             print("    " + "\n    ".join(run.failures()[:30]))
     lay = gate.get("layout") or layout_summary([])
@@ -1330,7 +1409,7 @@ def _run_existing(args, kinds: list[str], cpu: list[str], browser: list[str], lo
         fails += lay["fail"] + gate["numbers_fail"] + len(gate["missing"])
     print(f"FAST: {sum(r['tests'] for r in results)} tests, {lay['checks']} layout checks, "
           f"{gate.get('numbers', 0)} numbers checks, {fails} FAIL in {fmt(time.monotonic() - t0)}; "
-          f"narrowed: {narrowed} (`check.py full` before a task is done)", flush=True)
+          f"narrowed: {narrowed} (`check.py full` before a task is done){rerun_note(results)}", flush=True)
     return 0 if fails == 0 else 1
 
 

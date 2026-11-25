@@ -133,7 +133,8 @@ shape-checked before it is decoded. Errors from SimpleFIN's `errlist` are stripp
 
 ## Database version
 
-This release writes schema v21 (`db.SCHEMA_VERSION`): `items.provider`, `accounts.conn_id`, the widened
-`transactions.source` and the `simplefin_requests` request-budget table. The migration from v20 is additive and keeps
-every row. A 0.3.0 binary opening a v21 file does not recognise SimpleFIN: it treats a `simplefin:*` item as a Plaid
-item with an empty token. Back up before upgrading, and do not downgrade.
+The SimpleFIN step is schema v21: `items.provider`, `accounts.conn_id`, the widened `transactions.source` and the
+`simplefin_requests` request-budget table; `db.SCHEMA_VERSION` has moved on with later steps and its comment lists
+them. The migration from v20 is additive and keeps every row. A 0.3.0 binary opening a v21 file does not recognise
+SimpleFIN: it treats a `simplefin:*` item as a Plaid item with an empty token. Back up before upgrading, and do not
+downgrade.

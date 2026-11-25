@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 import pytest
 
 import demo_data
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, find_chrome, tap
 from factory import tx
 from hermes_finance import db, groupbudget
 
@@ -120,15 +120,6 @@ def get_json(b, path: str):
     return b.js(f"fetch({json.dumps(path)}).then((r) => r.json())")
 
 
-def tap(b, selector):
-    box = b.js(f"""(() => {{const el=document.querySelector({json.dumps(selector)});
-        el.scrollIntoView({{block:'center'}}); const r=el.getBoundingClientRect();
-        return {{x:r.x+r.width/2,y:r.y+r.height/2}};}})()""")
-    b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
-    b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
-    b.settle()
-
-
 def key(b, name):
     vk = {"Escape": 27, "Enter": 13}
     b.call("Input.dispatchKeyEvent", type="keyDown", key=name, code=name, windowsVirtualKeyCode=vk[name])
@@ -182,7 +173,9 @@ def test_a_groups_details_popover(tmp_path, width, food):
         d = get_json(b, "/api/budgets")
         g = group(d, "Food")
         sizes_ok(b)
-        tap(b, f'{FOOD} .help-trigger[data-help="budget-group"]')
+        tap(b, f'{FOOD} .help-trigger[data-help="budget-group"]',
+            opened=f"!!document.querySelector({json.dumps(PANEL)})")
+        assert b.until(f"!!document.querySelector({json.dumps(PANEL)})"), "the Food group's popover opened"
         assert q(b, PANEL, "el.getAttribute('aria-label')") == "Details for Food"
         # 1. the group's six bars, the dashed line at the group budget or the caps' sum
         assert b.js(f"document.querySelectorAll({json.dumps(PANEL + ' .hist .hc')}).length") == len(d["history"]["months"]) == 6
@@ -236,7 +229,8 @@ def test_a_groups_details_popover(tmp_path, width, food):
         billed = group(d, named[0])
         merged = [bill for n in billed["categories"] for bill in (cats.get(n) or {}).get("bills_due", [])]
         sel = f'tr.g[data-group={json.dumps(billed["name"])}] .help-trigger[data-help="budget-group"]'
-        tap(b, sel)
+        tap(b, sel, opened=f"!!document.querySelector({json.dumps(PANEL + ' h4')})")
+        assert b.until(f"!!document.querySelector({json.dumps(PANEL + ' h4')})"), "the billed group's popover opened"
         heads = b.js(f"[...document.querySelectorAll({json.dumps(PANEL + ' h4')})].map((e) => e.textContent)")
         assert "Still due" in heads and "This month" in heads, heads
         assert b.js(f"document.querySelectorAll({json.dumps(PANEL + ' .help-bill')}).length") == len(merged) > 0
