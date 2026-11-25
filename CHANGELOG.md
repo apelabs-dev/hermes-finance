@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.4.0...v0.5.0) (2026-11-25)
+
+
+### Features
+
+* PDF statement import, Reports, Cash flow and Forecast ([#28](https://github.com/apelabs-dev/hermes-finance/issues/28)) ([347b81e](https://github.com/apelabs-dev/hermes-finance/commit/347b81eff8976001441157e03a0687b3e6329e90))
+
 ## [0.4.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.3.0...v0.4.0) (2026-11-23)
 
 
