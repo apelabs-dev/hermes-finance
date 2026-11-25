@@ -19,8 +19,9 @@ The memory ceiling is enforced with an RSS sampler on both POSIX systems, plus a
   page/word/character caps, with no memory ceiling and no child-side `signal.alarm` (the parent's clock still kills the
   child). `_warn_without_ceiling` logs that once, so a deployment there is not silently weaker.
 
-At most `SLOTS` reads run at once: the review measured 6 simultaneous uploads as 6 live children, each peaking at
-323-342 MB against the 256 MB ceiling.
+At most `SLOTS` reads run at once: the review measured 6 simultaneous uploads as 6 live children. A child's peak is
+not the 256 MB ceiling: on macOS the review measured 307-786 MB, because a fast inflate outruns one 50 ms `ps`
+sample and there is no `RLIMIT_AS` backstop there (above).
 
 Every limit hit raises `words.TooComplex`, which the importer turns into the product's `pdf_too_complex` refusal.
 """
@@ -47,7 +48,7 @@ log = logging.getLogger(__name__)
 SRC = str(Path(__file__).resolve().parent.parent.parent)   # the directory hermes_finance is imported from
 MAX_OUT = 64 * 1024 * 1024                         # the child's JSON answer (the word cap bounds it well below this)
 SAMPLE = 0.05                                      # seconds between two RSS samples
-SLOTS = 2                                          # reads allowed at once: one child peaks at 256-340 MB
+SLOTS = 2                                          # reads at once (a macOS child can peak 307-786 MB between samples)
 
 _SLOTS = threading.BoundedSemaphore(SLOTS)
 
@@ -118,8 +119,8 @@ def read(raw: bytes, password: str | None = None, *, limits: Limits | None = Non
     """(pages, sizes, producer) for one PDF, or words.TooComplex when a limit is hit; any other failure is
     words.WordReadError (never a raw pdfminer exception on the request thread).
 
-    At most SLOTS reads run at once (a child peaks at 256-340 MB, so N uploads were N x that); a read that has to
-    wait for a slot waits before its clock starts.
+    At most SLOTS reads run at once (a child peaks above the 256 MB ceiling — 307-786 MB measured on macOS — so N
+    uploads were N x that); a read that has to wait for a slot waits before its clock starts.
     """
     _warn_without_ceiling()
     limits = LIMITS if limits is None else limits
