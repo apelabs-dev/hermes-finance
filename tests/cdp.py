@@ -233,6 +233,9 @@ OWNER_FILE = "hf-owner"   # (TEST-SPEED) in each profile, written as soon as it'
 PUBLISH_LOCK = "hf-cdp.lock"   # (TEST-SPEED review N2) next to the profiles; not hf-cdp-*, so never swept
 PUBLISH_WAIT = 10              # s: a Chrome() waits this long at most for a sweep's listing to end
 GRACE = 5             # s: close() gives Chrome's process group this long to exit on SIGTERM before SIGKILL
+START_ATTEMPTS = 3    # a Chrome that dies before it answers (early, or SIGKILLed: -9) is launched again, up to twice
+START_BACKOFF = (0.5, 1.5)   # s: before the second and the third launch
+
 ORPHAN_AGE = 600      # s: a left-behind Chrome or profile younger than this is never reaped (it may be a run starting up)
 _PROFILE_ARG = re.compile(r"--user-data-dir=(\S*/" + PROFILE_PREFIX + r"[A-Za-z0-9_]+)")
 _PROFILE_NAME = re.compile(PROFILE_PREFIX + r"[A-Za-z0-9_]+")
@@ -1137,6 +1140,36 @@ class Chrome:
         _user_temp_dir()   # (2026-11-15) cached before anything can stop a Chrome: a stop must never run getconf
         _sweep_once()
         _install_handlers()   # a no-op unless this module was first imported off the main thread
+        for attempt in range(1, START_ATTEMPTS + 1):
+            try:
+                self._start()
+                return
+            except RuntimeError as e:
+                # A browser that starts but misbehaves (its process still running) is never retried: only one that
+                # died before it answered — early (the start's "(it exited)") or SIGKILLed (exit -9: Nightly
+                # 45648085672's "did not start (exited -9)") — is launched again. A retry that left the dead one's
+                # helpers behind would stack a second Chrome on the first's slot and processes, so the failed
+                # attempt's whole group is stopped first (close() is idempotent: the failure path already did it).
+                dead = self.__dict__.get("proc")
+                rc = None if dead is None else dead.returncode
+                if attempt == START_ATTEMPTS or not ("(it exited)" in str(e) or rc == -9):
+                    raise
+                if dead is not None and not self.__dict__.get("_stopped", True):
+                    self.close()
+                print(f"cdp: Chrome exited before it answered (exit {rc}); starting it again "
+                      f"({attempt + 1} of {START_ATTEMPTS})", file=sys.stderr, flush=True)
+                time.sleep(START_BACKOFF[min(attempt, len(START_BACKOFF)) - 1])
+
+    def _start(self) -> None:
+        """One launch of Chrome and its DevTools connection (`__init__` starts it again when it dies before answering).
+
+        Everything a stopped attempt leaves on the object goes first: its `_stopped`, `_done`, `_finished`, `_stopper`,
+        `_singleton`, slot, profile and process are the last launch's, and the next attempt needs its own (a stale
+        `_finished` would skip deleting the new profile, and a stale `_stopping` would make its `_connect` give up).
+        """
+        for key in ("_stopped", "_done", "_stuck", "_stopper", "_finished", "_singleton", "_stopping", "ws", "profile",
+                    "proc", "pgid", "slot", "log", "wedged", "_launch_at", "_started_entry", "_devtools_secs"):
+            self.__dict__.pop(key, None)
         self._stopped = False
         self._done = threading.Event()
         self.thread = threading.get_ident()
@@ -1822,6 +1855,52 @@ class Chrome:
                if m["method"] == "Network.requestWillBeSent"]
         self.events = [m for m in self.events if m["method"] != "Network.requestWillBeSent"]
         return out
+
+
+# --- a click that waits: for the box to settle, and for the element to be there ---------------------------------------
+
+TAP_BOX = """(() => { const el = document.querySelector(%s); if (!el) return null;
+  el.scrollIntoView({block: 'center', behavior: 'instant'});
+  const r = el.getBoundingClientRect(), box = {x: r.x + r.width / 2, y: r.y + r.height / 2};
+  const prev = window.__tapBox; window.__tapBox = box;
+  return prev && Math.abs(prev.x - box.x) < 0.5 && Math.abs(prev.y - box.y) < 0.5 ? box : null; })()"""
+
+
+def tap(b: Chrome, selector: str, opened: str | None = None) -> None:
+    """Click the centre of `selector`; with `opened` (a JS condition), click again if the click was lost.
+
+    Reading the rect right after `scrollIntoView({block: 'center'})` and clicking once let a scroll or a re-render
+    still in flight move the target between the read and the mouse event: the click landed elsewhere and the panel
+    the test read next was never built (`assert 'false' == 'true'` on `aria-pressed`, Nightly 44763515813;
+    `Cannot read properties of null (reading 'getAttribute')`, Nightly 45589087302). `behavior: 'instant'` keeps the
+    scroll from animating, `until` waits for two reads of the box to agree, `settled()` waits for the click's own
+    rendering, and the retry covers a layout shift after that read. A retry only happens while `opened` is absent,
+    so it can never toggle an open panel shut. `__tapBox` is cleared first: the box a previous tap left behind must
+    not count as this call's first read (two "agreeing" reads would be that stale one plus a new one).
+    """
+    b.js("window.__tapBox = null")
+    for _ in range(3):
+        box = b.until(TAP_BOX % json.dumps(selector))
+        assert box, f"the click point for {selector} never settled"
+        b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
+        b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
+        b.settled()
+        if opened is None or b.until(opened, timeout=2.0):
+            return
+    assert b.until(opened, timeout=0.1), f"the click on {selector} never produced {opened}"
+
+
+def click_when_present(b: Chrome, selector: str, timeout: float = 8.0) -> bool:
+    """Click `selector` as soon as it is in the page; True once clicked, False if it never appeared.
+
+    `document.querySelector(sel).click()` right after `settle()` assumed the element was already drawn: a sheet still
+    sliding in, a list still rendering or a panel built from a late answer left `null` and the test died with
+    `Cannot read properties of null (reading 'click')` (Nightly 45648085672, task15). Polling (the shape
+    `open_chooser` / `open_cli` in test_browser_premerge_polish.py use) waits for the element the test means, and a
+    False answer fails the caller's own assert instead of raising a TypeError in the page.
+    """
+    return bool(b.until(f"(() => {{ const el = document.querySelector({json.dumps(selector)}); if (!el) return false;"
+                        f" el.click(); return true; }})()", timeout))
 
 
 class Server:

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import gate_dbs
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, click_when_present, find_chrome
 from hermes_finance import classify, db, goals, insights
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
@@ -236,7 +236,7 @@ def test_a_csv_imported_again_goes_into_the_accounts_it_made(chrome, tmp_path):
         chrome.size(1280, 900)
         chrome.goto(f"{srv.url}/?t={time.time():.3f}#/accounts")
         chrome.settle()
-        chrome.js("document.querySelector('[data-add=home]').click()")
+        assert click_when_present(chrome, "[data-add=home]"), "the Add account control never appeared"
         chrome.js("[...document.querySelectorAll('#sheet .opt')].find((o) => o.textContent.startsWith('Import a file')).click()")
         _drop(chrome, first, "everyday-export.csv")
         assert chrome.js(WAIT.format(sel=json.dumps("#sheet table.map")))

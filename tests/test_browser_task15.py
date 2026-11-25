@@ -15,7 +15,7 @@ import time
 import pytest
 
 import gate_dbs
-from cdp import READY, Chrome, Server, find_chrome
+from cdp import READY, Chrome, Server, click_when_present, find_chrome
 from hermes_finance import db, insights
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
@@ -120,13 +120,13 @@ def nav(b, page, title):  # in-app navigation: the hash only, no reload
 
 
 def open_sheet(b, via="#page .nwseg button[data-nw=custom]"):
-    b.js(f"document.querySelector({via!r}).click()")
+    assert click_when_present(b, via), f"the sheet's opener never appeared: {via}"
     b.settled()   # P3a motion: the sheet slides in for up to 250 ms, longer than settle()'s two frames
     return b.js(SHEET)
 
 
 def click(b, sel):
-    b.js(f"document.querySelector({sel!r}).click()")
+    assert click_when_present(b, sel), f"nothing to click: {sel}"
     b.settle()
 
 

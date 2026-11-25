@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import gate_dbs
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, find_chrome, tap
 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
 WIDTHS = [360, 390, 430, 768, 1024, 1280, 1440]
@@ -42,33 +42,6 @@ def go(b, site, page, width=390):
 
 
 HELP_DIALOG = "document.querySelector('.help-panel')?.getAttribute('role') === 'dialog'"
-
-TAP_BOX = """(() => { const el = document.querySelector(%s); if (!el) return null;
-  el.scrollIntoView({block: 'center', behavior: 'instant'});
-  const r = el.getBoundingClientRect(), box = {x: r.x + r.width / 2, y: r.y + r.height / 2};
-  const prev = window.__tapBox; window.__tapBox = box;
-  return prev && Math.abs(prev.x - box.x) < 0.5 && Math.abs(prev.y - box.y) < 0.5 ? box : null; })()"""
-
-
-def tap(b, selector, opened: str | None = None):
-    """Click the element's centre; with `opened`, click again if the click was lost.
-
-    The old helper read the rect immediately after `scrollIntoView({block:'center'})` and clicked once, so a scroll or
-    re-render still in flight moved the target between the read and the mouse event: the click landed elsewhere and
-    the panel the test read next was never built — `Cannot read properties of null (reading 'getAttribute')` (Nightly
-    45589087302, dark-390). `behavior:'instant'` keeps the scroll from animating and `until` waits for two reads of the
-    box to agree; the retry covers a layout shift after that read. A retry only happens while the panel is absent, so
-    it can never toggle an open one shut.
-    """
-    for _ in range(3):
-        box = b.until(TAP_BOX % json.dumps(selector))
-        assert box, f"the click point for {selector} never settled"
-        b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
-        b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
-        b.settle()
-        if opened is None or b.until(opened, timeout=2.0):
-            return
-    assert b.until(opened, timeout=0.1), f"the click on {selector} never produced {opened}"
 
 
 def key(b, value):

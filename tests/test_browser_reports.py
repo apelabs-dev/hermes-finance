@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 import demo_data
-from cdp import Chrome, Server, find_chrome
+from cdp import Chrome, Server, find_chrome, tap
 from hermes_finance import db, insights, reports
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -26,15 +26,6 @@ import audit_layout  # noqa: E402  (the layout gate's own checks, run against a 
 pytestmark = pytest.mark.skipif(find_chrome() is None, reason="Chrome is not installed")
 TODAY = date(2026, 11, 15)
 SHOTS = Path(os.environ.get("REPORTS_SHOTS", Path(__file__).resolve().parents[1] / "shots" / "reports"))
-
-
-def tap(b, selector):
-    box = b.js(f"""(() => {{const el=document.querySelector({json.dumps(selector)});
-        el.scrollIntoView({{block:'center'}}); const r=el.getBoundingClientRect();
-        return {{x:r.x+r.width/2,y:r.y+r.height/2}};}})()""")
-    b.call("Input.dispatchMouseEvent", type="mousePressed", button="left", clickCount=1, **box)
-    b.call("Input.dispatchMouseEvent", type="mouseReleased", button="left", clickCount=1, **box)
-    b.settle()
 
 
 def amount(text):
