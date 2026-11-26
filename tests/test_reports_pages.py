@@ -435,3 +435,74 @@ def test_the_script_never_writes_html():
     for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
         assert bad not in js, bad
     assert "HF_EXT" in js and "RENDER.reports" in js
+
+
+# --- 0.5 UI fix: the Reports pages take the Transactions window (a range, 30d, all time) ----------------------
+
+def test_cashflow_for_a_range_is_money_flows_own_numbers(app, books):
+    status, d = _get(app, "/api/reports/cashflow?since=2026-10-10&until=2026-11-20")
+    flow = reports.money_flow(books, "2026-10-10", "2026-11-20")
+    assert status == 200 and d["month"] is None and d["period"] == {"start": "2026-10-10", "end": "2026-11-20"}
+    assert d["window"] == {"kind": "range", "days": 42}
+    for key in ("money_in", "money_out", "remaining", "income", "groups", "moves"):
+        assert d[key] == flow[key]
+
+
+def test_a_last_n_days_window_ends_today_and_all_time_starts_at_the_first_transaction(app, books):
+    status, d = _get(app, "/api/reports/cashflow?since=30d")
+    today = date.today()
+    assert status == 200 and d["period"]["end"] == d["today"] and d["window"]["days"] == 30
+    status, d = _get(app, "/api/reports/cashflow?window=all")
+    assert status == 200 and d["window"]["kind"] == "all" and d["period"]["start"] == "2025-09-01"
+
+
+def test_spending_for_a_range_shows_the_whole_months_it_touches(app, books):
+    status, d = _get(app, "/api/reports/spending?since=2026-08-15&until=2026-10-02")
+    assert status == 200 and d["month"] == "2026-10"
+    assert [m["month"] for m in d["year"]["months"]] == ["2026-08", "2026-09", "2026-10"]
+    status, d = _get(app, "/api/reports/spending?since=2026-11-02&until=2026-11-09")      # one month still draws two
+    assert status == 200 and [m["month"] for m in d["year"]["months"]] == ["2026-10", "2026-11"]
+    status, d = _get(app, "/api/reports/spending?window=all")
+    assert status == 200 and len(d["year"]["months"]) == reports.MAX_YEAR_MONTHS and d["window"]["kind"] == "all"
+
+
+def test_the_month_form_is_unchanged_and_says_so(app, books):
+    status, d = _get(app, "/api/reports/cashflow?month=2026-10")
+    assert status == 200 and d["month"] == "2026-10" and d["window"]["kind"] == "month"
+
+
+@pytest.mark.parametrize("query", [
+    "since=2026-11-20&until=2026-11-01",           # backwards
+    "since=2026-10-01&until=2999-01-01",           # ends in the future
+    "since=2026-13-45&until=2026-11-01",           # not a date
+    "since=1800-01-01&until=2026-11-01",           # before 1900
+    "until=2026-11-01",                            # no beginning
+    "since=nope",
+    "since=0d", "since=99999999d",
+    "month=2026-10&since=2026-10-01",              # two ways to say the period
+    "window=week", "window=all&month=2026-10",
+    "since=2026-11-01'%20OR%201=1--&until=2026-11-02",
+])
+def test_bad_windows_are_400_on_both_pages(app, books, query):
+    for page in ("cashflow", "spending"):
+        status, d = _get(app, f"/api/reports/{page}?{query}")
+        assert status == 400 and "error" in d, (page, query, status)
+
+
+def test_spending_refuses_more_than_24_months_but_cashflow_does_not(app, books):
+    assert _get(app, "/api/reports/spending?since=2020-01-01&until=2026-11-01")[0] == 400
+    assert _get(app, "/api/reports/cashflow?since=2020-01-01&until=2026-11-01")[0] == 200
+
+
+def test_forecast_until_is_the_same_as_days(app, books):
+    from datetime import timedelta
+    until = (date.today() + timedelta(days=45)).isoformat()
+    status, d = _get(app, f"/api/reports/forecast?until={until}")
+    assert status == 200 and d["horizon"]["days"] == 45
+    status, e = _get(app, "/api/reports/forecast?days=45")
+    assert e["horizon"]["days"] == 45 and e["horizon"]["end"] == d["horizon"]["end"]
+
+
+@pytest.mark.parametrize("query", ["until=2020-01-01", "until=2999-01-01", "until=nope", "until=2026-12-01&days=30"])
+def test_bad_forecast_ends_are_400(app, books, query):
+    assert _get(app, f"/api/reports/forecast?{query}")[0] == 400

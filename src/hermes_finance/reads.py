@@ -165,6 +165,11 @@ def _day(value: str, flag: str) -> date:
     return d
 
 
+def parse_day(value: str, flag: str) -> date:
+    """One YYYY-MM-DD date, from 1900 on (the Reports pages' `until`; the same check as `--until`)."""
+    return _day(value, flag)
+
+
 def parse_days(value: str, flag: str, lo: int, hi: int, bare: bool = False) -> int:
     """'14d' (or '14' when `bare`) -> 14, within lo..hi."""
     m = DAYS_RE.fullmatch(value) or (re.fullmatch(r"([0-9]{1,5})", value) if bare else None)

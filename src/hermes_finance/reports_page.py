@@ -12,7 +12,7 @@ import sqlite3
 from datetime import date
 from typing import Any, Callable
 
-from . import api, insights, reports
+from . import api, insights, reads, reports
 
 
 def _month(params: dict[str, str], today: date) -> str:
@@ -26,35 +26,89 @@ def _bounds(month: str) -> tuple[str, str]:
     return f"{month}-01", f"{month}-{insights.days_in_month(month):02d}"
 
 
-def spending(conn: sqlite3.Connection, params: dict[str, str], today: date) -> dict[str, Any]:
-    """The Spending page: the selected month plus the 12-month heatmap, its category rows and the four KPIs."""
-    month = _month(params, today)
-    start, end = _bounds(month)
+def _window(conn: sqlite3.Connection, params: dict[str, str], today: date) -> tuple[reads.Period, bool]:
+    """The period a Spending or Cash flow request asks for, from the same parser the CLI and the agent tools use
+    (`reads.parse_period`): `month`, or `since` (Nd or a date) with `until`, or `window=all`. The dates come from the
+    URL, so each is checked here: a real date from 1900 on, a range that begins somewhere and never ends after today.
+    Returns the period and whether it was `window=all`."""
+    month, since, until = (params.get(k) or None for k in ("month", "since", "until"))
+    window = params.get("window") or None
+    if window is not None:
+        if window != "all":
+            raise api.ApiError("window must be all")
+        if month or since or until:
+            raise api.ApiError("window can't be combined with month, since or until")
+        first = conn.execute("SELECT MIN(v.date) FROM v_transactions v").fetchone()[0]
+        return reads.Period("range", first if isinstance(first, str) else today.isoformat(), today.isoformat()), True
+    if month is not None and (since or until):
+        raise api.ApiError("month can't be combined with since or until")
+    if since is None and until is None:       # a month (the default): the page's own check, unchanged
+        return reads.Period.of_month(_month(params, today)), False
     try:
-        year = reports.year_spending(conn, today, end_month=month)
+        period = reads.parse_period(today, None, since, until, default="month")
+    except reads.ReadError as e:
+        raise api.ApiError(str(e).replace("--", "")) from None
+    if not period.start:
+        raise api.ApiError("until needs a since")
+    if period.end > today.isoformat():
+        raise api.ApiError("the range ends in the future")
+    return period, False
+
+
+def _kind(period: reads.Period, every: bool) -> dict[str, Any]:
+    """What the page's time-window control shows: a month, a range of days (7d, 30d, a custom range) or all time."""
+    return {"kind": "all" if every else period.kind, "days": period.days()}
+
+
+def spending(conn: sqlite3.Connection, params: dict[str, str], today: date) -> dict[str, Any]:
+    """The Spending page: the 12-month heatmap ending with the selected month, or, for a date range, the whole
+    months (2 to 24) the range touches; its category rows and the four KPIs."""
+    period, every = _window(conn, params, today)
+    if period.kind == "month":
+        end_month, months = period.month, reports.YEAR_MONTHS
+    else:
+        end_month = period.end[:7]
+        months = (int(period.end[:4]) - int(period.start[:4])) * 12 + int(period.end[5:7]) - int(period.start[5:7]) + 1
+        if every:
+            months = reports.MAX_YEAR_MONTHS
+        elif months > reports.MAX_YEAR_MONTHS:
+            raise api.ApiError(f"Spending shows at most {reports.MAX_YEAR_MONTHS} months")
+        months = max(months, 2)
+    try:
+        year = reports.year_spending(conn, today, months=months, end_month=end_month)
     except reports.ReportError as e:
         raise api.ApiError(str(e)) from None
-    return {"view": "spending", "today": today.isoformat(), "month": month, "period": {"start": start, "end": end},
-            "year": year}
+    return {"view": "spending", "today": today.isoformat(), "month": end_month,
+            "period": {"start": period.start, "end": period.end}, "window": _kind(period, every), "year": year}
 
 
 def cashflow(conn: sqlite3.Connection, params: dict[str, str], today: date) -> dict[str, Any]:
     """The Cash flow page: income sources, spending groups, what is left after spending, and the moves between
-    accounts (listed, never drawn)."""
-    month = _month(params, today)
-    start, end = _bounds(month)
+    accounts (listed, never drawn), for a month or a date range."""
+    period, every = _window(conn, params, today)
     try:
-        flow = reports.money_flow(conn, start, end)
+        flow = reports.money_flow(conn, period.start, period.end)
     except reports.ReportError as e:
         raise api.ApiError(str(e)) from None
-    return {"view": "cashflow", "today": today.isoformat(), "month": month, "period": {"start": start, "end": end},
-            **flow}
+    return {"view": "cashflow", "today": today.isoformat(), "month": period.month,
+            "period": {"start": period.start, "end": period.end}, "window": _kind(period, every), **flow}
 
 
 def forecast(conn: sqlite3.Connection, params: dict[str, str], today: date) -> dict[str, Any]:
-    """The Forecast page: the next `days` days on the chosen accounts, the account ticks (q4), the detected paychecks
-    that are waiting for an answer (q5) and the two named everyday-spending lines (q6)."""
-    days = api.int_param(params.get("days"), reports.FORECAST_DAYS, 1, reports.MAX_FORECAST_DAYS, "days")
+    """The Forecast page: the next `days` days (or up to the date `until`) on the chosen accounts, the account ticks
+    (q4), the detected paychecks that are waiting for an answer (q5) and the two named everyday-spending lines (q6)."""
+    until = params.get("until") or None
+    if until is not None and params.get("days"):
+        raise api.ApiError("days can't be combined with until")
+    if until is not None:
+        try:
+            days = (reads.parse_day(until, "until") - today).days
+        except reads.ReadError as e:
+            raise api.ApiError(str(e)) from None
+        if not 1 <= days <= reports.MAX_FORECAST_DAYS:
+            raise api.ApiError(f"until must be within the next {reports.MAX_FORECAST_DAYS} days")
+    else:
+        days = api.int_param(params.get("days"), reports.FORECAST_DAYS, 1, reports.MAX_FORECAST_DAYS, "days")
     try:
         payload = reports.forecast(conn, today, days)
     except reports.ReportError as e:

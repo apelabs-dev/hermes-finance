@@ -695,7 +695,7 @@
   const PAGES = {overview: 'Overview', transactions: 'Transactions', budgets: 'Budgets', recurring: 'Recurring',
     accounts: 'Accounts', investments: 'Investments', debt: 'Loans & debt', asset: 'Account'};
   const NAV_OF = {asset: 'accounts'};  // a car's / property's page sits under Accounts
-  const MONTH_PAGES = new Set(['overview', 'transactions', 'budgets']);
+  const MONTH_PAGES = new Set(['overview', 'transactions', 'budgets', 'reports']);
   const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
   const KINDS = [['all', 'All'], ['review', 'Needs review'], ['spend', 'Spending'], ['income', 'Income'], ['transfers', 'Transfers']];
   const S = {month: thisMonth(), page: null, params: new URLSearchParams(), token: 0, charts: [],
@@ -1743,6 +1743,7 @@
     }
     const keep = {};
     for (const [k, v] of S.params) keep[k] = v;
+    if (S.page === 'reports') { delete keep.since; delete keep.until; delete keep.window; }   // a month replaces a range
     location.hash = hashFor(S.page, keep, m);
   }
 
@@ -3410,13 +3411,21 @@
   }
   function renderTxWindowControl() {
     const tx = S.page === 'transactions';
+    const win = tx || S.page === 'reports';   // the Reports pages take the same window control (reports.js draws it)
     const mon = $('mon');
-    mon.classList.toggle('txwindow', tx);
-    mon.setAttribute('aria-label', tx ? 'Time window' : 'Month');
+    mon.classList.toggle('txwindow', win);
+    mon.setAttribute('aria-label', win ? 'Time window' : 'Month');
     const old = $('monl');
-    if ((old.tagName === 'BUTTON') !== tx) {
-      old.replaceWith(tx ? h('button', {id: 'monl', type: 'button', 'aria-haspopup': 'dialog',
-        'aria-expanded': 'false', onclick: openTxWindow}) : h('span', {id: 'monl', 'aria-live': 'polite'}));
+    if ((old.tagName === 'BUTTON') !== win) {
+      old.replaceWith(win ? h('button', {id: 'monl', type: 'button', 'aria-haspopup': 'dialog',
+        'aria-expanded': 'false', onclick: () => (S.page === 'reports' ? HOOKS.repWindow.open() : openTxWindow())})
+        : h('span', {id: 'monl', 'aria-live': 'polite'}));
+    }
+    if (S.page === 'reports') {
+      $('mprev').hidden = $('mnext').hidden = false;
+      document.getElementById('rgclear')?.remove();
+      if (HOOKS.repWindow) HOOKS.repWindow.draw();
+      return;
     }
     const f = tx && TX.filters;
     const range = f && (f.since || f.until || f.window === 'all' || txAutoAll(f));

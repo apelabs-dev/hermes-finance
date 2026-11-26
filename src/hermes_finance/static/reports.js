@@ -10,19 +10,32 @@
   'use strict';
   const {$, h, fill, sv, icon, glyph, card, money, money2, bigMoney, plural, monthName, monthLabel, monthShort,
     thisMonth, fmtDate, RGB, ACC, OK, WARN, BAD, PAGES, S, RENDER, api, post, toast, route,
-    errorCard, skel, lnk, pill, msgBox, ibadge, rgbOf} = X;
+    errorCard, skel, lnk, pill, msgBox, ibadge, rgbOf, HOOKS, todayISO} = X;
 
   PAGES.reports = 'Reports';
 
   const VIEWS = [['spending', 'Spending'], ['cashflow', 'Cash flow'], ['forecast', 'Forecast']];
   const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-  const REP = {view: 'spending', month: null, open: null, busy: false};
+  const REP = {view: 'spending', key: '', open: null, busy: false, sc: {}, fc: {}};
+  const FORECAST_CHOICES = [30, 60, 90];
   const pct1 = (n) => (n == null ? '—' : `${Number(n).toFixed(1)}%`);
   const pct0 = (n) => (n == null ? '—' : `${Math.round(Number(n))}%`);
   const signedSpend = (n) => (n < 0 ? `−${money2(-n)}` : money2(n));
   const shortMonth = (m) => monthShort(m);
   const monthText = (m) => monthLabel(m);
   const RGB_OF = (value, fallback) => (typeof value === 'string' && /^\d{1,3},\d{1,3},\d{1,3}$/.test(value) ? value : fallback);
+
+  // The helper text of a card lives behind its ⓘ (a details popover that opens in place), never under the heading.
+  function info(paras, cls) {
+    const list = (Array.isArray(paras) ? paras : [paras]).filter(Boolean);
+    if (!list.length) return null;
+    return h('details', {class: `vx-i${cls ? ` ${cls}` : ''}`},
+      h('summary', {'aria-label': 'About this card'}, icon('info')),
+      h('div', {class: 'vx-pop', role: 'note'}, list.map((t) => h('p', {}, t))));
+  }
+  const closeInfo = (except) => document.querySelectorAll('.vx-i[open]').forEach((el) => { if (el !== except) el.removeAttribute('open'); });
+  document.addEventListener('click', (e) => closeInfo(e.target.closest ? e.target.closest('.vx-i') : null));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeInfo(null); });
 
   function shiftMonth(m, n) {
     const k = Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1 + n;
@@ -35,14 +48,9 @@
     return Math.max(280, page - (innerWidth < 1024 ? 30 : 44));
   }
 
-  function reportsHash(view, month) {
-    return `#/reports?view=${encodeURIComponent(view)}&month=${encodeURIComponent(month)}`;
-  }
-
-  function go(view, month) {
-    location.hash = reportsHash(view, month);
-  }
-
+  // The window the pill (the Transactions control, in the page header) shows. Spending and Cash flow: a month (default),
+  // Nd, a custom range or all time; Forecast: the next 30, 60 or 90 days, or up to a date.
+  const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
   function viewOf() {
     const v = S.params.get('view');
     return VIEWS.some(([k]) => k === v) ? v : 'spending';
@@ -53,38 +61,175 @@
     return m && MONTH_RE.test(m) && m <= thisMonth() ? m : thisMonth();
   }
 
-  // --- the bar above every view: the three pages and the period ---------------------------------------------------
-  function topBar(view, month) {
+  function windowOf() {
+    const view = viewOf();
+    const p = S.params;
+    if (view === 'forecast') {
+      const until = ISO_RE.test(p.get('until') || '') ? p.get('until') : '';
+      const days = FORECAST_CHOICES.includes(Number(p.get('days'))) ? Number(p.get('days')) : 30;
+      return until ? {view, kind: 'until', until} : {view, kind: 'days', days};
+    }
+    const since = p.get('since') || '', until = p.get('until') || '';
+    if (p.get('window') === 'all') return {view, kind: 'all'};
+    if (/^\d{1,3}d$/.test(since) && !until) return {view, kind: 'days', since, n: parseInt(since, 10)};
+    if (ISO_RE.test(since) && ISO_RE.test(until)) return {view, kind: 'range', since, until};
+    return {view, kind: 'month', month: monthOf()};
+  }
+
+  // the query a window sends, and the hash pieces that keep it
+  function windowParams(w) {
+    if (w.view === 'forecast') return w.kind === 'until' ? {until: w.until} : {days: w.days};
+    if (w.kind === 'all') return {window: 'all'};
+    if (w.kind === 'days') return {since: w.since};
+    if (w.kind === 'range') return {since: w.since, until: w.until};
+    return {month: w.month};
+  }
+
+  function reportsHash(view, params) {
+    const q = new URLSearchParams({view});
+    for (const [k, v] of Object.entries(params || {})) if (v) q.set(k, v);
+    return `#/reports?${q.toString()}`;
+  }
+
+  function go(view, params) {
+    location.hash = reportsHash(view, params);
+  }
+
+  function windowLabel(w) {
+    if (w.view === 'forecast') return w.kind === 'until' ? `Until ${fmtDate(w.until)}` : `Next ${w.days} days`;
+    if (w.kind === 'all') return 'All time';
+    if (w.kind === 'days') return `Last ${w.n} days`;
+    if (w.kind === 'range') return `Custom range · ${fmtDate(w.since)} – ${fmtDate(w.until)}`;
+    if (w.view === 'spending') return w.month === thisMonth() ? 'Last 12 months' : `12 months to ${monthText(w.month)}`;
+    return monthText(w.month);
+  }
+
+  // The pill itself is the app header's own (#mon, the Transactions control); app.js calls this to label it.
+  function drawWindow() {
+    if (S.page !== 'reports') return;
+    const w = windowOf();
+    const mon = $('mon');
+    const fixed = w.view === 'forecast' || w.kind !== 'month';          // no month to step to
+    $('mprev').hidden = $('mnext').hidden = fixed;
+    fill($('monl'), windowLabel(w), icon('chevd'));
+    const away = w.view === 'forecast' ? !(w.kind === 'days' && w.days === 30) : w.kind !== 'month';
+    document.getElementById('rgclear')?.remove();
+    if (away) {
+      mon.append(h('button', {id: 'rgclear', type: 'button', 'aria-label': w.view === 'forecast' ? 'Back to 30 days' : 'Back to months',
+        onclick: () => { go(w.view, {}); $('monl').focus(); }}, icon('x')));
+    }
+  }
+
+  // --- the time-window sheet: the Transactions one (same classes, same layout), with this page's choices ------------
+  let sheet = null;
+  function closeWindow() {
+    if (!sheet) return;
+    const {root, scrim, stop} = sheet;
+    stop();
+    root.remove(); scrim.remove(); sheet = null;
+    const t = $('monl');
+    if (t) { t.setAttribute('aria-expanded', 'false'); HFPopClose.focus(t); }
+  }
+
+  function openWindow() {
+    if (S.page !== 'reports') return;
+    if (sheet) { closeWindow(); return; }
+    const w = windowOf();
+    const forecast = w.view === 'forecast';
+    const today = todayISO();
+    const choose = (params) => { closeWindow(); go(w.view, params); };
+    let year = Number((w.kind === 'month' ? w.month : thisMonth()).slice(0, 4));
+    const months = h('div', {class: 'rgmg'});
+    const yearLabel = h('b');
+    function drawMonths() {
+      yearLabel.textContent = year;
+      fill(months, Array.from({length: 12}, (_, i) => {
+        const m = `${year}-${String(i + 1).padStart(2, '0')}`;
+        return h('button', {class: 'rgm', type: 'button', disabled: m > thisMonth(),
+          'aria-pressed': String(w.kind === 'month' && m === w.month), onclick: () => choose({month: m})}, monthShort(m));
+      }));
+    }
+    const from = h('input', {type: 'date', id: 'rgfrom', min: '1900-01-01', max: today, required: true,
+      value: w.kind === 'range' ? w.since : `${monthOf()}-01`});
+    const to = h('input', {type: 'date', id: 'rgto', min: '1900-01-01', max: today, required: true,
+      value: w.kind === 'range' ? w.until : today});
+    const horizon = new Date(); horizon.setDate(horizon.getDate() + 90);
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+    const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const until = h('input', {type: 'date', id: 'rguntil', min: iso(tomorrow), max: iso(horizon), required: true,
+      value: w.kind === 'until' ? w.until : iso(horizon)});
+    const form = h('form', {class: 'rgc', onsubmit: (e) => {
+      e.preventDefault();
+      if (!forecast) to.setCustomValidity(from.value > to.value ? 'To must be on or after From.' : '');
+      if (!form.reportValidity()) return;
+      choose(forecast ? {until: until.value} : {since: from.value, until: to.value});
+    }}, h('b', {class: 'rgch'}, forecast ? 'Custom end date' : 'Custom range'),
+      forecast ? h('label', {for: 'rguntil'}, 'Until', until)
+        : [h('label', {for: 'rgfrom'}, 'From', from), h('label', {for: 'rgto'}, 'To', to)],
+      h('button', {class: 'btn w rgapply', type: 'submit'}, 'Show'));
+    for (const input of [from, to, until]) input.addEventListener('input', () => to.setCustomValidity(''));
+    const quick = forecast
+      ? FORECAST_CHOICES.map((n) => h('button', {type: 'button', 'aria-label': `Next ${n} days`,
+        'aria-pressed': String(w.kind === 'days' && w.days === n), onclick: () => choose({days: n})}, `${n}d`))
+      : [7, 30, 90, 'all'].map((n) => h('button', {type: 'button', 'aria-label': n === 'all' ? 'All time' : `Last ${n} days`,
+        'aria-pressed': String(n === 'all' ? w.kind === 'all' : w.kind === 'days' && w.n === n),
+        onclick: () => choose(n === 'all' ? {window: 'all'} : {since: `${n}d`})}, n === 'all' ? 'All time' : `${n}d`));
+    const anchor = $('monl').getBoundingClientRect();
+    const root = h('div', {class: 'rgpicker', style: {'--rg-left': `${Math.max(12, Math.min(anchor.left, innerWidth - 372))}px`,
+      '--rg-top': `${anchor.bottom + 8}px`}, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Time window', tabindex: '-1'},
+      h('div', {class: 'rghd'}, h('h2', {}, 'Time window'), h('button', {class: 'ib', type: 'button',
+        'aria-label': 'Close time window', onclick: closeWindow}, icon('x'))),
+      forecast ? null : [h('h3', {}, 'Month'), h('div', {class: 'rgyr'},
+        h('button', {type: 'button', 'aria-label': 'Previous year', onclick: () => { year = Math.max(1901, year - 1); drawMonths(); }}, icon('chevl')),
+        yearLabel,
+        h('button', {type: 'button', 'aria-label': 'Next year', disabled: year >= Number(thisMonth().slice(0, 4)),
+          onclick: () => { year = Math.min(Number(thisMonth().slice(0, 4)), year + 1); drawMonths(); }}, icon('chevr'))), months],
+      h('h3', {}, forecast ? 'Next' : 'Quick range'), h('div', {class: 'rgpills'}, quick), form);
+    root.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeWindow(); } else X.trapFocus(e, root); });
+    const scrim = h('div', {class: 'rgscrim', onclick: closeWindow});
+    document.body.append(scrim, root);
+    sheet = {root, scrim, stop: HFPopClose.watch({root, trigger: () => $('monl'), close: closeWindow})};
+    $('monl').setAttribute('aria-expanded', 'true');
+    if (!forecast) drawMonths();
+    root.focus();
+  }
+  window.addEventListener('hashchange', closeWindow);
+  HOOKS.repWindow = {draw: drawWindow, open: openWindow};
+
+  // --- the bar above every view: the three pages ---------------------------------------------------------------
+  function topBar(view) {
     const tabs = VIEWS.map(([key, label]) => h('button', {type: 'button', 'aria-pressed': String(key === view),
-      onclick: () => go(key, month)}, label));
-    const prev = h('button', {type: 'button', class: 'rp-step', 'aria-label': 'Previous month',
-      onclick: () => go(view, shiftMonth(month, -1))}, icon('chevl'));
-    const next = h('button', {type: 'button', class: 'rp-step', 'aria-label': 'Next month', disabled: month >= thisMonth(),
-      onclick: () => go(view, shiftMonth(month, 1))}, icon('chevr'));
-    const cyc = h('div', {class: 'rp-cycle', role: 'group', 'aria-label': 'Period'},
-      h('span', {class: 'rp-range'}, view === 'forecast' ? 'Next 30 days' : monthText(month)),
-      view === 'forecast' ? null : prev, view === 'forecast' ? null : next);
-    return h('div', {class: 'rp-bar'},
-      h('div', {class: 'seg rp-views'}, ...tabs), h('span', {class: 'sp'}), cyc);
+      onclick: () => go(key, key === 'forecast' ? REP.fc : REP.sc)}, label));
+    return h('div', {class: 'rp-bar'}, h('div', {class: 'seg rp-views'}, ...tabs));
   }
 
   function heading(title, note) {
     return h('div', {class: 'rp-head'}, h('h2', {}, title), note ? h('p', {class: 'rp-note'}, note) : null);
   }
 
+  // What the data covers, in words: a month, a range of days, or all time.
+  function periodText(d) {
+    const w = d.window || {};
+    if (w.kind === 'month') return monthText(d.month);
+    if (w.kind === 'all') return 'All time';
+    return `${fmtDate(d.period.start)} – ${fmtDate(d.period.end)}`;
+  }
+
   // --- the page --------------------------------------------------------------------------------------------------
   function renderReports() {
-    const view = viewOf();
-    const month = monthOf();
-    REP.view = view; REP.month = month; REP.open = null; REP.busy = false;
+    const w = windowOf();
+    const view = w.view;
+    const key = S.params.toString();
+    REP.view = view; REP.key = key; REP.open = null; REP.busy = false;
+    if (view === 'forecast') REP.fc = windowParams(w); else REP.sc = windowParams(w);
     const body = h('div', {class: 'rp-body', 'aria-busy': 'true'}, h('span', {class: 'skel sk-card'}));
-    fill($('page'), topBar(view, month), body);
+    fill($('page'), topBar(view), body);
+    drawWindow();
     const path = {spending: '/api/reports/spending', cashflow: '/api/reports/cashflow', forecast: '/api/reports/forecast'}[view];
-    const params = view === 'forecast' ? {} : {month};
-    return api(path, params).then((d) => {
+    return api(path, windowParams(w)).then((d) => {
       body.removeAttribute('aria-busy');
-      if (REP.view !== view || REP.month !== month) return;   // a newer tap already drew
-      fill(body, {spending: drawSpending, cashflow: drawCashflow, forecast: drawForecast}[view](d, month));
+      if (REP.view !== view || REP.key !== key) return;   // a newer tap already drew
+      fill(body, {spending: drawSpending, cashflow: drawCashflow, forecast: drawForecast}[view](d, d.month));
     }).catch((e) => {
       body.removeAttribute('aria-busy');
       fill(body, errorCard(e, () => renderReports()));
@@ -100,18 +245,19 @@
         msgBox('No transactions yet', 'Reports fill in after the first sync or a CSV import.')))];
     }
     const out = [h('div', {class: 'rp-rc'})];
+    const n = y.months.length;
     const heat = h('section', {class: 'card rp-heat'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('calendar')),
-        h('span', {class: 'ttl'}, 'Year view'),
-        h('small', {}, `${monthShort(y.months[0].month)} ${y.months[0].month.slice(0, 4)} – ${monthShort(y.months[y.months.length - 1].month)} ${y.months[y.months.length - 1].month.slice(0, 4)}`)),
-      h('p', {class: 'rp-sub'}, 'A month is that category’s net: spending minus its refunds. Each row is shaded against its own busiest month.'),
+        h('span', {class: 'ttl'}, n === 12 ? 'Year view' : `${n}-month view`),
+        h('small', {}, `${monthShort(y.months[0].month)} ${y.months[0].month.slice(0, 4)} – ${monthShort(y.months[y.months.length - 1].month)} ${y.months[y.months.length - 1].month.slice(0, 4)}`),
+        info(['A month is that category’s net: spending minus its refunds. Each row is shaded against its own busiest month.',
+          'Tap a category to open its rows in place. The outlined cell is the last month shown.'])),
       heatmapDesktop(y, month),
-      h('div', {class: 'rp-legend'}, h('span', {}, 'vs. each category’s own 12-month peak'),
-        h('span', {class: 'rp-ramp'}, 'lower', h('i', {}), 'higher')),
-      h('p', {class: 'rp-note rp-phonly'}, 'Tap a category to open its rows in place. The outlined cell is this month.'));
+      h('div', {class: 'rp-legend'}, h('span', {}, `vs. each category’s own ${n}-month peak`),
+        h('span', {class: 'rp-ramp'}, 'lower', h('i', {}), 'higher')));
     const phone = phoneCards(y, month);
     heat.append(phone);
-    const rail = h('div', {class: 'rp-rail'}, ...kpiCards(y));
+    const rail = h('div', {class: 'rp-rail'}, ...kpiCards(y, n));
     out[0].append(rail, heat);
     out.push(monthLine(y));
     const foreign = y.foreign.map((f) => `${f.currency} ${money2(f.totals.net)}`).join(' · ');
@@ -169,30 +315,30 @@
     return box;
   }
 
-  function kpiCards(y) {
+  // A hero card: centred, its small text behind the ⓘ in the corner.
+  function heroCard(title, icn, rgb, value, note, extra) {
+    return h('section', {class: 'card rp-kpi vx-kpi'}, info(note, 'vx-corner'),
+      h('span', {class: 'hi vx-hi', style: {'--rgb': rgb}}, glyph(icn)),
+      h('h3', {}, h('span', {class: 'ttl'}, title)),
+      value, extra || null);
+  }
+
+  function kpiCards(y, n) {
     const k = y.kpis;
-    const cards = [];
-    cards.push(h('section', {class: 'card rp-kpi'},
-      h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('linechart')), h('span', {class: 'ttl'}, '12-month average')),
-      bigMoney(k.average), h('div', {class: 'rp-sub'}, `spent per month · ${plural(k.months, 'complete month')}`)));
     const best = k.best;
-    cards.push(h('section', {class: 'card rp-kpi'},
-      h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.ok}}, glyph('sprout')), h('span', {class: 'ttl'}, 'Best month')),
-      h('div', {class: 'big v md rp-name'}, best ? monthName(best.month) : '—'),
-      h('div', {class: 'rp-sub'}, best ? `remaining ${money2(best.remaining)} · ${pct1(best.share)} of income` : 'no month has data yet')));
     const v = k.most_variable;
-    cards.push(h('section', {class: 'card rp-kpi'},
-      h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.bad}}, glyph('bag')), h('span', {class: 'ttl'}, 'Most variable')),
-      h('div', {class: 'big v md rp-name'}, v ? v.category : '—'),
-      h('div', {class: 'rp-sub'}, v ? `from ${money(v.from)} to ${money(v.to)} a month` : 'not enough months yet')));
     const s = k.savings_rate;
-    cards.push(h('section', {class: 'card rp-kpi'},
-      h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.ok}}, glyph('piggy')), h('span', {class: 'ttl'}, 'Savings rate now')),
-      h('div', {class: 'big v md'}, pct1(s.now)),
-      h('div', {class: 'rp-sub'}, `12-month average ${pct1(s.average)}${y.months[y.months.length - 1].month === thisMonth() ? ' · this month so far' : ''}`,
-        s.delta == null ? null : h('span', {class: `pill sm ${s.delta >= 0 ? '' : 'warn'}`},
-          `${s.delta >= 0 ? 'above' : 'below'} by ${Math.abs(s.delta).toFixed(1)} pts`))));
-    return cards;
+    const last = y.months[y.months.length - 1].month;
+    return [
+      heroCard(`${n}-month average`, 'linechart', RGB.acc, bigMoney(k.average),
+        `spent per month · ${plural(k.months, 'complete month')}`),
+      heroCard('Best month', 'sprout', RGB.ok, h('div', {class: 'big v md rp-name'}, best ? monthName(best.month) : '—'),
+        best ? `remaining ${money2(best.remaining)} · ${pct1(best.share)} of income` : 'no month has data yet'),
+      heroCard('Most variable', 'bag', RGB.bad, h('div', {class: 'big v md rp-name'}, v ? v.category : '—'),
+        v ? `from ${money(v.from)} to ${money(v.to)} a month` : 'not enough months yet'),
+      heroCard('Savings rate now', 'piggy', RGB.ok, h('div', {class: 'big v md'}, pct1(s.now)),
+        [`${n}-month average ${pct1(s.average)}${last === thisMonth() ? ' · this month so far' : ''}`,
+          s.delta == null ? null : `${s.delta >= 0 ? 'Above' : 'Below'} the average by ${Math.abs(s.delta).toFixed(1)} pts`])];
   }
 
   // The chart the mock calls "Net saved per month": now "Remaining after spending" (q2's wording).
@@ -220,7 +366,7 @@
     const last = rows[rows.length - 1];
     return h('section', {class: 'card rp-month'},
       h('div', {class: 'rp-mhead'},
-        h('div', {}, h('b', {}, 'Remaining after spending'), h('span', {class: 'rp-sub'}, 'per month')),
+        h('div', {}, h('b', {}, 'Remaining after spending'), h('span', {class: 'rp-unit'}, 'per month')),
         h('div', {class: 'rp-mnow v'}, money2(last.remaining), h('small', {}, `in ${monthShort(last.month)}`))),
       svg,
       h('p', {class: 'rp-note'}, 'Income minus net spending. Money moved between your accounts is not income or spending.'));
@@ -265,7 +411,7 @@
   function drawCashflow(d, month) {
     if (!d.money_in && !d.money_out) {
       return [h('section', {class: 'card'}, h('h3', {}, h('span', {class: 'ttl'}, 'Money flow')),
-        msgBox(`Nothing moved in ${monthText(month)}`, 'Reports fill in after the first sync or a CSV import.'))];
+        msgBox(`Nothing moved in ${periodText(d)}`, 'Reports fill in after the first sync or a CSV import.'))];
     }
     const out = [];
     const chips = h('div', {class: 'rp-chips'},
@@ -275,13 +421,12 @@
         : pill('', null, `${money(d.remaining)} remaining · ${pct1(d.remaining_share)}`));
     out.push(h('section', {class: 'card rp-flow'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('swap')),
-        h('span', {class: 'ttl'}, 'Money flow'), h('small', {}, `${monthText(month)} · income to spending groups`)),
+        h('span', {class: 'ttl'}, 'Money flow'), h('small', {}, `${periodText(d)} · income to spending groups`),
+        info(['Every bar is sized by its share of the flow; a group’s % is its share of money out.',
+          'A purchase refund reduces its own category. If a category’s refunds beat its spending, it appears here as its own source, “Refunds over spending · category”. Tax refunds stay in Interest and tax refunds.'])),
       chips,
-      h('p', {class: 'rp-note rp-skn'}, 'Every bar is sized by its share of the flow; a group’s % is its share of money out.'),
       sankey(d),
       barsPhone(d)));
-    out.push(h('p', {class: 'rp-note rp-phonly'},
-      'A purchase refund reduces its own category. If a category’s refunds beat its spending, it appears here as its own source, “Refunds over spending · category”. Tax refunds stay in Interest and tax refunds.'));
     out.push(movesCard(d));
     return out;
   }
@@ -299,11 +444,11 @@
   }
 
   function sankey(d) {
-    const W = chartW(), H = Math.max(400, Math.min(540, Math.round(W * 0.52))), TOP = 56, BOT = 44, GAP = 4, BAR = 14;
+    const W = chartW(), H = Math.max(400, Math.min(540, Math.round(W * 0.52))), TOP = 56, BOT = 44, GAP = 4, SGAP = 16, BAR = 14;
     const sources = flowSources(d);
     if (d.short) sources.push({label: 'From the balance', amount: -d.remaining, rgb: RGB.bad});  // not income: the cushion
     const sinks = flowSinks(d).filter((s) => !s.short);
-    if (!sources.length || !sinks.length) return msgBox('No flow to draw', 'There is nothing in or out for this month.');
+    if (!sources.length || !sinks.length) return msgBox('No flow to draw', 'There is nothing in or out for this period.');
     // The source column is exactly the server's figure: income plus refunds over spending, and for a short month that
     // plus the balance it drew (money out). Nothing here adds a displayed number up.
     const flow = d.short ? d.money_out : d.money_in;
@@ -349,11 +494,13 @@
       y += n.h + GAP;
       return n;
     });
-    // right: each sink's height is its share of the same flow, so the columns close exactly
+    // right: the targets are spaced apart (SGAP), each one's height its share of the same flow; the middle bar stays
+    // whole, so every ribbon fans out from its slice of it to a bar of its own and the chart reads as a fork
+    const rightAvail = avail - SGAP * Math.max(0, sinks.length - 1);
     let cy = TOP;
     const right = sinks.map((s, i) => {
-      const n = {...s, drawn: sinkText[i], y: cy, h: Math.max(2, s.amount * unit)};
-      cy += n.h;
+      const n = {...s, drawn: sinkText[i], y: cy, h: Math.max(2, rightAvail * (s.amount / Math.max(flow, 1))), mh: s.amount * unit};
+      cy += n.h + SGAP;
       return n;
     });
     let cursor = TOP;
@@ -365,8 +512,8 @@
     });
     cursor = TOP;
     const rightRibbons = right.map((n) => {
-      const r = ribbon(xMr, cursor, n.h, xR, n.y, n.h, n.rgb, 0.22);
-      cursor += n.h;
+      const r = ribbon(xMr, cursor, n.mh, xR, n.y, n.h, n.rgb, 0.22);
+      cursor += n.mh;
       return r;
     });
     // A label is a name, and its amount one line under it only when the bar has the room for both: each line is 16px
@@ -397,7 +544,7 @@
     const bar = (x, n) => sv('rect', {x, y: n.y, width: BAR, height: Math.max(2, n.h), rx: 4, fill: color(n.rgb)},
       sv('title', {}, `${n.label}: ${money2(n.amount)}${n.share != null ? ` (${pct0(n.share)} of money out)` : ''}`));
     return sv('svg', {class: 'rp-svg', viewBox: `0 0 ${W} ${H}`, role: 'img',
-      'aria-label': `Where ${monthText(d.month)}’s money in went: ${sources.map((s) => s.label).join(', ')}; `
+      'aria-label': `Where the money in went, ${periodText(d)}: ${sources.map((s) => s.label).join(', ')}; `
         + `money out to ${sinks.map((s) => s.label).join(', ')}`},
       ...leftRibbons, ...rightRibbons,
       ...left.map((n) => bar(xLb, n)),
@@ -437,7 +584,7 @@
         h('small', {}, 'not drawn')),
       rows.length ? rows.map((m) => h('div', {class: 'li'},
         h('span', {class: 'grow'}, h('b', {}, m.label), h('span', {}, fmtDate(m.date))),
-        h('span', {class: 'amt v'}, money2(m.amount)))) : h('p', {class: 'rp-note'}, 'No transfers or card payments in this month.'),
+        h('span', {class: 'amt v'}, money2(m.amount)))) : h('p', {class: 'rp-note'}, 'No transfers or card payments in this period.'),
       d.moves.rows.length ? h('div', {class: 'rp-tot'}, h('span', {}, plural(d.moves.count, 'move')), h('b', {class: 'v'}, money2(shown))) : null,
       d.moves.count > rows.length ? h('p', {class: 'rp-note'}, `${plural(d.moves.count - rows.length, 'more move')} in Transactions.`) : null);
   }
@@ -473,23 +620,24 @@
   }
 
   function kpi(title, value, rgb, foot) {
-    return h('section', {class: 'card rp-kpi'},
-      h('h3', {}, h('span', {class: 'hi', style: {'--rgb': rgb}}, glyph('dollar')), h('span', {class: 'ttl'}, title)),
-      h('div', {class: 'big v md'}, value), h('div', {class: 'rp-sub'}, foot));
+    return heroCard(title, 'dollar', rgb, h('div', {class: 'big v md'}, value), foot);
   }
 
+  // The accounts are real checkboxes: a tick in a box, one row each, never a coloured pill.
   function accountsCard(d) {
     const o = d.account_options;
-    const chips = o.accounts.map((a) => h('button', {class: `rp-chip${a.ticked ? ' on' : ''}`, type: 'button',
-      'aria-pressed': String(a.ticked),
-      onclick: () => saveAccounts(d, o.accounts.map((x) => (x.account_id === a.account_id ? {...x, ticked: !x.ticked} : x)))},
-      h('span', {class: 'bx'}, a.ticked ? icon('check') : null), a.name || a.account_id));
+    const rows = o.accounts.map((a) => {
+      const box = h('input', {type: 'checkbox', checked: a.ticked,
+        onchange: () => saveAccounts(d, o.accounts.map((x) => (x.account_id === a.account_id ? {...x, ticked: box.checked} : x)))});
+      return h('label', {class: 'vx-row'}, box, h('span', {class: 'vx-bx', 'aria-hidden': 'true'}, icon('check')),
+        h('span', {class: 'vx-nm'}, a.name || a.account_id));
+    });
     return h('section', {class: 'card rp-acc'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('landmark')),
-        h('span', {class: 'ttl'}, 'Accounts in this line')),
-      chips.length ? h('div', {class: 'rp-chips2', role: 'group', 'aria-label': 'Accounts in the line'}, chips)
-        : h('p', {class: 'rp-note'}, 'No cash account reports an available balance yet.'),
-      h('p', {class: 'rp-note'}, 'Uses the bank’s available balance. Loans and investments are left out. A euro account gets its own line and is never added to dollars.'));
+        h('span', {class: 'ttl'}, 'Accounts in this line'),
+        info('Uses the bank’s available balance. Loans and investments are left out. A euro account gets its own line and is never added to dollars.')),
+      rows.length ? h('div', {class: 'vx-rows', role: 'group', 'aria-label': 'Accounts in the line'}, rows)
+        : h('p', {class: 'rp-note'}, 'No cash account reports an available balance yet.'));
   }
 
   function saveAccounts(d, accounts) {
@@ -503,13 +651,13 @@
 
   function askCard(src) {
     return h('section', {class: 'card rp-ask', dataset: {paycheck: src.key}},
-      h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.warn}}, glyph('card')), h('span', {class: 'ttl'}, 'Possible paycheck found')),
+      h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.warn}}, glyph('card')), h('span', {class: 'ttl'}, 'Possible paycheck found'),
+        info('One answer per paycheck source. You can change it later.')),
       h('p', {class: 'rp-q'}, h('b', {}, src.label), ` pays about ${money2(src.amount)} ${src.cadence_label} `,
         `(last: ${fmtDate(src.last_date)}) into ${src.account_name || src.account_id}. It is not in the line until you add it.`),
       h('div', {class: 'rp-btns'},
         h('button', {class: 'btn sm', type: 'button', onclick: () => answerPaycheck(src, 'add')}, 'Add to the line'),
-        h('button', {class: 'btn sm ghost', type: 'button', onclick: () => answerPaycheck(src, 'omit')}, 'Leave it out')),
-      h('p', {class: 'rp-note'}, 'One answer per paycheck source. You can change it later.'));
+        h('button', {class: 'btn sm ghost', type: 'button', onclick: () => answerPaycheck(src, 'omit')}, 'Leave it out')));
   }
 
   function answerPaycheck(src, answer) {
@@ -539,7 +687,8 @@
     const box = h('section', {class: 'card rp-chart'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('linechart')),
         h('span', {class: 'ttl'}, `Next ${d.horizon.days} days · ${fmtDate(d.horizon.start)}–${fmtDate(d.horizon.end)}`),
-        h('small', {}, 'projected, chosen accounts')),
+        h('small', {}, 'projected, chosen accounts'),
+        info('A lower and a higher everyday-spending case. Bills and paychecks are the same in both.')),
       h('div', {class: 'rp-leg'},
         h('span', {}, h('i', {class: 'lnacc'}), 'Balance so far'),
         h('span', {}, h('i', {class: 'dash'}), 'Projected'),
@@ -549,8 +698,7 @@
       forecastLine(d, phone),
       h('div', {class: 'rp-ends'},
         endRow(lines.lower.label, {date: d.horizon.end, balance: lines.lower.end}, RGB.acc),
-        endRow(lines.higher.label, {date: d.horizon.end, balance: lines.higher.end}, RGB.acc)),
-      h('p', {class: 'rp-note'}, 'A lower and a higher everyday-spending case. Bills and paychecks are the same in both.'));
+        endRow(lines.higher.label, {date: d.horizon.end, balance: lines.higher.end}, RGB.acc)));
     const stale = d.opening.stale;
     if (stale) box.insertBefore(h('p', {class: 'rp-note warn'}, `The opening balance is from ${fmtDate(d.opening.as_of)} (${plural(d.opening.stale_days, 'day')} ago) and may be off.`), box.querySelector('.rp-leg'));
     return box;
@@ -610,10 +758,11 @@
     const rows = d.events.filter((e) => e.amount > 0);
     return h('section', {class: 'card'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.ok}}, glyph('arrow-up')),
-        h('span', {class: 'ttl'}, 'Expected inflows'), h('small', {}, `${fmtDate(d.horizon.start)}–${fmtDate(d.horizon.end)}`)),
+        h('span', {class: 'ttl'}, 'Expected inflows'), h('small', {}, `${fmtDate(d.horizon.start)}–${fmtDate(d.horizon.end)}`),
+        rows.length ? null : info('Nothing expected in.')),
       rows.length ? rows.map((e) => h('div', {class: 'li'},
         h('span', {class: 'grow'}, h('b', {}, e.label), h('span', {}, fmtDate(e.date))),
-        h('span', {class: 'amt v pos'}, `+${money2(e.amount)}`))) : h('p', {class: 'rp-note'}, 'Nothing expected in.'),
+        h('span', {class: 'amt v pos'}, `+${money2(e.amount)}`))) : null,
       h('div', {class: 'rp-tot'}, h('span', {}, plural(rows.length, 'expected deposit')), h('b', {class: 'v'}, money2(d.expected.in))));
   }
 
@@ -622,11 +771,12 @@
     const rows = all.slice().sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 3);
     return h('section', {class: 'card'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.bad}}, glyph('receipt')),
-        h('span', {class: 'ttl'}, 'Biggest upcoming bills'), h('small', {}, `${fmtDate(d.horizon.start)}–${fmtDate(d.horizon.end)}`)),
+        h('span', {class: 'ttl'}, 'Biggest upcoming bills'), h('small', {}, `${fmtDate(d.horizon.start)}–${fmtDate(d.horizon.end)}`),
+        rows.length ? null : info('No bills expected in the window.')),
       rows.length ? rows.map((e) => h('div', {class: 'li'},
         h('span', {class: 'grow'}, h('b', {}, e.label),
           h('span', {}, `${fmtDate(e.date)}${e.overdue ? ' · overdue' : ''}${e.variable ? ' · estimate' : ''}`)),
-        h('span', {class: 'amt v'}, signedSpend(e.amount)))) : h('p', {class: 'rp-note'}, 'No bills expected in the window.'),
+        h('span', {class: 'amt v'}, signedSpend(e.amount)))) : null,
       h('div', {class: 'rp-tot'}, h('span', {}, `all ${plural(all.length, 'bill')}`), h('b', {class: 'v'}, money2(d.bills_total))));
   }
 
