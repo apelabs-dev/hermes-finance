@@ -480,6 +480,17 @@ def test_spending_for_a_range_sizes_its_heatmap_to_the_months_it_sends(tmp_path)
                 assert got["tot"] == f"{got['n']} mo" and (months is None or got["n"] == months), (query, got)
                 if query:
                     assert "·" in got["pill"], got
+            # All time draws 24 columns, each narrower than a three-letter month: the labels must not run into each other
+            for width in (1440, 1024):
+                b.size(width, 900, scale=1)
+                b.goto(f"{server.url}/#/reports?view=spending&window=all")
+                b.settle()
+                boxes = b.js("""[...document.querySelectorAll('.rp-hm .rp-hh')].filter((c) => !c.classList.contains('rp-lab') &&
+                  !c.classList.contains('rp-tot') && c.textContent.trim()).map((c) => {
+                  const r = document.createRange(); r.selectNodeContents(c); const t = r.getBoundingClientRect(); return [t.left, t.right]; })""")
+                assert len(boxes) >= 12, (width, len(boxes))
+                for (a0, a1), (b0, b1) in zip(boxes, boxes[1:]):
+                    assert a1 <= b0 + 0.5, (width, (a0, a1), (b0, b1))
             assert b.js("document.documentElement.scrollWidth <= innerWidth + 1")
     finally:
         server.close()

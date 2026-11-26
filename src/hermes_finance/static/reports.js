@@ -283,7 +283,9 @@
     const grid = h('div', {class: 'rp-hm', role: 'table', 'aria-label': 'Spending by category and month',
       style: {'--n': String(y.months.length)}});
     grid.append(h('div', {class: 'rp-hh rp-lab'}, ''));
-    y.months.forEach((m) => grid.append(h('div', {class: 'rp-hh' + (m.month === month ? ' on' : '')}, shortMonth(m.month))));
+    const step = y.months.length > 12 ? 2 : 1;   // 13+ columns are narrower than "May": every other label, counted back from the last
+    y.months.forEach((m, i) => grid.append(h('div', {class: 'rp-hh' + (m.month === month ? ' on' : ''),
+      'aria-label': shortMonth(m.month)}, (y.months.length - 1 - i) % step ? '' : shortMonth(m.month))));
     grid.append(h('div', {class: 'rp-hh rp-tot'}, `${y.months.length} mo`));
     y.categories.forEach((c) => {
       const name = h('div', {class: 'rp-rl'},
