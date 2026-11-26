@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.6.0...v0.7.0) (2026-11-26)
+
+
+### Features
+
+* the Reports pages in the demo, a Cash flow click-through, a Forecast hover card, the audited Reports numbers, and the Ask button and folding suggestions ([#32](https://github.com/apelabs-dev/hermes-finance/issues/32)) ([ea74eaa](https://github.com/apelabs-dev/hermes-finance/commit/ea74eaa96deedd75c93718c6cd6fa20c0a502f72))
+
 ## [0.6.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.5.0...v0.6.0) (2026-11-26)
 
 
