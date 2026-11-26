@@ -448,3 +448,38 @@ def test_the_reports_pill_opens_the_transactions_sheet_and_applies_a_window(tmp_
             assert b.js("document.querySelector('.rgpicker .rgmg') === null && document.querySelector('.rgpicker #rguntil') !== null")
     finally:
         server.close()
+
+
+def test_spending_for_a_range_sizes_its_heatmap_to_the_months_it_sends(tmp_path):
+    """Review round 1: the grid had 12 month tracks whatever the API sent, so a 2-month window put the first category's
+    name in the wrong column and a 24-month one wrapped. The grid, its total label and the pill follow the months."""
+    path = tmp_path / "range.sqlite"
+    conn = db.connect(path)
+    demo_data.build(conn, today=TODAY)
+    conn.close()
+    server = Server(path, today=TODAY)
+    try:
+        with Chrome() as b:
+            b.size(1440, 900, scale=1)
+            for query, months in (("since=7d", 2), ("window=all", None), ("", 12)):
+                b.goto(f"{server.url}/#/reports?view=spending&{query}")
+                b.settle()
+                got = b.js("""(() => { const g = document.querySelector('.rp-hm'); if (!g) return null;
+                  const first = [...g.children].filter((c) => c.classList.contains('rp-hh') && !c.classList.contains('rp-tot')).length;
+                  const rows = getComputedStyle(g).gridTemplateColumns.split(' ').length;
+                  const top = Math.round(g.children[1].getBoundingClientRect().top);
+                  const hd = [...g.children].filter((c) => c.classList.contains('rp-hh')).map((c) => c.getBoundingClientRect());
+                  const lab = g.querySelector('.rp-lab').getBoundingClientRect(), row = g.querySelector('.rp-rl').getBoundingClientRect();
+                  const tot = g.querySelector('.rp-tot').getBoundingClientRect(), cell = g.querySelector('.rp-c').getBoundingClientRect();
+                  // one header row (the cells differ in height, so their tops may differ a little), the first category under
+                  // its own column, and the total column to the right of every month
+                  const oneRow = Math.max(...hd.map((r) => r.top)) - Math.min(...hd.map((r) => r.top)) < 30 && row.top > lab.bottom - 1;
+                  return {n: Number(g.style.getPropertyValue('--n')), tracks: rows, hh: first, tot: g.querySelector('.rp-tot').textContent,
+                          oneRow: oneRow && Math.abs(row.left - lab.left) < 2 && tot.left > cell.left, pill: document.getElementById('monl').textContent}; })()""")
+                assert got and got["tracks"] == got["n"] + 2 and got["oneRow"], (query, got)
+                assert got["tot"] == f"{got['n']} mo" and (months is None or got["n"] == months), (query, got)
+                if query:
+                    assert "·" in got["pill"], got
+            assert b.js("document.documentElement.scrollWidth <= innerWidth + 1")
+    finally:
+        server.close()

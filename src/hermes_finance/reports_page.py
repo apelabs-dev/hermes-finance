@@ -102,7 +102,7 @@ def forecast(conn: sqlite3.Connection, params: dict[str, str], today: date) -> d
         raise api.ApiError("days can't be combined with until")
     if until is not None:
         try:
-            days = (reads.parse_day(until, "until") - today).days
+            days = (reads.parse_day(until, "until") - today).days + 1   # inclusive: `until` names the last day, as on Spending and Cash flow
         except reads.ReadError as e:
             raise api.ApiError(str(e)) from None
         if not 1 <= days <= reports.MAX_FORECAST_DAYS:

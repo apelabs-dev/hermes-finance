@@ -19,7 +19,7 @@
 .rp-kpi .big { font-size: 34px; }
 .rp-kpi .rp-name { font-size: 27px; letter-spacing: -.02em; }
 
-.rp-hm { display: grid; grid-template-columns: minmax(192px, 1.15fr) repeat(12, minmax(0, 1fr)) 78px;
+.rp-hm { display: grid; grid-template-columns: minmax(192px, 1.15fr) repeat(var(--n, 12), minmax(0, 1fr)) 78px;
   gap: 4px 3px; align-items: center; min-width: 0; }
 .rp-hh { font-size: 13px; color: var(--dim); text-align: center; padding-bottom: 2px; white-space: nowrap; }
 .rp-hh.on { color: var(--fg); font-weight: 650; }
@@ -151,7 +151,7 @@ button.rp-c:hover { border-color: var(--line2); }
   .rp-rail .rp-kpi { flex: 1 1 calc(50% - 5px); }
   .rp-kpi .big { font-size: 28px; }
   .rp-kpi .rp-name { font-size: 23px; }
-  .rp-hm { grid-template-columns: minmax(170px, 1fr) repeat(12, minmax(0, 1fr)) 72px; }
+  .rp-hm { grid-template-columns: minmax(170px, 1fr) repeat(var(--n, 12), minmax(0, 1fr)) 72px; }
   .rp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rp-lists h3 small { display: none; }
 }
@@ -168,7 +168,7 @@ button.rp-c:hover { border-color: var(--line2); }
   .rp-cat-b .amt { font-size: 15px; }
   .rp-cat-b > svg.i { transition: transform var(--mo-hover) ease-out; }
   .rp-cat.open .rp-cat-b > svg.i { transform: rotate(180deg); }
-  .rp-spark { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; margin-top: 8px; }
+  .rp-spark { display: grid; grid-template-columns: repeat(var(--n, 12), minmax(0, 1fr)); gap: 3px; margin-top: 8px; }
   .rp-spark i { height: 34px; border-radius: 4px; background: rgba(142, 168, 255, var(--a, .12));
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .035); }
   .rp-spark i.nd { background: repeating-linear-gradient(-45deg, var(--card2) 0 3px, var(--card3) 3px 6px); }
@@ -200,7 +200,7 @@ button.rp-c:hover { border-color: var(--line2); }
 }
 
 /* --- the ⓘ: a card's small text, behind an icon (round-4 mock board). A details popover that opens in place. ----- */
-.card h3 { display: flex; align-items: center; gap: 8px; }
+.rp-body .card h3 { display: flex; align-items: center; gap: 8px; }   /* this page only: other pages' card titles are theirs */
 .vx-i { position: relative; margin-left: auto; display: inline-block; flex: none; }
 .vx-i summary { list-style: none; cursor: pointer; display: grid; place-items: center; width: 44px; height: 44px;
   margin: -10px -10px -10px 0; color: var(--dim); border-radius: 50%; }
@@ -249,4 +249,7 @@ button.rp-c:hover { border-color: var(--line2); }
 @media (min-width: 1181px) {
   .vx-kpi > .vx-hi { position: absolute; left: 14px; top: 13px; margin: 0; }
   .vx-kpi h3 { padding: 0 34px; }
+}
+@media (max-width: 600px) {   /* the period is already in the pill: a phone's card title keeps its whole name */
+  .rp-flow h3 small, .rp-chart h3 small { display: none; }
 }

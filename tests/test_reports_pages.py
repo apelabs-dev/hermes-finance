@@ -496,11 +496,21 @@ def test_spending_refuses_more_than_24_months_but_cashflow_does_not(app, books):
 
 def test_forecast_until_is_the_same_as_days(app, books):
     from datetime import timedelta
-    until = (date.today() + timedelta(days=45)).isoformat()
+    until = (date.today() + timedelta(days=44)).isoformat()     # `until` names the last day, counting today: 45 days
     status, d = _get(app, f"/api/reports/forecast?until={until}")
     assert status == 200 and d["horizon"]["days"] == 45
     status, e = _get(app, "/api/reports/forecast?days=45")
     assert e["horizon"]["days"] == 45 and e["horizon"]["end"] == d["horizon"]["end"]
+
+
+def test_forecast_until_includes_its_day_and_stops_at_ninety(app, books):
+    from datetime import timedelta
+    today = date.today()
+    ok = _get(app, f"/api/reports/forecast?until={(today + timedelta(days=89)).isoformat()}")
+    assert ok[0] == 200 and ok[1]["horizon"]["days"] == 90
+    assert _get(app, f"/api/reports/forecast?until={(today + timedelta(days=90)).isoformat()}")[0] == 400
+    one = _get(app, f"/api/reports/forecast?until={today.isoformat()}")
+    assert one[0] == 200 and one[1]["horizon"]["days"] == 1
 
 
 @pytest.mark.parametrize("query", ["until=2020-01-01", "until=2999-01-01", "until=nope", "until=2026-12-01&days=30"])
