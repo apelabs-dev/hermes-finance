@@ -113,7 +113,7 @@
       days: start && end ? Math.round((Date.parse(end) - Date.parse(start)) / 864e5) + 1 : null};
   }
   async function transactions(p) {
-    const allowed = new Set(['month', 'since', 'until', 'q', 'bank', 'kind', 'category', 'group', 'tag', 'uncategorized', 'sort', 'limit', 'offset', 'facets']);
+    const allowed = new Set(['month', 'since', 'until', 'q', 'bank', 'kind', 'category', 'group', 'tag', 'uncategorized', 'sort', 'limit', 'offset', 'facets', 'source']);
     if ([...p.keys()].some((k) => !allowed.has(k))) fail(404, 'Unknown demo query');
     const data = await load('transactions'), c = await core();
     const per = period(p, c.meta.today), kind = p.get('kind') || 'all', sort = p.get('sort') || 'date_desc';
@@ -122,6 +122,9 @@
     const limit = integer('limit', 50, 1, 500), offset = integer('offset', 0, 0, 10000000);
     const cats = p.getAll('category'), groups = p.getAll('group'), tags = p.getAll('tag').map((v) => v.toLowerCase());
     const q = (p.get('q') || '').trim().toLowerCase(), bank = p.get('bank');
+    // ?source= (a Cash flow income source): the build files each income row under one (data.income_sources, by id)
+    const source = p.get('source'), sources = data.income_sources || {};
+    if (source && !['paychecks', 'interest_tax_refunds', 'other'].includes(source)) fail(400, 'source must be one of paychecks, interest_tax_refunds, other');
     const groupOf = data.groups;
     const lines = (r) => r.split || [{category: r.category, amount: r.amount}];
     const pickedLine = (l) => cats.includes(l.category) || groups.includes(groupOf[l.category]);
@@ -129,7 +132,7 @@
       lines(r).some(pickedLine) || (truth(p.get('uncategorized')) && r.uncategorized));
     const tagged = (r) => !tags.length || r.tags.some((t) => tags.includes(t.toLowerCase()));
     const base = data.rows.filter((r) => (!per.start || r.date >= per.start) && (!per.end || r.date <= per.end) &&
-      (!bank || r.institution_name === bank) && (!q || [r.merchant_name, r.name, r.note, r.tags.join(' ')].some((s) => (s || '').toLowerCase().includes(q))));
+      (!bank || r.institution_name === bank) && (!source || (r.is_income && sources[r.transaction_id] === source)) && (!q || [r.merchant_name, r.name, r.note, r.tags.join(' ')].some((s) => (s || '').toLowerCase().includes(q))));
     const matched = base.filter((r) => picked(r) && tagged(r));
     const counts = Object.fromEntries(Object.entries(kinds).map(([k, fn]) => [k, matched.filter(fn).length]));
     const selected = matched.filter(kinds[kind]), byId = new Map(selected.map((r) => [r.transaction_id, r]));
@@ -379,6 +382,7 @@
         return [200, path === '/api/settings/page' ? withPrefs(out) : out];
       }
       if (c.errors[k]) return [c.errors[k].status, clone(c.errors[k].body)];
+      if (path.startsWith('/api/reports/')) fail(404, 'The demo has the preset windows only: any month, 7d, 30d, 90d or all time, and 30, 60 or 90 days ahead. The real app takes any dates.');
       fail(404, 'Unknown demo API path or query');
     } catch (e) { return [e.status || 500, {error: e.message}]; }
   }

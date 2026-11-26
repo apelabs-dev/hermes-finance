@@ -10,7 +10,7 @@
   'use strict';
   const {$, h, fill, sv, icon, glyph, card, money, money2, bigMoney, plural, monthName, monthLabel, monthShort,
     thisMonth, fmtDate, RGB, ACC, OK, WARN, BAD, PAGES, S, RENDER, api, post, toast, route,
-    errorCard, skel, lnk, pill, msgBox, ibadge, rgbOf, HOOKS, todayISO} = X;
+    errorCard, skel, lnk, pill, msgBox, ibadge, rgbOf, HOOKS, todayISO, currencyDigits, LOC} = X;
 
   PAGES.reports = 'Reports';
 
@@ -253,8 +253,10 @@
   // --- Spending: the year heatmap and the KPI rail (C) -----------------------------------------------------------
   function drawSpending(d, month) {
     const y = d.year;
+    const selected = d.totals ? h('p', {class: 'rp-note rp-selection'}, `${periodText(d)} · Net spending: `,
+      h('b', {class: 'v'}, money2(d.totals.net))) : null;
     if (!y.data_from) {
-      return [h('div', {class: 'rp-rc'}, h('section', {class: 'card rp-heat'},
+      return [selected, h('div', {class: 'rp-rc'}, h('section', {class: 'card rp-heat'},
         h('h3', {}, h('span', {class: 'ttl'}, 'Year view')),
         msgBox('No transactions yet', 'Reports fill in after the first sync or a CSV import.')))];
     }
@@ -264,7 +266,7 @@
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('calendar')),
         h('span', {class: 'ttl'}, n === 12 ? 'Year view' : `${n}-month view`),
         h('small', {}, `${monthShort(y.months[0].month)} ${y.months[0].month.slice(0, 4)} – ${monthShort(y.months[y.months.length - 1].month)} ${y.months[y.months.length - 1].month.slice(0, 4)}`),
-        info(['A month is that category’s net: spending minus its refunds. Each row is shaded against its own busiest month.',
+        info(['The heatmap shows whole calendar months. Each cell is spending minus refunds, shaded against that category’s peak.',
           'Tap a category to open its rows in place. The outlined cell is the last month shown.'], '', 'the spending view')),
       heatmapDesktop(y, month),
       h('div', {class: 'rp-legend'}, h('span', {}, `vs. each category’s own ${n}-month peak`),
@@ -274,9 +276,11 @@
     const rail = h('div', {class: 'rp-rail'}, ...kpiCards(y, n));
     out[0].append(rail, heat);
     out.push(monthLine(y));
-    const foreign = y.foreign.map((f) => `${f.currency} ${money2(f.totals.net)}`).join(' · ');
-    if (foreign) out.push(h('p', {class: 'rp-note'}, `${foreign}: reported on its own and never added to ${y.currency}.`));
-    return out;
+    const foreign = y.foreign.map((f) => `${f.currency} ${new Intl.NumberFormat(LOC, {
+      maximumFractionDigits: currencyDigits(f.currency),
+    }).format(f.totals.net)}`).join(' · ');
+    if (foreign) out.push(h('p', {class: 'rp-note'}, `For the months shown: ${foreign}. Not added to ${y.currency}.`));
+    return [selected, ...out];
   }
 
   function heatmapDesktop(y, month) {
@@ -293,16 +297,17 @@
       grid.append(name);
       c.months.forEach((cell) => {
         const label = `${c.category}, ${monthText(cell.month)}: ${cell.nodata ? 'no data' : money2(cell.net)}`;
-        const b = h(cell.nodata || cell.net === 0 ? 'div' : 'button', {
+        const canDrill = !cell.nodata && (cell.count ?? (cell.net !== 0));
+        const b = h(canDrill ? 'button' : 'div', {
           class: 'rp-c' + (cell.nodata ? ' nodata' : cell.net < 0 ? ' refund' : '') + (cell.month === month ? ' on' : ''),
-          type: cell.nodata || cell.net === 0 ? null : 'button',
+          type: canDrill ? 'button' : null,
           style: cell.nodata ? null : {'--a': String(Math.max(0.12, cell.alpha))},
           title: label, 'aria-label': label,
-          onclick: cell.nodata || cell.net === 0 ? null : () => drill(b, c, cell.month),
+          onclick: canDrill ? () => drill(b, c, cell.month) : null,
         }, cell.nodata ? h('span', {class: 'sr'}, 'No data') : null);
         grid.append(b);
       });
-      grid.append(h('div', {class: 'rp-tv'}, money(c.net)));
+      grid.append(h('div', {class: 'rp-tv'}, money2(c.net)));
       const slot = h('div', {class: 'rp-drill', id: `d${c.category_id}`});
       grid.append(slot);
     });
@@ -314,9 +319,9 @@
     y.categories.forEach((c) => {
       const art = h('article', {class: 'card rp-cat', 'data-cat': c.category});
       const head = h('button', {class: 'rp-cat-b', type: 'button', 'aria-expanded': 'false',
-        'aria-label': `${c.category}: ${money(c.net)} over ${y.months.length} months. Open its rows.`},
+        'aria-label': `${c.category}: ${money2(c.net)} over ${y.months.length} months. Open rows for ${monthText(month)}.`},
         ibadge(c.icon || 'tag', RGB_OF(c.group_rgb, RGB.grey), 's'), h('b', {}, c.category),
-        h('span', {class: 'amt v'}, money(c.net)), icon('chevd'));
+        h('span', {class: 'amt v'}, money2(c.net)), icon('chevd'));
       const spark = h('div', {class: 'rp-spark', role: 'img', style: {'--n': String(y.months.length)},
         'aria-label': `${c.category} by month, ${monthShort(y.months[0].month)} to ${monthShort(y.months[y.months.length - 1].month)}`},
         c.months.map((cell) => h('i', {class: (cell.nodata ? 'nd' : '') + (cell.month === month ? ' on' : ''),
@@ -347,12 +352,13 @@
     const s = k.savings_rate;
     const last = y.months[y.months.length - 1].month;
     return [
-      heroCard(`${n}-month average`, 'linechart', RGB.acc, bigMoney(k.average),
-        `spent per month · ${plural(k.months, 'complete month')}`),
+      heroCard(`${n}-month average`, 'linechart', RGB.acc,
+        k.average == null ? h('div', {class: 'big v md'}, '—') : bigMoney(k.average),
+        k.months ? `spent per month · ${plural(k.months, 'complete month')}` : 'No complete months yet'),
       heroCard('Best month', 'sprout', RGB.ok, h('div', {class: 'big v md rp-name'}, best ? monthName(best.month) : '—'),
         best ? `remaining ${money2(best.remaining)} · ${pct1(best.share)} of income` : 'no month has data yet'),
       heroCard('Most variable', 'bag', RGB.bad, h('div', {class: 'big v md rp-name'}, v ? v.category : '—'),
-        v ? `from ${money(v.from)} to ${money(v.to)} a month` : 'not enough months yet'),
+        v ? `from ${money2(v.from)} to ${money2(v.to)} a month` : 'not enough months yet'),
       heroCard('Savings rate now', 'piggy', RGB.ok, h('div', {class: 'big v md'}, pct1(s.now)),
         [`${n}-month average ${pct1(s.average)}${last === thisMonth() ? ' · this month so far' : ''}`,
           s.delta == null ? null : `${s.delta >= 0 ? 'Above' : 'Below'} the average by ${Math.abs(s.delta).toFixed(1)} pts`])];
@@ -427,19 +433,22 @@
   // --- Cash flow (B): the Sankey on a desktop, labelled bars on a phone ------------------------------------------
   function drawCashflow(d, month) {
     if (!d.money_in && !d.money_out) {
-      return [h('section', {class: 'card'}, h('h3', {}, h('span', {class: 'ttl'}, 'Money flow')),
-        msgBox(`Nothing moved in ${periodText(d)}`, 'Reports fill in after the first sync or a CSV import.'))];
+      const empty = h('section', {class: 'card'}, h('h3', {}, h('span', {class: 'ttl'}, 'Money flow')),
+        d.moves.count ? msgBox('No money in or out', 'Transfers are listed separately.')
+          : msgBox(`Nothing moved in ${periodText(d)}`, 'Reports fill in after the first sync or a CSV import.'));
+      return d.moves.count ? [empty, movesCard(d)] : [empty];
     }
     const out = [];
     const chips = h('div', {class: 'rp-chips'},
-      pill('nt sm', null, `${money(d.money_out)} out`,
-        d.income.total ? ` · ${pct0((d.money_out / d.income.total) * 100)} of income` : ''),
-      d.short ? pill('bad sm', null, `Short by ${money(-d.remaining)}`)
-        : pill('', null, `${money(d.remaining)} remaining · ${pct1(d.remaining_share)}`));
+      pill('nt sm', null, `${money2(d.money_out)} out`,
+        d.money_in > 0 ? ` · ${pct0((d.money_out / d.money_in) * 100)} of money in` : ''),
+      d.short ? pill('bad sm', null, `Short by ${money2(-d.remaining)}`)
+        : pill('', null, `${money2(d.remaining)} remaining`,
+          d.remaining_share == null ? '' : ` · ${pct1(d.remaining_share)} of income`));
     out.push(h('section', {class: 'card rp-flow'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('swap')),
         h('span', {class: 'ttl'}, 'Money flow'), h('small', {}, `${periodText(d)} · income to spending groups`),
-        info(['Every bar is sized by its share of the flow; a group’s % is its share of money out.',
+        info(['Every bar is sized by its share of the flow; a group’s % is its share of money out. Income reversals are money out, not spending.',
           'A purchase refund reduces its own category. If a category’s refunds beat its spending, it appears here as its own source, “Refunds over spending · category”. Tax refunds stay in Interest and tax refunds.'], '', 'the cash flow chart')),
       chips,
       sankey(d),
@@ -448,29 +457,47 @@
     return out;
   }
 
+  // A Cash flow row opens Transactions on that row's own filter and the report's own window: the month, the last N days,
+  // From/To, or (all time) the dates the report read. A spending group is its positive categories (the ones the report
+  // sums), an income source is `?source=` (income rows only), and a refunds-over source is its one category, so the
+  // count and total Transactions shows are the row's own.
+  function txHref(d, pick) {
+    const q = new URLSearchParams();
+    (pick.categories || []).forEach((c) => q.append('category', c));
+    if (pick.source) q.set('source', pick.source);
+    q.set('kind', pick.source ? 'income' : 'spend');
+    const w = windowOf();
+    if (w.kind === 'month') q.set('month', w.month);
+    else if (w.kind === 'days') q.set('since', w.since);
+    else { q.set('since', d.period.start); q.set('until', d.period.end); }
+    return `#/transactions?${q.toString()}`;
+  }
+
   function flowSources(d) {
-    const rows = d.income.sources.map((s) => ({label: s.label, amount: s.amount, rgb: RGB.ok}));
-    d.refunds_over.forEach((r) => rows.push({label: r.label, amount: r.amount, rgb: RGB.ok}));
+    const rows = d.income.sources.filter((s) => s.amount > 0)
+      .map((s) => ({label: s.label, amount: s.amount, rgb: RGB.ok, href: txHref(d, {source: s.source})}));
+    d.refunds_over.forEach((r) => rows.push({label: r.label, amount: r.amount, rgb: RGB.ok, href: txHref(d, {categories: [r.category]})}));
     return rows;
   }
 
   function flowSinks(d) {
-    const rows = d.groups.map((g) => ({label: g.group, amount: g.net, rgb: RGB_OF(g.rgb, RGB.acc), share: g.share}));
-    if (d.remaining > 0) rows.push({label: 'Remaining after spending', amount: d.remaining, rgb: RGB.ok, rem: true});
-    return rows;   // a short month's cushion is a source ("From the balance"), never a spending group
+    const rows = d.groups.map((g) => ({label: g.group, amount: g.net, rgb: RGB_OF(g.rgb, RGB.acc), share: g.share,
+      href: txHref(d, {categories: g.categories})}));
+    (d.income_reversals || []).forEach((s) => rows.push({...s, rgb: RGB.bad}));
+    return rows;
   }
 
   function sankey(d) {
     const W = chartW(), H = Math.max(400, Math.min(540, Math.round(W * 0.52))), TOP = 56, BOT = 44, GAP = 4, SGAP = 16, BAR = 14;
     const sources = flowSources(d);
     if (d.short) sources.push({label: 'From the balance', amount: -d.remaining, rgb: RGB.bad});  // not income: the cushion
-    const sinks = flowSinks(d).filter((s) => !s.short);
+    const sinks = flowSinks(d);
+    if (d.remaining > 0) sinks.push({label: 'Remaining after spending', amount: d.remaining, rgb: RGB.ok});
     if (!sources.length || !sinks.length) return msgBox('No flow to draw', 'There is nothing in or out for this period.');
-    // The source column is exactly the server's figure: income plus refunds over spending, and for a short month that
-    // plus the balance it drew (money out). Nothing here adds a displayed number up.
+    // The two sides balance once a short period adds the amount drawn from the balance as a source.
     const flow = d.short ? d.money_out : d.money_in;
     const avail = H - TOP - BOT;
-    const unit = avail / Math.max(flow, 1);                // every node's height is its share of the flow
+    const shareOfFlow = (amount) => amount / flow;
     // Every label is measured in the card's own font and cut to its gutter, so no label can leave the chart; the bars
     // list and the aria-label keep the whole text. The 1.04 covers a font that swapped in after the first measure.
     const measure = document.createElement('canvas').getContext('2d');
@@ -488,7 +515,7 @@
     const srcText = sources.map((s) => fitted(s.label, 13.5, 600, leftRoom));
     const xL = Math.round(Math.max(W * 0.17, Math.max(0, ...srcText.map((t) => textW(t, 13.5, 600))) + 12));
     const xLb = xL + 10, xLr = xLb + BAR + 1;              // the bar, then its ribbons
-    const amountText = (n) => `${money(n.amount)}${n.share != null ? ` · ${pct0(n.share)}` : ''}`;
+    const amountText = (n) => `${money2(n.amount)}${n.share != null ? ` · ${pct0(n.share)}` : ''}`;
     const xM = Math.round(W * 0.48), xMr = xM + 16;
     const rightRoom = W - 26 - xMr - BAR;                  // the widest a right label may be if its bar starts early
     const sinkText = sinks.map((n) => fitted(n.label, 13.5, 600, rightRoom));
@@ -507,7 +534,7 @@
     const leftAvail = avail - GAP * Math.max(0, sources.length - 1);
     let y = TOP;
     const left = sources.map((s, i) => {
-      const n = {...s, drawn: srcText[i], y, h: Math.max(4, leftAvail * (s.amount / Math.max(flow, 1)))};
+      const n = {...s, drawn: srcText[i], y, h: Math.max(4, leftAvail * shareOfFlow(s.amount))};
       y += n.h + GAP;
       return n;
     });
@@ -516,13 +543,13 @@
     const rightAvail = avail - SGAP * Math.max(0, sinks.length - 1);
     let cy = TOP;
     const right = sinks.map((s, i) => {
-      const n = {...s, drawn: sinkText[i], y: cy, h: Math.max(2, rightAvail * (s.amount / Math.max(flow, 1))), mh: s.amount * unit};
+      const n = {...s, drawn: sinkText[i], y: cy, h: Math.max(2, rightAvail * shareOfFlow(s.amount)), mh: avail * shareOfFlow(s.amount)};
       cy += n.h + SGAP;
       return n;
     });
     let cursor = TOP;
     const leftRibbons = left.map((n) => {
-      const h2 = n.amount * unit;
+      const h2 = avail * shareOfFlow(n.amount);
       const r = ribbon(xLr, n.y, n.h, xM, cursor, h2, n.rgb, 0.26);
       cursor += h2;
       return r;
@@ -547,8 +574,9 @@
       shown.forEach((n, i) => {
         const top = Math.max(tops[i], floor + CLEAR);
         if (top + LINE_H > H - 1) return;        // no room left: the bar's <title> keeps the label
-        out.push(sv('text', {x, y: top + 13, class: 'rp-sk-name', 'text-anchor': anchor}, n.drawn,
-          n.drawn === n.label ? null : sv('title', {}, n.label)));
+        const name = sv('text', {x, y: top + 13, class: 'rp-sk-name', 'text-anchor': anchor}, n.drawn,
+          n.drawn === n.label ? null : sv('title', {}, n.label));
+        out.push(n.href ? sv('a', {href: n.href, class: 'rp-sk-lk', tabindex: '-1', 'aria-hidden': 'true'}, name) : name);
         floor = top + LINE_H;
         const at = top + PITCH;
         const next = i + 1 < shown.length ? Math.max(tops[i + 1], floor + CLEAR) : Infinity;
@@ -558,8 +586,11 @@
       });
       return out;
     };
-    const bar = (x, n) => sv('rect', {x, y: n.y, width: BAR, height: Math.max(2, n.h), rx: 4, fill: color(n.rgb)},
-      sv('title', {}, `${n.label}: ${money2(n.amount)}${n.share != null ? ` (${pct0(n.share)} of money out)` : ''}`));
+    const bar = (x, n) => {
+      const rect = sv('rect', {x, y: n.y, width: BAR, height: Math.max(2, n.h), rx: 4, fill: color(n.rgb)},
+        sv('title', {}, `${n.label}: ${money2(n.amount)}${n.share != null ? ` (${pct0(n.share)} of money out)` : ''}`));
+      return n.href ? sv('a', {href: n.href, class: 'rp-sk-a', 'aria-label': `${n.label}: ${money2(n.amount)}. Open in Transactions`}, rect) : rect;
+    };
     return sv('svg', {class: 'rp-svg', viewBox: `0 0 ${W} ${H}`, role: 'img',
       'aria-label': `Where the money in went, ${periodText(d)}: ${sources.map((s) => s.label).join(', ')}; `
         + `money out to ${sinks.map((s) => s.label).join(', ')}`},
@@ -567,30 +598,31 @@
       ...left.map((n) => bar(xLb, n)),
       sv('rect', {x: xM, y: TOP, width: 16, height: avail, rx: 4, fill: color(RGB.grey)}),
       sv('text', {x: xM + 8, y: TOP - 30, class: 'rp-sk-cap', 'text-anchor': 'middle'}, d.short ? 'Money out' : 'Money in'),
-      sv('text', {x: xM + 8, y: TOP - 8, class: 'rp-sk-big', 'text-anchor': 'middle'}, money(flow)),
+      sv('text', {x: xM + 8, y: TOP - 8, class: 'rp-sk-big', 'text-anchor': 'middle'}, money2(flow)),
       ...right.map((n) => bar(xR, n)),
-      ...labelColumn(left, xL, 'end', (n) => money(n.amount)),
+      ...labelColumn(left, xL, 'end', (n) => money2(n.amount)),
       ...labelColumn(right, xRl, 'start', amountText));
   }
 
   function barsPhone(d) {
     const sources = flowSources(d);
     const sinks = flowSinks(d);
-    const peak = Math.max(d.money_in, d.money_out, 1);
-    const row = (label, amount, rgb, extra) => h('div', {class: 'rp-fr'},
+    const peak = Math.max(d.money_in, d.money_out) || 1;   // never a zero divisor; a $0.12 window still fills its track
+    const row = (label, amount, rgb, extra, href) => h(href ? 'a' : 'div', {class: 'rp-fr', href},
       h('div', {class: 'rp-fl'}, h('i', {class: 'rp-sw', style: {background: `rgb(${rgb})`}}), h('b', {}, label),
-        h('span', {class: 'rp-fa'}, `${money(amount)}${extra || ''}`)),
+        h('span', {class: 'rp-fa'}, `${money2(amount)}${extra || ''}`)),
       h('div', {class: 'rp-track'}, h('i', {style: {width: `${Math.min(100, (amount / peak) * 100).toFixed(1)}%`, background: `rgb(${rgb})`}})));
     return h('div', {class: 'rp-bars'},
-      h('div', {class: 'rp-flh'}, h('b', {}, 'Money in'), h('span', {}, money(d.money_in))),
-      sources.map((s) => row(s.label, s.amount, s.rgb)),
+      h('div', {class: 'rp-flh'}, h('b', {}, 'Money in'), h('span', {}, money2(d.money_in))),
+      sources.map((s) => row(s.label, s.amount, s.rgb, null, s.href)),
       d.short ? h('div', {class: 'rp-flh bal'}, h('b', {}, 'From the balance'),
-        h('span', {}, `${money(-d.remaining)} · not income`)) : null,
-      h('div', {class: 'rp-flh'}, h('b', {}, 'Money out'), h('span', {}, `${money(d.money_out)} · share of money out`)),
-      sinks.map((s) => row(s.label, s.amount, s.rgb, s.share != null ? ` · ${s.share >= 1 ? pct0(s.share) : s.share > 0 ? '<1%' : '0%'}` : '')),
+        h('span', {}, `${money2(-d.remaining)} · not income`)) : null,
+      h('div', {class: 'rp-flh'}, h('b', {}, 'Money out'),
+        h('span', {}, `${money2(d.money_out)}${sinks.length ? ' · share of money out' : ''}`)),
+      sinks.map((s) => row(s.label, s.amount, s.rgb, s.share != null ? ` · ${s.share >= 1 ? pct0(s.share) : s.share > 0 ? '<1%' : '0%'}` : '', s.href)),
       d.short ? null : h('div', {class: 'rp-rem'},
-        h('b', {}, 'Remaining after spending'), h('span', {class: 'v'}, money(d.remaining)),
-        h('small', {}, `${pct1(d.remaining_share)} of income`)));
+        h('b', {}, 'Remaining after spending'), h('span', {class: 'v'}, money2(d.remaining)),
+        d.remaining_share == null ? null : h('small', {}, `${pct1(d.remaining_share)} of income`)));
   }
 
   function movesCard(d) {
@@ -611,13 +643,15 @@
     const out = [];
     out.push(accountsCard(d));
     const k = d.expected;
+    const waiting = d.paychecks.detected.filter((s) => s.answer == null);
+    const incomeNote = waiting.length === 1 ? 'Paycheck needs confirmation' : 'Paychecks need confirmation';
     out.push(h('div', {class: 'rp-kpis'},
-      kpi('Expected in', money(k.in), RGB.ok, 'paychecks and other deposits in the window'),
+      kpi('Expected in', money(k.in), RGB.ok, 'Confirmed paychecks for these accounts in this window.',
+        waiting.length ? h('p', {class: 'rp-note'}, incomeNote) : null),
       kpi('Expected out', money(k.out), RGB.bad, 'bills and typical everyday spending'),
       kpi('Net', `${k.net < 0 ? '' : '+'}${money(k.net)}`, k.net < 0 ? RGB.bad : RGB.ok, k.net < 0 ? 'more out than in' : 'to the good'),
       kpi(`Available ${fmtDate(d.available_date)}`, money(d.available), RGB.acc,
         `expected balance ${money(d.lowest.balance)} on ${fmtDate(d.lowest.date)}`)));
-    const waiting = d.paychecks.detected.filter((s) => s.answer == null);
     if (waiting.length) out.push(h('div', {class: 'rp-askwrap'}, waiting.map(askCard)));
     const excluded = d.paychecks.excluded_by_account || [];
     if (excluded.length) out.push(h('section', {class: 'card rp-warn'},
@@ -636,8 +670,8 @@
     return out;
   }
 
-  function kpi(title, value, rgb, foot) {
-    return heroCard(title, 'dollar', rgb, h('div', {class: 'big v md'}, value), foot);
+  function kpi(title, value, rgb, foot, extra) {
+    return heroCard(title, 'dollar', rgb, h('div', {class: 'big v md'}, value), foot, extra);
   }
 
   // The accounts are real checkboxes: a tick in a box, one row each, never a coloured pill.
@@ -703,11 +737,10 @@
     const hasIn = d.events.some((e) => e.amount > 0), hasOut = d.events.some((e) => e.amount < 0);
     const box = h('section', {class: 'card rp-chart'},
       h('h3', {}, h('span', {class: 'hi', style: {'--rgb': RGB.acc}}, glyph('linechart')),
-        h('span', {class: 'ttl'}, `Next ${d.horizon.days} days · ${fmtDate(d.horizon.start)}–${fmtDate(d.horizon.end)}`),
+        h('span', {class: 'ttl'}, `Next ${plural(d.horizon.days, 'day')} · ${fmtDate(d.horizon.start)}${d.horizon.days > 1 ? `–${fmtDate(d.horizon.end)}` : ''}`),
         h('small', {}, 'projected, chosen accounts'),
         info('A lower and a higher everyday-spending case. Bills and paychecks are the same in both.', '', 'the balance line')),
       h('div', {class: 'rp-leg'},
-        h('span', {}, h('i', {class: 'lnacc'}), 'Balance so far'),
         h('span', {}, h('i', {class: 'dash'}), 'Projected'),
         h('span', {}, h('i', {class: 'band'}), 'Lower to higher everyday spending'),
         hasIn ? h('span', {}, h('i', {class: 'dot in'}), 'Paycheck') : null,
@@ -737,7 +770,6 @@
     // legend "Lower to higher everyday spending" says it is (the projected line is drawn inside it, dashed).
     const band = lines.lower.points.concat([...lines.higher.points].reverse());
     const bandD = band.map((p, i) => `${i ? 'L' : 'M'}${x(i < n ? i : 2 * n - 1 - i).toFixed(1)},${yy(p.balance).toFixed(1)}`).join('') + 'Z';
-    const solid = [exp[0], exp[1]];
     const grid = [];
     const span = max - min, step = span > 4000 ? 1000 : span > 1500 ? 500 : 250;
     for (let v = Math.ceil(min / step) * step; v <= max; v += step) {
@@ -745,30 +777,29 @@
         sv('text', {x: 0, y: (yy(v) + 4).toFixed(1), class: 'rp-tick'}, money(v)));
     }
     const dayIndex = (iso) => Math.max(0, Math.min(n - 1, Math.round((new Date(`${iso}T12:00:00`) - new Date(`${d.horizon.start}T12:00:00`)) / 86400000)));
-    const markers = d.events.filter((e) => e.date >= d.horizon.start && e.date <= d.horizon.end && Math.abs(e.amount) >= 1).map((e) => {
+    const dotted = d.events.filter((e) => e.date >= d.horizon.start && e.date <= d.horizon.end && Math.abs(e.amount) >= 1);
+    const markers = dotted.map((e) => {
       const i = dayIndex(e.date);
-      return sv('circle', {cx: x(i).toFixed(1), cy: yy(exp[i].balance).toFixed(1), r: 3.2,
+      return sv('circle', {cx: x(i).toFixed(1), cy: yy(exp[i].balance).toFixed(1), r: 3.2, 'data-day': i,
         class: e.amount > 0 ? 'rp-ev in' : 'rp-ev out'});
     });
+    // The lowest expected balance is a yellow dot; what it says ("Expected balance on <date> · <amount>") is in the
+    // card that hovering, tapping or stepping onto that day opens (forecasthover.js), never written on the chart.
     const lo = dayIndex(d.lowest.date);
-    const loX = x(lo), loY = yy(d.lowest.balance);
-    const loText = `Expected balance on ${fmtDate(d.lowest.date)} · ${money(d.lowest.balance)}`;
-    const below = loY + 20 < H - B - 4;
-    return sv('svg', {class: 'rp-svg rp-fsvg', viewBox: `0 0 ${W} ${H}`, role: 'img',
+    const svg = sv('svg', {class: 'rp-svg rp-fsvg', viewBox: `0 0 ${W} ${H}`, role: 'img',
       'aria-label': `Projected balance for the next ${d.horizon.days} days: ${lines.lower.label} ends at ${money2(lines.lower.end)}, ${lines.higher.label} ends at ${money2(lines.higher.end)}`},
       ...grid,
       sv('path', {d: bandD, class: 'rp-band'}),
       sv('path', {d: path(lines.lower.points), class: 'rp-line lower'}),
       sv('path', {d: path(lines.higher.points), class: 'rp-line higher'}),
-      sv('path', {d: `${path(solid)}`, class: 'rp-line sofar'}),
       sv('path', {d: path(exp), class: 'rp-line exp'}),
       ...markers,
-      sv('circle', {cx: loX.toFixed(1), cy: loY.toFixed(1), r: 3, class: 'rp-ev low'}),
-      sv('text', {x: Math.min(Math.max(loX, L + 4), W - R - 4).toFixed(1), y: (below ? loY + 20 : loY - 10).toFixed(1),
-        class: 'rp-callout', 'text-anchor': loX > W * 0.75 ? 'end' : 'start'}, loText),
+      sv('circle', {cx: x(lo).toFixed(1), cy: yy(d.lowest.balance).toFixed(1), r: 3, 'data-day': lo, class: 'rp-ev low'}),
       sv('line', {x1: L, x2: W - R, y1: H - B, y2: H - B, class: 'rp-axis'}),
       sv('text', {x: L + 2, y: H - B + 18, class: 'rp-tick', 'text-anchor': 'start'}, fmtDate(d.horizon.start)),
-      sv('text', {x: W - R - 2, y: H - B + 18, class: 'rp-tick', 'text-anchor': 'end'}, fmtDate(d.horizon.end)));
+      ...(n > 1 ? [sv('text', {x: W - R - 2, y: H - B + 18, class: 'rp-tick', 'text-anchor': 'end'}, fmtDate(d.horizon.end))] : []));
+    // forecasthover.js: the card for the day under the pointer (returns what goes in the chart's place)
+    return HOOKS.forecastHover ? HOOKS.forecastHover(svg, {d, W, x, y: yy, top: T, base: H - B, dayIndex, events: dotted, lowest: lo}) : svg;
   }
 
   function inflowCard(d) {

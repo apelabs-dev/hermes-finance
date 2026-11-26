@@ -98,7 +98,8 @@ def _range(start: str | None, end: str | None) -> tuple[list[str], list[Any]]:
         if value is None:
             continue
         try:
-            date.fromisoformat(value)
+            if date.fromisoformat(value).isoformat() != value:
+                raise ValueError(value)
         except (TypeError, ValueError):
             raise ReportError(f"{flag} must be a date as YYYY-MM-DD, got {value!r}") from None
         where.append(f"v.date {op} ?")
@@ -123,7 +124,7 @@ def _part_columns(line: str) -> str:
 
 # The display currency keeps the app-wide convention: every line is rounded to cents before it is summed, so a split's
 # rounding never changes a total (and it matches the dashboard's own numbers line for line).
-_PART_COLUMNS = _part_columns("ROUND(v.spend, 2)")
+_PART_COLUMNS = _part_columns(insights.LINE_CENTS)
 # A foreign line is summed raw and rounded once to its own ISO exponent (KWD / BHD / JOD 3, JPY 0, most 2), so a
 # 3-decimal currency keeps its third decimal and a 4-fil charge is not dropped as a sub-cent row.
 _FOREIGN_PART_COLUMNS = _part_columns("v.spend")
@@ -144,7 +145,7 @@ def _part_rows(rows: Iterable[sqlite3.Row], decimals: int = 2) -> list[dict[str,
 
 
 def category_totals(conn: sqlite3.Connection, start: str | None = None, end: str | None = None,
-                    display: str | None = None) -> dict[str, Any]:
+                    display: str | None = None, *, group_counts: bool = False) -> dict[str, Any]:
     """Gross / Refunds / Net spending per category for the range (spending = not income, not transfers; refunds net
     against their category). Categories are ordered by net, largest first; `refunds_over` names every category whose
     net is below zero, which the flow shows as its own source. `foreign` is the same table per other currency: it is
@@ -154,29 +155,38 @@ def category_totals(conn: sqlite3.Connection, start: str | None = None, end: str
     with None it is read here."""
     display = display or display_currency(conn)
     where, args = _range(start, end)
+    # A split can land in two positive categories in the same group. Count its ID once, in the same SQL snapshot.
+    group_sql = """, counted_groups AS (
+        SELECT p.group_id, COUNT(DISTINCT s.transaction_id) AS group_count
+        FROM scoped s JOIN parts p USING (category_id)
+        WHERE ROUND(p.gross + p.refunds, 2) > 0 GROUP BY p.group_id
+    )""" if group_counts else ""
+    group_join = "LEFT JOIN counted_groups cg ON cg.group_id IS p.group_id" if group_counts else ""
+    group_column = ", cg.group_count" if group_counts else ""
     rows = conn.execute(
-        f"""SELECT v.category_id, v.category, c.group_id, g.name AS group_name, g.rgb AS group_rgb,
-                   g.sort AS group_sort, c.icon, {_PART_COLUMNS}
-            FROM {insights.LINES} v
-            JOIN categories c ON c.id = v.category_id
-            LEFT JOIN category_groups g ON g.id = c.group_id
-            WHERE {insights.SPENDING} AND {insights.currency_is_sql(display, "v.iso_currency")}
-              AND ({_where(where)})
-            GROUP BY v.category_id, v.category, c.group_id, g.name, g.rgb, g.sort, c.icon""", args).fetchall()
+        f"""WITH scoped AS (
+                SELECT v.transaction_id, v.category_id, v.category, v.spend FROM {insights.LINES} v
+                WHERE {insights.SPENDING} AND {insights.currency_is_sql(display, "v.iso_currency")}
+                  AND ({_where(where)})
+            ), parts AS (
+                SELECT v.category_id, v.category, c.group_id, c.icon, {_PART_COLUMNS}
+                FROM scoped v JOIN categories c ON c.id = v.category_id GROUP BY v.category_id
+            ){group_sql}
+            SELECT p.*, g.name AS group_name, g.rgb AS group_rgb, g.sort AS group_sort,
+                   (SELECT COUNT(DISTINCT transaction_id) FROM scoped) AS total_count{group_column}
+            FROM parts p LEFT JOIN category_groups g ON g.id = p.group_id {group_join}""", args).fetchall()
     out_categories = [{
         "category_id": r["category_id"], "category": r["category"],
         "group": r["group_name"], "group_id": r["group_id"], "group_rgb": r["group_rgb"],
         "group_sort": r["group_sort"], "icon": r["icon"],
-        "gross": r["gross"], "refunds": r["refunds"], "net": r["net"], "count": r["count"]}
+        "gross": r["gross"], "refunds": r["refunds"], "net": r["net"], "count": r["count"],
+        **({"group_count": r["group_count"]} if group_counts else {})}
         for r in _part_rows(rows)]
     total = _r(sum(c["net"] for c in out_categories))
     for c in out_categories:
         c["share"] = _r(c["net"] / total * 100) if total > 0 else None
     out_categories.sort(key=lambda c: (-c["net"], c["category"].casefold()))
-    count = conn.execute(
-        f"""SELECT COUNT(DISTINCT v.transaction_id) FROM {insights.LINES} v
-            WHERE {insights.SPENDING} AND {insights.currency_is_sql(display, "v.iso_currency")}
-              AND ({_where(where)})""", args).fetchone()[0]
+    count = rows[0]["total_count"] if rows else 0
     totals = {"gross": _r(sum(c["gross"] for c in out_categories)),
               "refunds": _r(sum(c["refunds"] for c in out_categories)),
               "net": total, "count": count}
@@ -193,10 +203,16 @@ def _foreign_totals(conn: sqlite3.Connection, where: list[str], args: list[Any],
     currency. Nothing here is converted or added to the display currency. Each currency's amounts are rounded to its
     own ISO minor unit (`money.exponent`), not to cents: KWD / BHD / JOD keep their third decimal."""
     rows = conn.execute(
-        f"""SELECT UPPER(TRIM(v.iso_currency)) AS currency, v.category_id, v.category, {_FOREIGN_PART_COLUMNS}
-            FROM {insights.LINES} v
-            WHERE {insights.SPENDING} AND {insights.currency_is_sql(display, "v.iso_currency", other=True)}
-              AND ({_where(where)})
+        f"""WITH scoped AS (
+                SELECT UPPER(TRIM(v.iso_currency)) AS currency, v.transaction_id, v.category_id, v.category, v.spend
+                FROM {insights.LINES} v
+                WHERE {insights.SPENDING} AND {insights.currency_is_sql(display, "v.iso_currency", other=True)}
+                  AND ({_where(where)})
+            ), counts AS (
+                SELECT currency, COUNT(DISTINCT transaction_id) AS currency_count FROM scoped GROUP BY currency
+            )
+            SELECT currency, v.category_id, v.category, counts.currency_count, {_FOREIGN_PART_COLUMNS}
+            FROM scoped v JOIN counts USING (currency)
             GROUP BY currency, v.category_id, v.category ORDER BY currency, v.category""", args).fetchall()
     by_currency_rows: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for r in rows:
@@ -212,7 +228,7 @@ def _foreign_totals(conn: sqlite3.Connection, where: list[str], args: list[Any],
                     "totals": {"gross": _round_to(sum(c["gross"] for c in cats), decimals),
                                "refunds": _round_to(sum(c["refunds"] for c in cats), decimals),
                                "net": _round_to(sum(c["net"] for c in cats), decimals),
-                               "count": sum(c["count"] for c in cats)}})
+                               "count": currency_rows[0]["currency_count"]}})
     return out
 
 
@@ -233,9 +249,8 @@ def _groups(totals: dict[str, Any]) -> dict[str, Any]:
             key = c["group_id"] or 0
             g = groups.setdefault(key, {"group": c["group"] or "Other", "group_id": c["group_id"],
                                         "rgb": c["group_rgb"], "sort": c["group_sort"] or 99,
-                                        "net": 0.0, "count": 0, "categories": []})
+                                        "net": 0.0, "count": c["group_count"], "categories": []})
             g["net"] = _r(g["net"] + c["net"])
-            g["count"] += c["count"]
             g["categories"].append(c["category"])
     out = sorted(groups.values(), key=lambda g: (-g["net"], g["sort"], g["group"].casefold()))
     total = _r(sum(g["net"] for g in out))
@@ -249,7 +264,7 @@ def spending_groups(conn: sqlite3.Connection, start: str | None = None, end: str
     """The categories that net positive, summed per category group (the flow's spending side), and the categories
     that net below zero as separate "Refunds over spending" sources. A group's net is the sum of its positive
     categories only, so `net` - the sum of the refunds -over sources equals the range's net spending exactly."""
-    return _groups(category_totals(conn, start, end, display))
+    return _groups(category_totals(conn, start, end, display, group_counts=True))
 
 
 # --- 3. Income sources and moves (q1, q2) ----------------------------------------------------------------------
@@ -263,16 +278,30 @@ def _income_source(detailed: str | None) -> str:
     return "other"
 
 
+def income_source_sql(source: str) -> tuple[str, list[str]]:
+    """SQL over `v_transactions v` for the income rows `_income_source` files under `source` (a key of INCOME_LABELS),
+    so the Transactions page's `?source=` lists exactly the rows the Cash flow row counts. Raises ReportError for any
+    other name."""
+    if source not in INCOME_LABELS:
+        raise ReportError(f"source must be one of {', '.join(INCOME_LABELS)}")
+    code = "UPPER(TRIM(COALESCE(v.pfc_detailed, '')))"
+    named = {"paychecks": PAYCHECK_CODES, "interest_tax_refunds": INTEREST_CODES}
+    if source in named:
+        return f"(v.is_income = 1 AND {code} IN ({', '.join('?' * len(named[source]))}))", list(named[source])
+    codes = [c for group in named.values() for c in group]
+    return f"(v.is_income = 1 AND {code} NOT IN ({', '.join('?' * len(codes))}))", codes
+
+
 def income_sources(conn: sqlite3.Connection, start: str | None = None, end: str | None = None,
                    display: str | None = None) -> dict[str, Any]:
-    """Money in, by source (Paychecks, Interest and tax refunds, Other income), as positive amounts. Refunds of
+    """Net income by source (Paychecks, Interest and tax refunds, Other income). Refunds of
     spending are not here: they net against their category (q1); a tax refund is income and is here. `display` is as
     `category_totals`'s: read here unless a report already chose it."""
     display = display or display_currency(conn)
     where, args = _range(start, end)
     rows = conn.execute(
-        f"""SELECT v.transaction_id, v.amount, v.pfc_detailed
-            FROM v_transactions v
+        f"""SELECT {insights.LINE_CENTS} AS amount, v.pfc_detailed
+            FROM {insights.LINES} v
             WHERE v.is_income = 1 AND {insights.currency_is_sql(display, "v.iso_currency")}
               AND ({_where(where)})""", args).fetchall()
     buckets: dict[str, dict[str, Any]] = {k: {"amount": 0.0, "count": 0} for k in INCOME_LABELS}
@@ -337,25 +366,33 @@ def remaining_after_spending(conn: sqlite3.Connection, start: str | None = None,
 
 
 def money_flow(conn: sqlite3.Connection, start: str | None = None, end: str | None = None) -> dict[str, Any]:
-    """The Cash flow page's numbers: money in (income sources plus every "Refunds over spending" source), the
-    spending groups, and what is left after spending. `money_in - money_out` equals `remaining`, and `remaining`
+    """The Cash flow page's numbers: money in (positive net income sources and "Refunds over spending"),
+    money out (spending groups and negative net income sources), and what is left after spending.
+    `money_in - money_out` equals `remaining`, and `remaining`
     equals `remaining_after_spending` for the same range. The moves between accounts are listed in `moves`.
 
     The whole report is one snapshot: the display currency is read once, and income and spending are each read once,
     with the groups, the refunds-over total and the remaining all derived from those reads. Reading the same
     aggregate several times let a sync landing between two SELECTs make the flow's own numbers disagree."""
     display = display_currency(conn)
-    totals = category_totals(conn, start, end, display)
+    totals = category_totals(conn, start, end, display, group_counts=True)
     income = income_sources(conn, start, end, display)
     groups = _groups(totals)
     over_total = _r(sum(r["amount"] for r in groups["refunds_over"]))
-    money_out = _r(sum(g["net"] for g in groups["groups"]))
-    money_in = _r(income["total"] + over_total)
+    reversals = [{"label": f"{s['label']} reversed", "amount": -s["amount"], "count": s["count"]}
+                 for s in income["sources"] if s["amount"] < 0]
+    money_out = _r(sum(g["net"] for g in groups["groups"]) + sum(s["amount"] for s in reversals))
+    money_in = _r(sum(s["amount"] for s in income["sources"] if s["amount"] > 0) + over_total)
+    if reversals:
+        for g in groups["groups"]:
+            g["share"] = _r(g["net"] / money_out * 100)
+        for s in reversals:
+            s["share"] = _r(s["amount"] / money_out * 100)
     remaining = _r(income["total"] - totals["totals"]["net"])
     return {"currency": display, "start": start, "end": end,
             "income": income, "spending": totals["totals"],
             "groups": groups["groups"], "refunds_over": groups["refunds_over"],
-            "money_in": money_in, "money_out": money_out,
+            "money_in": money_in, "money_out": money_out, "income_reversals": reversals,
             "remaining": remaining,
             "remaining_share": _r(remaining / income["total"] * 100) if income["total"] > 0 else None,
             "short": remaining < 0,
@@ -632,7 +669,10 @@ def detected_paychecks(conn: sqlite3.Connection, today: date,
         if cadence is None:
             continue
         last = days[-1]
-        nxt = last + timedelta(days=insights.NOMINAL_DAYS[cadence])
+        step = insights.NOMINAL_DAYS[cadence]
+        anchor = insights._month_anchor(days) if cadence in billcal.STEP_MONTHS else None
+        nxt = (billcal._add_months_day(last, billcal.STEP_MONTHS[cadence], anchor) if anchor is not None
+               else last + timedelta(days=step))
         if (today - nxt).days > insights.NOMINAL_DAYS[cadence]:   # missed a whole extra cycle: it stopped
             continue
         latest = deposits[-1]
@@ -643,6 +683,7 @@ def detected_paychecks(conn: sqlite3.Connection, today: date,
             "amount": _r(statistics.median(amounts[-3:])),
             "cadence": cadence, "cadence_label": insights.CADENCE_LABELS[cadence],
             "last_date": last.isoformat(), "next_expected": nxt.isoformat(),
+            **({"anchor_day": anchor} if anchor is not None else {}),
             "days_until": (nxt - today).days, "count": len(deposits),
             "account_id": account_id,
             "answer": answers.get(_paycheck_source_key(key, account_id, display)),
@@ -660,6 +701,7 @@ def _everyday(conn: sqlite3.Connection, today: date, rec: dict[str, Any]) -> dic
     bill categories and every recurring bill's charges (those are drawn as events), as a daily rate. `lower` and
     `higher` are the two named scenario rates (q6)."""
     display = display_currency(conn)
+    currency = insights.currency_is_sql(display, "v.iso_currency")
     months = [insights.add_months(insights.month_of(today), -i) for i in range(LOOKBACK_MONTHS, 0, -1)]
     start = date.fromisoformat(f"{months[0]}-01")
     end = date.fromisoformat(f"{months[-1]}-{insights.days_in_month(months[-1]):02d}")
@@ -667,7 +709,7 @@ def _everyday(conn: sqlite3.Connection, today: date, rec: dict[str, Any]) -> dic
     fixed = set(insights.FIXED_CATEGORIES)
     rows = conn.execute(
         f"""SELECT v.spend, v.category, v.merchant_name, v.name FROM {insights.LINES} v
-            WHERE {insights.SPENDING} AND {insights.currency_sql(conn)} AND v.date >= ? AND v.date <= ?""",
+            WHERE {insights.SPENDING} AND {currency} AND v.date >= ? AND v.date <= ?""",
         (start.isoformat(), end.isoformat())).fetchall()
     total, bill_charges = 0.0, 0
     for r in rows:
@@ -678,11 +720,13 @@ def _everyday(conn: sqlite3.Connection, today: date, rec: dict[str, Any]) -> dic
             continue
         total += r["spend"]
     days = (end - start).days + 1
-    rate = _r(total / days) if days else 0.0
-    first = conn.execute("SELECT MIN(v.date) FROM v_transactions v").fetchone()[0]
+    # Historical refunds reduce spending; a surplus is not an inflow to project every day.
+    rate = _r(max(0.0, total) / days)
+    first = conn.execute(f"SELECT MIN(v.date) FROM v_transactions v WHERE {currency} AND v.date <= ?",
+                         (today.isoformat(),)).fetchone()[0]
     return {"start": start.isoformat(), "end": end.isoformat(), "days": days,
             "total": _r(total), "rate": rate, "lower": _r(rate * LOWER_FACTOR), "higher": _r(rate * HIGHER_FACTOR),
-            "coverage": "partial" if first and first > start.isoformat() else "full",
+            "coverage": "full" if first and first <= start.isoformat() else "partial",
             "history_from": first,
             "excluded": {"fixed_categories": sorted(fixed), "bill_charges": bill_charges, "bills": len(bills)}}
 
@@ -791,7 +835,7 @@ def forecast(conn: sqlite3.Connection, today: date, days: int = FORECAST_DAYS,
             continue
         included.append(src["key"])
         item = {"last_date": src["last_date"], "next_expected": src["next_expected"], "cadence": src["cadence"],
-                "status": "ok"}
+                "status": "ok", **({"anchor_day": src["anchor_day"]} if "anchor_day" in src else {})}
         for occ in _in_window(item, start, end, today):
             when = date.fromisoformat(occ["date"])
             events.append({"date": max(when, start).isoformat(), "label": src["label"], "kind": "paycheck",
@@ -800,7 +844,7 @@ def forecast(conn: sqlite3.Connection, today: date, days: int = FORECAST_DAYS,
     events.sort(key=lambda e: (e["date"], e["label"].casefold()))
 
     everyday = _everyday(conn, today, rec)
-    if not everyday["total"]:
+    if everyday["total"] <= 0:
         warnings.append("no everyday spending in the last "
                         f"{LOOKBACK_MONTHS} complete months, so the lines leave it at 0")
     elif everyday["coverage"] == "partial":
@@ -880,9 +924,9 @@ def spending_by_day(conn: sqlite3.Connection, start: str | None = None,
     where, args = _range(start, end)
     rows = conn.execute(
         f"""SELECT v.date, v.category_id, v.category, COUNT(DISTINCT v.transaction_id) AS n,
-                   COALESCE(SUM(ROUND(v.spend, 2)), 0) AS net
+                   COALESCE(SUM({insights.LINE_CENTS}), 0) AS net
             FROM {insights.LINES} v
-            WHERE {insights.SPENDING} AND {insights.currency_sql(conn)} AND ({_where(where)})
+            WHERE {insights.SPENDING} AND {insights.currency_is_sql(display, "v.iso_currency")} AND ({_where(where)})
             GROUP BY v.date, v.category_id, v.category
             ORDER BY v.date, v.category_id""", args).fetchall()
     days = [{"date": r["date"], "category_id": r["category_id"], "category": r["category"],
@@ -925,8 +969,11 @@ def year_spending(conn: sqlite3.Connection, today: date, months: int = YEAR_MONT
     totals = category_totals(conn, start, end)
     series = spending_by_day(conn, start, end)
     cells: dict[tuple[Any, str], float] = defaultdict(float)
+    counts: dict[tuple[Any, str], int] = defaultdict(int)
     for d in series["days"]:
-        cells[(d["category_id"], d["date"][:7])] = _r(cells[(d["category_id"], d["date"][:7])] + d["net"])
+        key = (d["category_id"], d["date"][:7])
+        cells[key] = _r(cells[key] + d["net"])
+        counts[key] += d["count"]
     first_row = conn.execute("SELECT MIN(v.date) FROM v_transactions v").fetchone()[0]
     data_from = first_row if isinstance(first_row, str) else None
     no_data_from = data_from[:7] if data_from else current  # with no data at all, every month is hatched
@@ -939,8 +986,8 @@ def year_spending(conn: sqlite3.Connection, today: date, months: int = YEAR_MONT
                            "income": remaining["income"], "remaining": remaining["remaining"],
                            "share": remaining["share"], "short": remaining["short"]})
     data_months = [r for r in month_rows if not r["nodata"]]
-    complete = [r for r in data_months if r["month"] != current] or data_months
-    average = _r(sum(r["spending"] for r in complete) / len(complete)) if complete else 0.0
+    complete = [r for r in data_months if r["month"] != current]
+    average = _r(sum(r["spending"] for r in complete) / len(complete)) if complete else None
     best = max(data_months, key=lambda r: (r["remaining"], r["month"]), default=None) if data_months else None
     variable = None
     for c in totals["categories"]:
@@ -967,7 +1014,8 @@ def year_spending(conn: sqlite3.Connection, today: date, months: int = YEAR_MONT
     }
     rows = []
     for c in totals["categories"]:
-        cells_out = [{"month": r["month"], "net": cells[(c["category_id"], r["month"])], "nodata": r["nodata"]}
+        cells_out = [{"month": r["month"], "net": cells[(c["category_id"], r["month"])],
+                      "count": counts[(c["category_id"], r["month"])], "nodata": r["nodata"]}
                      for r in month_rows]
         peak = max((abs(x["net"]) for x in cells_out), default=0.0) or 1.0
         for x in cells_out:
@@ -991,7 +1039,7 @@ def category_activity(conn: sqlite3.Connection, category_id: int, start: str | N
     rows = conn.execute(
         f"""SELECT v.transaction_id, MIN(v.date) AS date,
                    COALESCE(NULLIF(TRIM(MIN(v.merchant_name)), ''), TRIM(MIN(v.name)), '') AS label,
-                   COALESCE(SUM(ROUND(v.spend, 2)), 0) AS net, COUNT(*) AS lines
+                   COALESCE(SUM({insights.LINE_CENTS}), 0) AS net, COUNT(*) AS lines
             FROM {insights.LINES} v
             WHERE {insights.SPENDING} AND {insights.currency_sql(conn)} AND v.category_id = ?
               AND ({_where(where)})

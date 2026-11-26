@@ -28,7 +28,8 @@ def built(tmp_path_factory):
     # safe (offline_env.OFFLINE_SWITCHES), and the demo must not depend on what the caller's shell or a test run sets
     env = {k: v for k, v in os.environ.items() if k not in OFFLINE_SWITCHES}
     subprocess.run([sys.executable, str(ROOT / 'scripts/build_demo.py'), '--today', TODAY, '--seed', SEED,
-                    '--out', str(dist), '--no-canary'], check=True, capture_output=True, env=env)
+                    '--out', str(dist), '--keep-db', str(tmp / 'books'), '--no-canary'],
+                   check=True, capture_output=True, env=env)
     return tmp, dist
 
 
@@ -57,6 +58,77 @@ def route(built, posts=(), gets=()):
     r = subprocess.run([shutil.which('node'), '-e', demo_parity.HARNESS, str(dist), str(req)],
                        capture_output=True, text=True, check=True)
     return json.loads(r.stdout)
+
+
+def _reports_requests(built, view):
+    """Every request the Reports page can make for `view`: each month, the chip windows, the three forecast horizons;
+    for the drill-down, the desktop cells that hold transactions and the phone's category rows (which open the month
+    the page is on, whatever it holds)."""
+    from build_demo import fkey
+    _, dist = built
+    data = json.loads((dist / 'demo/data/core.json').read_text())
+    spending = [v for k, v in data['core'].items() if k.startswith('/api/reports/spending?')]
+    path = f'/api/reports/{view}'
+    if view in ('spending', 'cashflow'):
+        params = ([{'month': m} for m in data['meta']['months']]
+                  + [{'since': w} for w in ('7d', '30d', '90d')] + [{'window': 'all'}])
+    elif view == 'forecast':
+        params = [{'days': n} for n in (30, 60, 90)]
+    else:
+        desktop = {(c['category_id'], cell['month']) for d in spending for c in d['year']['categories']
+                   for cell in c['months'] if not cell['nodata'] and cell['net']}
+        phone = {(c['category_id'], d['month']) for d in spending for c in d['year']['categories']}
+        params = [{'category_id': cid, 'month': m} for cid, m in sorted(desktop | phone)]
+    return data, [fkey(path, p) for p in params]
+
+
+def _app_and_rename(built):
+    """The real App on the DB the build kept, and the build's own name map (names and ids change, amounts never)."""
+    import build_demo
+    import sqlite3
+    tmp, _ = built
+    books = tmp / 'books'
+    saved = json.loads((books / 'rename.json').read_text())
+    # the map the way demo_parity.py rebuilds it: from the kept DB, then the build's own path stand-ins
+    conn = sqlite3.connect(books / 'finance.db')
+    try:
+        rename = build_demo.RenameMap(conn, {k: f'/nonexistent/{k}' for k in [*build_demo.FAKE_PATHS, 'tmp']})
+    finally:
+        conn.close()
+    rename.paths.update(saved['paths'])
+    rename._paths = sorted(rename.paths, key=len, reverse=True)
+    from datetime import date
+    return build_demo.Answers(books / 'finance.db', date.fromisoformat(TODAY)), rename
+
+
+@pytest.mark.parametrize('view', ['spending', 'cashflow', 'forecast', 'activity'])
+def test_reports_presets_match_the_app_on_the_same_books(built, view):
+    """The demo replays frozen /api/reports/* answers. For the same books and the same day, what the demo's router
+    serves for each preset and each cell must equal what the real app answers now (to the cent), and what it serves
+    must be what the build froze."""
+    from urllib.parse import parse_qsl
+    data, keys = _reports_requests(built, view)
+    app, rename = _app_and_rename(built)
+    replies = route(built, gets=keys)['gets']
+    served = [k for k in keys if replies[k][0] == 200]
+    assert served, view
+    mismatches = []
+    for k in served:
+        path, _, query = k.partition('?')
+        expected = rename.json(app.json(path, dict(parse_qsl(query)))[1])
+        mismatches.extend(demo_parity.diff([200, expected], replies[k], k, tol=0.0051))
+        if k in data['core']:
+            assert replies[k] == [200, data['core'][k]], k
+    assert not mismatches, f'{view}: {len(mismatches)} differences across {len(served)} requests: {mismatches[:10]}'
+    if view != 'activity':     # a month, a window or a horizon the page offers is never left unserved
+        assert len(served) == len(keys), [k for k in keys if k not in served]
+
+
+def test_every_drill_the_page_can_open_is_frozen(built):
+    _, keys = _reports_requests(built, 'activity')
+    replies = route(built, gets=keys)['gets']
+    unserved = [k for k in keys if replies[k][0] != 200]
+    assert not unserved, f'{len(unserved)} of {len(keys)} drill-downs answer with an error in the demo: {unserved[:3]}'
 
 
 def test_money_writes_are_refused_and_gets_unchanged(built):
@@ -356,3 +428,32 @@ def test_every_real_ticker_held_shows_its_logo(built):
         frozen = build_demo.TICKER_LOGOS / f'{t}.png'
         if frozen.is_file():
             assert logo.read_bytes() == frozen.read_bytes(), t
+
+
+def test_every_cashflow_row_of_the_demo_opens_transactions_on_the_numbers_it_showed(built):
+    """A Cash flow row links to Transactions (`#/transactions?...`, a hash route the static demo serves
+    itself). For the 30-day window and for the current month, the shim answers each row's query with the row's own
+    count and total, and refuses a source it does not know."""
+    from urllib.parse import urlencode
+    _, dist = built
+    data = json.loads((dist / 'demo/data/transactions.json').read_text())
+    income = {r['transaction_id'] for r in data['rows'] if r['is_income']}
+    assert income and set(data['income_sources']) == income      # every income row has the one source the report files it under
+    windows = [{'since': '30d'}, {'month': MONTH}]
+    flows = route(built, gets=[f'/api/reports/cashflow?{urlencode(w)}' for w in windows])['gets']
+    queries = {}
+    for w in windows:
+        status, flow = flows[f'/api/reports/cashflow?{urlencode(w)}']
+        assert status == 200 and flow['groups'], w
+        for s in flow['income']['sources']:
+            queries[urlencode({'source': s['source'], 'kind': 'income', **w})] = (s['count'], s['amount'], True)
+        for g in flow['groups']:
+            queries[urlencode([*(('category', c) for c in g['categories']), ('kind', 'spend'), *w.items()])] = (
+                g['count'], g['net'], False)
+    answers = route(built, gets=[f'/api/transactions?{q}&limit=1' for q in queries])['gets']
+    for q, (count, total, money_in) in queries.items():
+        status, page = answers[f'/api/transactions?{q}&limit=1']
+        assert status == 200, (q, page)
+        assert page['total'] == count and abs(abs(page['sum']) - total) < 0.01 and (page['sum'] < 0) == money_in, (q, page['total'], page['sum'], count, total)
+    status, page = route(built, gets=['/api/transactions?source=salary'])['gets']['/api/transactions?source=salary']
+    assert status == 400, (status, page)

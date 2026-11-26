@@ -35,6 +35,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "src" / "hermes_finance" / "static"
 DEMO_SRC = ROOT / "demo"
+REPORT_DAYS = ("7d", "30d", "90d")   # the chips on the Reports window sheet (static/reports.js)
+REPORT_FORECAST_DAYS = (30, 60, 90)
 DEMO_FILES = ("shim.js", "demo.css", "loader.js", "ask.js")   # demo-only code; static/ stays byte-identical
 DEMO_LOGOS = DEMO_SRC / "logos"   # invented logos for the fictional banks and merchants, plus Alpaca's own (t_4cb4d435)
 MERCHANT_LOGOS = "/api/merchant-logos/"
@@ -56,7 +58,7 @@ PAGE_CHANGES = [
     "<meta http-equiv=Content-Security-Policy> added: the app's CSP without Plaid (self only: no request leaves the page)",
     "the Plaid Link <script> (cdn.plaid.com) removed: connecting a bank isn't part of the demo",
     f"data-ask-brain set to '{BRAIN_LABEL}' (the Ask chip; the App would name the model)",
-    "stylesheets and deferred scripts are loaded sequentially by /demo/loader.js (unchanged product files, plain http.server backlog safe)",
+    "deferred scripts are loaded sequentially by /demo/loader.js (unchanged product files, plain http.server backlog safe); the stylesheets stay <link>s in <head>, so the first paint is styled, and the loader shows skeleton cards in the empty page until app.js draws it",
     "<title> gets a 'Demo · ' prefix and <meta name=robots content=noindex> is added",
 ]
 CSP = "; ".join(["default-src 'self'", "script-src 'self'", "connect-src 'self'", "img-src 'self' data:",
@@ -769,6 +771,23 @@ def collect(db_path: Path, today: date) -> dict:
         bundle["bill_lookups"] = {t["transaction_id"]: a.json("/api/bills/lookup", {"transaction_id": t["transaction_id"]})[1]
                                   for t in tx["rows"]}
         months[m] = bundle
+    # Reports: the app computes them, the demo only replays them. Every month, the windows the picker offers as chips
+    # (7d, 30d, 90d, all time), the Forecast's three horizons, and each category cell's drill-down. A typed From/To
+    # range is not here: the shim answers it with a plain note (demo/shim.js).
+    for view in ("spending", "cashflow"):
+        path = f"/api/reports/{view}"
+        for m in months:
+            put(path, {"month": m})
+        for since in REPORT_DAYS:
+            put(path, {"since": since})
+        put(path, {"window": "all"})
+    for days in REPORT_FORECAST_DAYS:
+        put("/api/reports/forecast", {"days": days})
+    drills = {(c["category_id"], x["month"]) for k, v in list(core.items()) if k.startswith("/api/reports/spending")
+              for c in v["year"]["categories"] for x in c["months"]
+              if x["count"] or x["month"] == v["month"]}  # desktop cells with transactions; phone opens the last month
+    for category_id, m in sorted(drills):
+        put("/api/reports/activity", {"month": m, "category_id": category_id})
     from hermes_finance import api
     tx_all = []
     orders = {}
@@ -785,8 +804,17 @@ def collect(db_path: Path, today: date) -> dict:
             tx_all = rows
             tx_base = page
     core['/api/saved-filters'] = a.json('/api/saved-filters', {'window': '1'})[1]
+    # ?source= on Transactions (a Cash flow income row opens it): each income row's source, by id, as the report files it
+    from hermes_finance import reports
+    codes = sqlite3.connect(db_path)
+    try:
+        detailed = dict(codes.execute("SELECT transaction_id, pfc_detailed FROM transactions"))
+    finally:
+        codes.close()
+    income_sources = {r['transaction_id']: reports._income_source(detailed.get(r['transaction_id'])) for r in tx_all if r['is_income']}
     tx_data = {'rows': tx_all, 'orders': orders, 'coverage_month': tx_base['coverage_month'],
                'tags': tx_base['facets']['tags'],
+               'income_sources': income_sources,
                'groups': {cat['name']: g['name'] for g in core['/api/category-groups']['groups'] for cat in g['categories']}}
     from hermes_finance import prefs
     conn = sqlite3.connect(db_path)
@@ -850,15 +878,12 @@ def page_html(db_path: Path, today: date, build_id: str, now: datetime) -> str:
                         f'<link rel="stylesheet" href="/static/tap.css">\n<link rel="stylesheet" href="/demo/demo.css?v={build_id}">', 1)
     if "/demo/shim.js" not in page or "/demo/demo.css" not in page:
         raise RuntimeError("index.html: the shim or its stylesheet could not be placed")
-    styles = re.findall(r'<link rel="stylesheet" href="([^"]+)">', page)
     scripts = re.findall(r'<script src="([^"]+)" defer></script>', page)
     if "/static/app.js" not in scripts:
         raise RuntimeError("index.html: no deferred /static/app.js to load the demo's Ask v2 before")
     scripts.insert(scripts.index("/static/app.js"), f"/demo/ask.js?v={build_id}")   # an HF_EXT, so before app.js
-    page = re.sub(r'<link rel="stylesheet" href="[^"]+">', '', page)
     page = re.sub(r'<script src="[^"]+" defer></script>', '', page)
-    loader = ('<script src="/demo/loader.js" defer data-styles="' + html_module.escape(json.dumps(styles), quote=True)
-              + '" data-scripts="' + html_module.escape(json.dumps(scripts), quote=True) + '"></script>')
+    loader = ('<script src="/demo/loader.js" defer data-scripts="' + html_module.escape(json.dumps(scripts), quote=True) + '"></script>')
     page = page.replace('</head>', loader + '\n</head>')
     return page
 

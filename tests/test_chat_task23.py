@@ -371,6 +371,16 @@ def test_the_page_carries_the_brain_for_the_header_chip(app):
         assert s == 200 and len(body) > 1000
 
 
+def test_the_page_carries_the_ask_flag_in_cli_mode_too(app):
+    # CLI brains (Claude Code, Codex) are an Ask mode: chat.js draws the button from the page's data-ask flag at first
+    # paint, so the server has to write it for "cli" as well, not only for "api" and "hermes".
+    conn = db.connect(config.db_path())
+    prefs.save(conn, {"ai.mode": "cli", "ai.cli": "codex"})
+    conn.close()
+    s, html = http(app, "GET", "/")
+    assert 'data-ask="cli" data-ask-brain="via Codex"' in html
+
+
 def test_every_chat_post_needs_the_csrf_token_with_the_built_in_login(app, llm, monkeypatch):
     from argon2 import PasswordHasher
     monkeypatch.setattr(auth, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1))

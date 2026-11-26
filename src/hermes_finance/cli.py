@@ -1361,11 +1361,12 @@ date has already passed.
 
 JSON: {today, next_days, until, count,
        items: [{merchant, key, kind: bill|subscription, category, amount, cadence, cadence_label, interval_days, charges,
-                last_date, last_amount, next_expected, days_until, status, paid_this_month, monthly_amount, variable,
+                last_date, last_amount, next_expected, anchor_day?, days_until, status, paid_this_month, monthly_amount, variable,
                 estimate, amount_label, usual: {low, high, source: charges|you} | null, source: detected|tracked,
                 last_account: {name, mask, institution} | null, outlier: higher|lower|null}],
        recurring_count, monthly_totals: {bill, subscription}}
   cadence: weekly | biweekly | monthly | bimonthly | quarterly | semiannual | yearly (cadence_label: "every 2 months" ...).
+  anchor_day (monthly or longer, only when the charges keep one day of the month): that day, e.g. 31; a short month clamps it.
   variable: the amount changes each time; amount (= estimate) is the median of its last 3 charges, or while there are
   fewer than 3, the middle of the usual amount you gave (amount_label "~$125 est."). usual: the range its charges spanned,
   or the one you gave (source you). outlier: its last charge was over 1.5x the top of the usual you gave (higher) or under
@@ -1445,7 +1446,7 @@ JSON: {today, horizon: {days, start, end}, currency, accounts: [...], opening: {
        accounts: [...]}, everyday: {start, end, days, total, rate, lower, higher, coverage, history_from, excluded},
        events: [{date, label, kind: bill|subscription|paycheck, amount, category, variable, source, confirmed, overdue}],
        paychecks: {detected: [{key, key_label, label, amount, cadence, cadence_label, last_date, next_expected,
-                                days_until, count, account_id, answer}], included: [...],
+                                anchor_day?, days_until, count, account_id, answer}], included: [...],
                    excluded_by_account: [{key, label, amount, cadence, cadence_label, last_date, account_id,
                                           account_name}], answers_dropped},
        expected: {in, out, net}, lines: {lower, expected, higher: {label, daily, points: [{date, balance}], end,

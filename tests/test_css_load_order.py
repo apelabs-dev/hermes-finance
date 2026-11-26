@@ -18,7 +18,7 @@ from hermes_finance import web
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ORDER = ["app.css", "iconpick.css", "goals.css", "txmeta.css", "billcal.css", "rollover.css", "alpaca.css", "bills.css", "chat.css",
-             "catpick.css", "catcolour.css", "txfilter.css", "wherewent.css", "simplefin.css", "settingsskel.css", "reports.css", "pdfimport.css",
+             "catpick.css", "catcolour.css", "txfilter.css", "wherewent.css", "simplefin.css", "settingsskel.css", "reports.css", "forecasthover.css", "pdfimport.css",
              "budgets.css", "settings.css", "light.css", "tap.css"]
 LOGIN_ORDER = ["app.css", "settings.css", "light.css", "tap.css"]
 LINK = re.compile(r"""<link\b[^>]*\brel=["']?stylesheet["']?[^>]*>""", re.I)

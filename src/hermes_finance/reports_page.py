@@ -38,8 +38,9 @@ def _window(conn: sqlite3.Connection, params: dict[str, str], today: date) -> tu
             raise api.ApiError("window must be all")
         if month or since or until:
             raise api.ApiError("window can't be combined with month, since or until")
-        first = conn.execute("SELECT MIN(v.date) FROM v_transactions v").fetchone()[0]
-        return reads.Period("range", first if isinstance(first, str) else today.isoformat(), today.isoformat()), True
+        end = today.isoformat()
+        first = conn.execute("SELECT MIN(v.date) FROM v_transactions v WHERE v.date <= ?", (end,)).fetchone()[0]
+        return reads.Period("range", first or end, end), True
     if month is not None and (since or until):
         raise api.ApiError("month can't be combined with since or until")
     if since is None and until is None:       # a month (the default): the page's own check, unchanged
@@ -76,10 +77,12 @@ def spending(conn: sqlite3.Connection, params: dict[str, str], today: date) -> d
         months = max(months, 2)
     try:
         year = reports.year_spending(conn, today, months=months, end_month=end_month)
+        totals = reports.category_totals(conn, period.start, period.end, year["currency"])["totals"]
     except reports.ReportError as e:
         raise api.ApiError(str(e)) from None
     return {"view": "spending", "today": today.isoformat(), "month": end_month,
-            "period": {"start": period.start, "end": period.end}, "window": _kind(period, every), "year": year}
+            "period": {"start": period.start, "end": period.end}, "window": _kind(period, every),
+            "totals": totals, "year": year}
 
 
 def cashflow(conn: sqlite3.Connection, params: dict[str, str], today: date) -> dict[str, Any]:

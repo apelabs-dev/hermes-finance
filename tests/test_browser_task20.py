@@ -81,8 +81,9 @@ def test_every_extension_runs_once(browser, features):
     # + (v24) catcolour, the New category sheet's Colour row
     # + settingsskel, the Settings loading skeleton
     # + (0.5) reports, the Reports pages
+    # + forecasthover, the Forecast chart's card for the day under the pointer
     # + (0.5) pdfimport, the PDF statement screens
-    assert browser.js("window.HF_EXT.length") == 20
+    assert browser.js("window.HF_EXT.length") == 21
     assert browser.problems() == []
 
 

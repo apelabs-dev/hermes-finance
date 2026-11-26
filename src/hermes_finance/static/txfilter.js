@@ -20,7 +20,10 @@
     if (!GROUPS) GROUPS = api('/api/category-groups').catch((e) => { GROUPS = null; throw e; });
     return GROUPS;
   };
-  const picks = (f) => f.category.length + f.group.length + (f.uncategorized ? 1 : 0) + f.tag.length + (f.bank ? 1 : 0);
+  const picks = (f) => f.category.length + f.group.length + (f.uncategorized ? 1 : 0) + f.tag.length + (f.bank ? 1 : 0)
+    + (f.source ? 1 : 0);
+  // The income sources Cash flow counts (reports.INCOME_LABELS): a row opens Transactions on one of them (?source=)
+  const SOURCES = {paychecks: 'Paychecks', interest_tax_refunds: 'Interest and tax refunds', other: 'Other income'};
   const groupOf = (data, name) => (data ? data.groups.find((g) => g.categories.some((c) => c.name === name)) : null);
 
   // ---- the bar: the Filters button; under it, the chips of what's picked ----------------------------------------------
@@ -78,11 +81,12 @@
       f.category.map((c) => chip('category', c, drop('category', c))),
       f.tag.map((t) => chip('tag', t, drop('tag', t))),
       f.bank ? chip('bank', f.bank, () => updateTx({bank: ''})) : null,
+      f.source ? chip('source', SOURCES[f.source] || f.source, () => updateTx({source: ''})) : null,
       sorted ? h('button', {class: 'tfchip tfsortc', type: 'button', 'aria-label': `Sorted by ${SORT_NAMES[f.sort]}: back to newest first`,
         onclick: then(() => updateTx({sort: 'date_desc'}))}, icon('sort'), SORT_NAMES[f.sort], icon('x')) : null,
       picks(f) ? [txWindowParams().month ? h('span', {class: 'tfsum'}, `${plural(d.total, 'payment')} · `, h('b', {class: d.sum < 0 ? 'in' : ''}, signed(d.sum || 0))) : null,
         h('button', {class: 'lnk tfclr', type: 'button',
-          onclick: then(() => updateTx({category: [], group: [], uncategorized: false, tag: [], bank: ''}))}, 'Clear all')] : null);
+          onclick: then(() => updateTx({category: [], group: [], uncategorized: false, tag: [], bank: '', source: ''}))}, 'Clear all')] : null);
     row.classList.toggle('sortonly', !picks(f));
     row.hidden = false;
   }

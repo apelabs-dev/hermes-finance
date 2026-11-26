@@ -33,6 +33,8 @@ log = logging.getLogger(__name__)
 
 SPENDING = "v.is_income = 0 AND v.is_transfer = 0"
 LINES = "v_spend_lines"   # TASK-19: spending by category reads a split's lines (a split never changes a total)
+# Display-currency totals agree across days, categories and periods by summing the same cent-normalized lines.
+LINE_CENTS = "ROUND(v.spend, 2)"
 
 
 def _display(conn: sqlite3.Connection) -> str:
@@ -194,7 +196,7 @@ def spend_by(conn: sqlite3.Connection, where: str = "1 = 1", args: Sequence[Any]
     {group value: (spend, count)}, or {None: (spend, count)} without a `group` expression. The month and category
     totals, pending spend, cash flow and `finance spend` all sum with this. count is transactions (a split one is one
     in each of its categories, and one in a total)."""
-    sql = (f"SELECT {group or 'NULL'}, COALESCE(SUM(v.spend), 0), COUNT(DISTINCT v.transaction_id) FROM {LINES} v "
+    sql = (f"SELECT {group or 'NULL'}, COALESCE(SUM({LINE_CENTS}), 0), COUNT(DISTINCT v.transaction_id) FROM {LINES} v "
            f"WHERE {SPENDING} AND {currency_sql(conn)} AND ({where})")
     if group:
         sql += f" GROUP BY {group}"
@@ -206,14 +208,14 @@ def _spend(conn: sqlite3.Connection, month: str) -> float:
 
 
 def _income(conn: sqlite3.Connection, month: str) -> float:
-    row = conn.execute(f"SELECT COALESCE(-SUM(v.spend), 0) FROM {LINES} v WHERE v.month = ? AND v.is_income = 1 "
+    row = conn.execute(f"SELECT COALESCE(-SUM({LINE_CENTS}), 0) FROM {LINES} v WHERE v.month = ? AND v.is_income = 1 "
                        f"AND {currency_sql(conn)}", (month,)).fetchone()
     return _r(row[0])
 
 
 def _daily_spend(conn: sqlite3.Connection, month: str) -> dict[int, float]:
     rows = conn.execute(
-        f"SELECT CAST(substr(v.date, 9, 2) AS INTEGER) AS day, SUM(v.spend) FROM {LINES} v "
+        f"SELECT CAST(substr(v.date, 9, 2) AS INTEGER) AS day, SUM({LINE_CENTS}) FROM {LINES} v "
         f"WHERE v.month = ? AND {SPENDING} AND {currency_sql(conn)} GROUP BY day", (month,))
     return {r[0]: r[1] for r in rows}
 
@@ -831,6 +833,15 @@ def _per_day(txns: Iterable[Any]) -> list[tuple[date, float]]:
 MONTH_STEPS = {"monthly": 1, "bimonthly": 2, "quarterly": 3, "semiannual": 6, "yearly": 12}
 
 
+def _month_anchor(days: Sequence[date]) -> int | None:
+    """A common day of the month, allowing each short month to clamp it independently."""
+    recent = days[-3:]
+    if len(recent) < 2:
+        return None
+    anchor = max(d.day for d in recent)
+    return anchor if all(d.day == min(anchor, calendar.monthrange(d.year, d.month)[1]) for d in recent) else None
+
+
 def _next_charge(last_date: date, cadence: str, step: int, charges: list[tuple[date, float]]) -> date:
     """hotfix 2026-09-29: a bill billed on a fixed day of the month comes back on that day, not a fixed number of days
     later (the gym, charged Aug 1 and Sep 1, was put on Oct 2: Sep 1 + the 31-day Aug→Sep gap). It counts as billed on
@@ -838,18 +849,11 @@ def _next_charge(last_date: date, cadence: str, step: int, charges: list[tuple[d
     up: Jul 31 = Jun 30); then next = that day in the cadence's month (the month's last day if it has no such day). A bill whose day
     drifts (every 55 days, say), and weekly / every-2-weeks bills, keep last + the median interval."""
     months = MONTH_STEPS.get(cadence)
-    if not months:
-        return last_date + timedelta(days=step)
-
-    def off(d: date) -> int:  # days between d's day of the month and the last charge's, month ends lined up
-        end_d = calendar.monthrange(d.year, d.month)[1]
-        end_l = calendar.monthrange(last_date.year, last_date.month)[1]
-        return min(abs(d.day - last_date.day), abs(min(d.day, end_l) - min(last_date.day, end_d)))
-
-    if len(charges) < 2 or any(off(d) > 0 for d, _ in charges[-3:]):
+    anchor = _month_anchor([d for d, _ in charges[-3:]]) if months else None
+    if anchor is None:
         return last_date + timedelta(days=step)
     y, m = parse_month(add_months(month_of(last_date), months))
-    return date(y, m, min(last_date.day, calendar.monthrange(y, m)[1]))
+    return date(y, m, min(anchor, calendar.monthrange(y, m)[1]))
 
 
 def _item(*, merchant: str, key: str, keys: list[str], kind: str, category: str, cadence: str, amount: float,
@@ -858,6 +862,7 @@ def _item(*, merchant: str, key: str, keys: list[str], kind: str, category: str,
           currency: str | None = None) -> dict[str, Any]:
     last_date, last_amount = charges[-1]
     nxt = _next_charge(last_date, cadence, step, charges)
+    anchor = _month_anchor([d for d, _ in charges[-3:]]) if cadence in MONTH_STEPS else None
     until, status = _status(last_date, nxt, cadence, today)
     amount = _r(amount)
     return {
@@ -874,6 +879,7 @@ def _item(*, merchant: str, key: str, keys: list[str], kind: str, category: str,
         "last_date": last_date.isoformat(),
         "last_amount": _r(last_amount),
         "next_expected": nxt.isoformat(),
+        **({"anchor_day": anchor} if anchor is not None else {}),
         "days_until": until,
         "status": status,
         "paid_this_month": month_of(last_date) == month_of(today),

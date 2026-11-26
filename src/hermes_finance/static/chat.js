@@ -137,7 +137,15 @@
     if (!topic) return starterQuestions();
     return topic.questions.filter((q) => q.toLowerCase() !== String(answered.question).toLowerCase()).slice(0, 3);
   }
+  // Suggestions sit in a fold-down group: open on a fresh chat, folded once the user has asked something, and the
+  // toggle opens it again whenever they want more ideas.
+  let sugOpen = true;
+  function syncFold() {
+    sugToggle.setAttribute('aria-expanded', String(sugOpen));
+    chips.hidden = !sugOpen;
+  }
   function drawChips() {
+    syncFold();
     fill(chips, suggestionQuestions().map((q) => h('button', {class: 'fchip', type: 'button', disabled: busy,
       onclick: () => ask(q)}, q)));
   }
@@ -163,6 +171,7 @@
   const load = () => { try { const v = JSON.parse(sessionStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
   const store = () => { try { sessionStorage.setItem(KEY, JSON.stringify(LOG)); } catch (e) { /* private mode: kept in memory */ } };
   const LOG = load();        // [{role: 'user'|'assistant'|'note', content, sources?, stats?, cards?: [id]}]
+  sugOpen = !LOG.some((m) => m.role === 'user');   // a reload mid-chat keeps them folded
   const CARDS = new Map();   // id -> the card as the server last sent it
   let busy = false;
   let poll = null;           // the timer asking again for "approved" cards (watch()), and whether that ask is out
@@ -177,7 +186,9 @@
   const panel = h('section', {class: 'chat', id: 'chat', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'chat-title', hidden: true});
   const msgs = h('div', {class: 'chmsgs', role: 'log', 'aria-live': 'polite'});
   const input = h('textarea', {class: 'chin', rows: 1, placeholder: 'Ask about your money', 'aria-label': 'Ask about your money', maxlength: '4000'});
-  const chips = h('div', {class: 'chchips', role: 'group', 'aria-label': 'Suggestions'});
+  const chips = h('div', {class: 'chchips', role: 'group', 'aria-label': 'Suggestions', id: 'chchips'});
+  const sugToggle = h('button', {class: 'chsug', type: 'button', 'aria-controls': 'chchips', 'aria-expanded': 'true',
+    onclick: () => { sugOpen = !sugOpen; syncFold(); }}, icon('chevr'), 'Suggestions');
   const send = h('button', {class: 'btn sm', type: 'button', id: 'chsend'}, icon('send'), 'Send');
   const brain = document.body.dataset.askBrain || labelFor(mode);
   const brainBadge = h('span', {class: 'brain'});
@@ -195,6 +206,7 @@
       h('button', {class: 'ib', type: 'button', 'aria-label': 'Close', onclick: () => close()}, icon('x'))),
     msgs,
     h('div', {class: 'chfoot'},
+      sugToggle,
       chips,
       h('div', {class: 'chrow'}, input, send)));
   if (enabled()) document.body.append(askBtn, panel);
@@ -346,6 +358,7 @@
     const questionContext = classifyQuestion(q);
     LOG.push({role: 'user', content: q});
     store();
+    sugOpen = false;   // the chat has started: fold the suggestions away
     input.value = '';
     grow();
     busy = true;
@@ -390,6 +403,7 @@
   function reset() {
     if (busy) return;
     LOG.length = 0;
+    sugOpen = true;
     CARDS.clear();
     stopWatching();
     store();

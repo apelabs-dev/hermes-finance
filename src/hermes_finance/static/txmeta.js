@@ -56,7 +56,7 @@
       const on = same(x.filters, f);
       const chip = h('span', {class: `sfchip${on ? ' on' : ''}`},
         h('button', {class: 'sfgo', type: 'button', 'aria-pressed': String(on), title: describe(x.filters),
-          onclick: () => updateTx({q: '', category: [], group: [], uncategorized: false, bank: '', tag: [], kind: 'all', ...x.filters}, true)},
+          onclick: () => updateTx({q: '', category: [], group: [], uncategorized: false, bank: '', tag: [], source: '', kind: 'all', ...x.filters}, true)},
         icon(x.filters.tag && Object.keys(x.filters).length === 1 ? 'tag' : 'bookmark'), x.name,
         x.count != null ? h('span', {class: 'cnt'}, String(x.count)) : null),
         h('button', {class: 'sfx', type: 'button', 'aria-label': `Delete the saved filter ${x.name}`, onclick: () => confirmDelete(x)}, icon('x')));

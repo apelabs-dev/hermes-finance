@@ -99,6 +99,7 @@ FEATURE_FILES = ("iconpick", "goals", "txmeta", "billcal", "rollover", "alpaca",
                  "simplefin",                                                      # + v21's SimpleFIN chooser and sheets
                  "settingsskel",                                                   # + polish: Settings' loading skeleton
                  "reports",                                                        # + 0.5 B2's Reports pages
+                 "forecasthover",                                                  # + the Forecast chart's day card
                  "pdfimport",                                                      # + 0.5's PDF import screens
                  "budgets")                                                        # + polish P2A's grouped Budgets (last)
 STATIC_FILES["popclose.js"] = "text/javascript; charset=utf-8"   # B2: one close-on-scroll rule for every popover (no CSS)
@@ -853,7 +854,7 @@ def render_page(s: dict[str, Any], tailnet: bool = False, shell: dict[str, Any] 
     csrf = f'\n<meta name="csrf-token" content="{_e(shell["csrf"])}">' if shell.get("csrf") else ""
     body_flags = (" data-setup" if shell.get("setup") else "") + (" data-signed-in" if shell.get("signed_in") else "")
     ask = shell.get("ask") or {}
-    if ask.get("mode") in ("api", "hermes"):   # TASK-23: chat.js draws the Ask button and panel from these
+    if ask.get("mode") in ("api", "hermes", "cli"):   # TASK-23: chat.js draws the Ask button and panel from these
         body_flags += f' data-ask="{_e(ask["mode"])}" data-ask-brain="{_e(ask["label"])}"'
     used, limit = s["slots_used"], s["slot_limit"]
     full = used >= limit

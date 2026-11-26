@@ -726,7 +726,8 @@ definition each, in `src/hermes_finance/tooldefs.py`, shared by:
 
 `finance serve` renders one HTML shell; `static/app.js` draws the pages from a JSON API. Hash routes:
 `#/overview`, `#/transactions` (filters in the query: `?category=Shopping`, `?bank=Chase`,
-`?kind=review|spend|income|transfers`, `?q=`), `#/budgets`, `#/recurring`, `#/accounts`, `#/investments`,
+`?kind=review|spend|income|transfers`, `?q=`, `?source=paychecks|interest_tax_refunds|other` for one income
+source of the Cash flow report), `#/budgets`, `#/recurring`, `#/accounts`, `#/investments`,
 `#/debt`, `#/settings`, `#/setup` (first run); `?month=YYYY-MM` picks a past month on Overview/Transactions/Budgets.
 The left sidebar (below 1024px a drawer plus a tab bar: Overview, Transactions, Budgets, Accounts and
 Settings; the drawer lists Overview, Transactions, Budgets, Goals, then Accounts, Recurring, Investments, Loans & debt,

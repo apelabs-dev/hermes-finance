@@ -61,6 +61,13 @@ body.board .askb, body.board .chat { display: none; }
 .appr[data-status=rejected], .appr[data-status=failed] { border-color: var(--line2); background: transparent; }
 
 .chfoot { flex: none; border-top: 1px solid var(--line); padding: 14px 22px 20px; }
+.chsug { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px -4px; padding: 4px 8px 4px 4px; border: 0; background: none;
+  color: var(--mut); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; border-radius: 8px; }
+.chsug:hover { color: var(--fg); }
+.chsug svg.i { width: 16px; height: 16px; transition: transform .15s ease; }
+.chsug[aria-expanded=true] svg.i { transform: rotate(90deg); }
+.chchips[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .chsug svg.i { transition: none; } }
 .chchips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
 .chchips .fchip { font-size: 13.5px; padding: 6px 12px; text-align: left; }
 .chrow { display: flex; gap: 8px; align-items: flex-end; }

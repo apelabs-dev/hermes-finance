@@ -1,0 +1,33 @@
+/* Forecast chart: the day under the pointer (forecasthover.js; mock board forecast-chart-hover-details-3b3aa66104aeed8b,
+ * round 2, option A: the floating card). Loaded right after reports.css (web.FEATURE_FILES, docs/css-load-order.md).
+ * The card fades in and out; nothing slides or scales, so reduced motion (shorter --mo-hover) keeps the same fade. */
+.rp-fwrap { position: relative; }
+.rp-fwrap .rp-fsvg { touch-action: pan-y; }
+.rp-fsvg:focus { outline: none; }
+.rp-fsvg:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 6px; }
+
+/* the crosshair and the ring on the day's point: drawn only while the card is open */
+.rp-hx { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; visibility: hidden; }
+.rp-hring { fill: var(--card); stroke: var(--fg); stroke-width: 2; pointer-events: none; visibility: hidden; }
+.rp-fwrap.on .rp-hx, .rp-fwrap.on .rp-hring { visibility: visible; }
+
+.rp-htip { position: absolute; left: 0; top: 0; z-index: 30; pointer-events: none; box-sizing: border-box;
+  min-width: min(210px, 100%); max-width: min(320px, 100%); padding: 10px 12px; border: 1px solid var(--line2);
+  border-radius: 12px; background: var(--card2); color: var(--fg); font-size: 15px; line-height: 1.35;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4); opacity: 0; visibility: hidden;
+  transition: opacity var(--mo-hover) ease, visibility var(--mo-hover); }
+.rp-fwrap.on .rp-htip { opacity: 1; visibility: visible; }
+:root[data-theme=light] .rp-htip { box-shadow: 0 8px 24px rgba(21, 25, 34, .14); }
+
+.rp-hd { font-size: 13px; color: var(--mut); margin-bottom: 4px; }
+.rp-hev { display: flex; align-items: baseline; gap: 8px; font-weight: 600; margin-bottom: 2px; overflow-wrap: anywhere; }
+.rp-hev i { flex: none; align-self: center; width: 9px; height: 9px; border-radius: 50%; }
+.rp-hev.in i { background: var(--ok); }
+.rp-hev.out i { background: var(--bad); }
+.rp-hev.low { color: var(--warn); }
+.rp-hev.low i { background: var(--warn); }
+.rp-hbig { margin-top: 2px; font-size: 20px; font-weight: 700; }
+.rp-hsub { font-size: 13px; color: var(--mut); padding-bottom: 7px; margin-bottom: 4px; border-bottom: 1px solid var(--line2); }
+.rp-hrow { display: flex; justify-content: space-between; gap: 12px; margin-top: 3px; font-size: 14px; color: var(--mut); }
+.rp-hrow i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: rgba(142, 168, 255, .8); }
+.rp-hrow b { color: var(--fg); font-weight: 600; white-space: nowrap; }
