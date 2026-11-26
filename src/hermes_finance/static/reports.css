@@ -81,6 +81,12 @@ button.rp-c:hover { border-color: var(--line2); }
 .rp-sk-cap { fill: var(--dim); font-size: 13px; }
 .rp-sk-big { fill: var(--fg); font-size: 20px; font-weight: 700; }
 .rp-sk-short { fill: var(--bad); font-size: 13.5px; font-weight: 650; }
+.rp-sk-a, .rp-sk-lk { cursor: pointer; }   /* a Cash flow bar and its name open Transactions */
+.rp-sk-a:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.rp-sk-lk:hover .rp-sk-name { text-decoration: underline; }
+a.rp-fr { display: block; color: inherit; text-decoration: none; }
+a.rp-fr:hover .rp-fl b { text-decoration: underline; }
+a.rp-fr:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: 4px; }
 .rp-bars { display: none; }
 .rp-fr { padding: 8px 0; border-top: 1px solid var(--line); }
 .rp-fl { display: flex; align-items: baseline; gap: 8px; font-size: 14.5px; }
@@ -117,7 +123,6 @@ button.rp-c:hover { border-color: var(--line2); }
 .rp-leg i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
 .rp-leg i.dash { height: 0; border-top: 2px dashed var(--fg); background: none; }
 .rp-leg i.band { height: 12px; border-radius: 3px; background: rgba(142, 168, 255, .3); border: 1px solid rgba(142, 168, 255, .5); }
-.rp-leg i.lnacc { background: var(--acc); }
 .rp-leg i.dot { width: 9px; height: 9px; border-radius: 50%; }
 .rp-leg i.dot.in { background: var(--ok); }
 .rp-leg i.dot.out { background: var(--bad); }
@@ -125,12 +130,10 @@ button.rp-c:hover { border-color: var(--line2); }
 .rp-gl { stroke: var(--grid); stroke-width: 1; }
 .rp-band { fill: rgba(142, 168, 255, .3); stroke: rgba(142, 168, 255, .45); stroke-width: .8; }
 .rp-line.lower, .rp-line.higher { stroke: rgba(142, 168, 255, .45); stroke-width: 1.5; }
-.rp-line.sofar { stroke: var(--fg); stroke-width: 2.6; }
 .rp-line.exp { stroke: var(--fg); stroke-width: 2; stroke-dasharray: 5 5; }
 .rp-ev.in { fill: var(--ok); }
 .rp-ev.out { fill: var(--bad); }
 .rp-ev.low { fill: var(--warn); }
-.rp-callout { fill: var(--warn); font-size: 13px; font-weight: 600; }
 .rp-ends { display: flex; flex-wrap: wrap; gap: 10px 30px; margin: 6px 0 8px; }
 .rp-er { display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
 .rp-er > i { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
@@ -143,7 +146,7 @@ button.rp-c:hover { border-color: var(--line2); }
 .rp-lists .li > .grow > span { color: var(--dim); font-size: 13px; white-space: nowrap; }
 
 /* --- 390 px and the tablet middle ------------------------------------------------------------------------------ */
-@media (max-width: 1180px) {
+@media (max-width: 1319.98px) {
   /* the 12 month columns need the width: below this the rail moves above the heatmap instead of squeezing it */
   .rp-rc { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .rp-heat { grid-column: 1; grid-row: 2; }
@@ -164,7 +167,7 @@ button.rp-c:hover { border-color: var(--line2); }
   .rp-cat { padding: 12px 14px 14px; }
   .rp-cat-b { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0;
     background: none; border: 0; color: inherit; text-align: left; font-size: 15px; }
-  .rp-cat-b > b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rp-cat-b > b { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.25; }   /* a long name wraps to a second line; cents in the amount made it clip at 360 */
   .rp-cat-b .amt { font-size: 15px; }
   .rp-cat-b > svg.i { transition: transform var(--mo-hover) ease-out; }
   .rp-cat.open .rp-cat-b > svg.i { transform: rotate(180deg); }
@@ -218,12 +221,16 @@ button.rp-c:hover { border-color: var(--line2); }
 .vx-kpi:has(details[open]) { z-index: 40; }
 .vx-kpi h3 { justify-content: center; min-height: 32px; margin-bottom: 6px; font-size: 14px; }
 .vx-kpi > .vx-hi { display: grid; width: 32px; height: 32px; margin: 0 auto 8px; }
+/* the hero icon sits outside the card's h3, so it wears the same chip the title icons and category icons do: a tinted square, the glyph in its colour */
+.vx-kpi > .vx-hi { --rgb: 142, 168, 255; place-items: center; border-radius: 10px; background: rgba(var(--rgb), .14); color: rgb(var(--rgb)); }
+.vx-kpi > .vx-hi > svg { width: 56%; height: 56%; }
+:root[data-theme=light] .vx-kpi > .vx-hi { color: color-mix(in srgb, rgb(var(--rgb)) 72%, #000); background: rgba(var(--rgb), .16); }
 .vx-kpi .big, .vx-kpi .pill { margin-left: auto; margin-right: auto; }
 .vx-kpi .rp-name { display: block; }
 .vx-corner { position: static; display: block; height: 0; margin: 0; }
 .vx-corner summary { position: absolute; top: 2px; right: 2px; z-index: 3; margin: 0; }
 .vx-corner .vx-pop { top: calc(100% + 6px); right: 0; left: auto; width: 232px; max-width: calc(100vw - 32px); }
-@media (max-width: 1180px) { .vx-kpi:nth-child(odd) .vx-corner .vx-pop { left: 0; right: auto; } }
+@media (max-width: 1319.98px) { .vx-kpi:nth-child(odd) .vx-corner .vx-pop { left: 0; right: auto; } }
 .vx-pop { max-width: calc(100vw - 32px); }
 /* Forecast accounts: a real checkbox in a row, never a coloured pill */
 .vx-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-bottom: 4px; }
@@ -246,7 +253,7 @@ button.rp-c:hover { border-color: var(--line2); }
 .rp-heat h3 small, .rp-flow h3 small, .rp-chart h3 small { min-width: 0; margin-left: auto; text-align: right; }
 .rp-heat h3 small + .vx-i, .rp-flow h3 small + .vx-i, .rp-chart h3 small + .vx-i { margin-left: 0; }
 /* beside the heat card (wide), the icon sits in the corner so every card title starts at the same height */
-@media (min-width: 1181px) {
+@media (min-width: 1320px) {
   .vx-kpi > .vx-hi { position: absolute; left: 14px; top: 13px; margin: 0; }
   .vx-kpi h3 { padding: 0 34px; }
 }

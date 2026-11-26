@@ -31,7 +31,7 @@
   const active = () => {
     const f = TX.filters || {};
     const out = {};
-    for (const k of ['q', 'bank']) if (f[k]) out[k] = f[k];
+    for (const k of ['q', 'bank', 'source']) if (f[k]) out[k] = f[k];
     for (const k of LISTS) if (many(f[k]).length) out[k] = many(f[k]);
     if (f.uncategorized) out.uncategorized = '1';
     if (f.kind && f.kind !== 'all') out.kind = f.kind;
@@ -56,7 +56,7 @@
       const on = same(x.filters, f);
       const chip = h('span', {class: `sfchip${on ? ' on' : ''}`},
         h('button', {class: 'sfgo', type: 'button', 'aria-pressed': String(on), title: describe(x.filters),
-          onclick: () => updateTx({q: '', category: [], group: [], uncategorized: false, bank: '', tag: [], kind: 'all', ...x.filters}, true)},
+          onclick: () => updateTx({q: '', category: [], group: [], uncategorized: false, bank: '', tag: [], source: '', kind: 'all', ...x.filters}, true)},
         icon(x.filters.tag && Object.keys(x.filters).length === 1 ? 'tag' : 'bookmark'), x.name,
         x.count != null ? h('span', {class: 'cnt'}, String(x.count)) : null),
         h('button', {class: 'sfx', type: 'button', 'aria-label': `Delete the saved filter ${x.name}`, onclick: () => confirmDelete(x)}, icon('x')));
@@ -73,7 +73,8 @@
   function describe(f) {
     const cats = [f.uncategorized ? 'Uncategorized' : null, ...many(f.group).map((g) => `${g} (all)`), ...many(f.category)].filter(Boolean);
     return [f.q ? `"${f.q}"` : null, cats.join(' or '), f.bank, many(f.tag).length ? `tagged ${many(f.tag).join(' or ')}` : null,
-      f.kind ? {review: 'needs review', spend: 'spending', income: 'income', transfers: 'transfers'}[f.kind] : null].filter(Boolean).join(' · ');
+      f.source ? ({paychecks: 'Paychecks', interest_tax_refunds: 'Interest and tax refunds', other: 'Other income'}[f.source] || f.source)
+        : f.kind ? {review: 'needs review', spend: 'spending', income: 'income', transfers: 'transfers'}[f.kind] : null].filter(Boolean).join(' · ');
   }
 
   function drawBar() {

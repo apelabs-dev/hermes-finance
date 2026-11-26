@@ -247,10 +247,11 @@ def _amount_sql(cats: list[str], groups: list[str]) -> tuple[str, list[Any]]:
 
 
 def transactions(conn: sqlite3.Connection, params: dict[str, Any], today: date | None = None) -> dict[str, Any]:
-    """The Transactions page: ?month, q, bank, kind, and (polish P1) any of the picked categories (?category=, may
-    repeat), groups (?group=) or ?uncategorized=1, any of the picked tags (?tag=), and ?sort= (SORTS). Every filter
-    narrows; the counts, the total and `sum` follow all of them. `days`: each date on this page with its count and total
-    over every matching row (not only this page's). With ?facets=1, `facets` (the filter drawer's counts)."""
+    """The Transactions page: ?month, q, bank, kind, ?source= (one Cash flow income source), and (polish P1) any of the
+    picked categories (?category=, may repeat), groups (?group=) or ?uncategorized=1, any of the picked tags (?tag=),
+    and ?sort= (SORTS). Every filter narrows; the counts, the total and `sum` follow all of them. `days`: each date on
+    this page with its count and total over every matching row (not only this page's). With ?facets=1, `facets` (the
+    filter drawer's counts)."""
     kind = params.get("kind") or "all"
     if kind not in KINDS:
         raise ApiError(f"kind must be one of {', '.join(KINDS)}")
@@ -276,6 +277,15 @@ def transactions(conn: sqlite3.Connection, params: dict[str, Any], today: date |
     if bank:
         where.append("v.institution_name = ?")
         args.append(bank)
+    source = text_param(params.get("source"), "source")
+    if source:   # one income source of the Cash flow report (reports.INCOME_LABELS); it narrows like every other filter
+        from . import reports
+        try:
+            sql, sargs = reports.income_source_sql(source)
+        except reports.ReportError as e:
+            raise ApiError(str(e)) from None
+        where.append(f"{sql} AND {insights.currency_is_sql(insights._display(conn), 'v.iso_currency')}")   # the report reads the display currency only
+        args += sargs
     cats, groups, tags = (list_param(params.get(k), k) for k in LIST_PARAMS)
     picked = category_filter(cats, groups, params.get("uncategorized") in ("1", "true"))
     tagged = (txmeta.any_tag_sql(len(tags)), tags) if tags else None   # TASK-19: one tag; P1: any of several
@@ -284,6 +294,8 @@ def transactions(conn: sqlite3.Connection, params: dict[str, Any], today: date |
     page = transaction_page(conn, full_where, full_args, kind, limit, offset, sort)
     bills.decorate(conn, page["rows"])  # TASK-21: "higher / lower than usual" on a tracked bill's charge (the page only)
     amount = _amount_sql(cats, groups)
+    if source:   # the report adds each row's cents, so the linked total does too (two -10.006 rows are 20.02, not 20.01)
+        amount = (f"ROUND({amount[0]}, 2)", amount[1])
     page.update(sort=sort, **_totals(conn, full_where, full_args, kind, amount, sorted({r["date"] for r in page["rows"]})))
     page.update(period=period.json(), coverage_month=transaction_coverage(conn))
     if params.get("facets") in ("1", "true"):

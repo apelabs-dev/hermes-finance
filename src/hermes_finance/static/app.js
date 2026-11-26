@@ -3391,9 +3391,9 @@
     ['category', 'Category', 'c-cat', 'asc'], ['amount', 'Amount', 'num', 'desc']];
   const TX_SORTS = TX_COLS.flatMap(([c]) => [`${c}_desc`, `${c}_asc`]);
   const txParams = (f) => ({q: f.q, category: f.category, group: f.group, uncategorized: f.uncategorized ? '1' : '', bank: f.bank,
-    since: f.since, until: f.until, window: f.window, txmonth: f.txmonth, tag: f.tag, kind: f.kind === 'all' ? '' : f.kind, sort: f.sort === 'date_desc' ? '' : f.sort});
+    since: f.since, until: f.until, window: f.window, txmonth: f.txmonth, source: f.source, tag: f.tag, kind: f.kind === 'all' ? '' : f.kind, sort: f.sort === 'date_desc' ? '' : f.sort});
   const txFiltered = (f) => Boolean(f.q || f.category.length || f.group.length || f.uncategorized || f.bank || f.tag.length
-    || f.kind !== 'all');
+    || f.kind !== 'all' || f.source);
 
   // Window state lives in the hash. `month` remains the return context for ranges and automatic search.
   const txAutoAll = (f) => Boolean(f.q && !f.since && !f.until && !f.window && !f.txmonth);
@@ -3513,7 +3513,7 @@
     const list = (k) => [...new Set(p.getAll(k).filter(Boolean))];
     TX.filters = {q: p.get('q') || '', category: list('category'), group: list('group'), uncategorized: p.get('uncategorized') === '1',
       bank: p.get('bank') || '', tag: list('tag'), kind, since: p.get('since') || '', until: p.get('until') || '',
-      window: p.get('window') || '', txmonth: p.get('txmonth') || '', sort: TX_SORTS.includes(p.get('sort')) ? p.get('sort') : 'date_desc'};
+      window: p.get('window') || '', txmonth: p.get('txmonth') || '', source: p.get('source') || '', sort: TX_SORTS.includes(p.get('sort')) ? p.get('sort') : 'date_desc'};
     fill($('page'), h('div', {class: 'fbar'}, skel('sk-line')), skeleton(['card s3']));
     const [cats, accts] = await Promise.all([ensureCategories(), ensureAccounts().catch(() => null)]);
     if (tk !== S.token) return;

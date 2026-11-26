@@ -198,6 +198,11 @@ def test_desktop_ask_answer_card_approve_and_close(chrome, tmp_path, llm):
         assert text(b, "#chat .src").startswith("from budget-status")
         assert "Nothing changes until you approve." in text(b, "#chat .appr")
         assert text(b, "#chat .appr .apt") == f"Raise {cat} cap to ${new:.0f}?"
+        # the chat has started: the suggestions fold away, and the toggle opens them again
+        vis = "(() => { const c = document.querySelector('#chat .chchips'); const t = document.querySelector('#chat .chsug'); return [c.hidden, c.getBoundingClientRect().height > 0, t.getAttribute('aria-expanded')]; })()"
+        assert b.js(vis) == [True, False, "false"]
+        tap(b, "#chat .chsug")
+        assert b.js(vis) == [False, True, "true"]
         assert cap_of(srv.path, cat) == cap                                            # nothing applied yet
         tools = [t["function"]["name"] for t in llm.requests[0]["tools"]]
         assert "finance_budget_status" in tools and "finance_set_cap" in tools

@@ -316,6 +316,14 @@ def strip_new(d: dict) -> dict:
         if isinstance(blk, dict) and isinstance(blk.get(key), list):
             blk[key] = [{k: v for k, v in g.items() if k not in ("month_start", "month_change")} if isinstance(g, dict) else g
                         for g in blk[key]]
+    # forecast audit: a monthly-or-longer recurring item carries `anchor_day`, the day of the month its charges keep
+    # (a bill on the 31st is clamped to Feb 28, then back to Mar 31). It is new metadata for the calendar; set aside
+    # as a key only, so every next_expected / days_until / status beside it is still compared exactly
+    for rows in ((out.get("recurring") or {}).get("items"), (out.get("overview") or {}).get("upcoming"),
+                 (out.get("overview") or {}).get("bills")):
+        for row in rows or []:
+            if isinstance(row, dict):
+                row.pop("anchor_day", None)
     # TASK-22f: the health count's Plaid part (`banks`), and the Loans & debt tile's `reported` / `in_transit`, set aside
     # the same way: only with no payment in transit (then `reported` is the old total, and must be)
     ov = out.get("overview")

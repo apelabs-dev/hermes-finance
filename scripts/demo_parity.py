@@ -155,7 +155,8 @@ def gets_for(months: list[str], banks: list[str]) -> list[str]:
     filters += [{'category': 'Other Shopping'}, {'category': ['Groceries', 'Eating Out']}, {'group': 'Food'},
                 {'group': ['Food', 'Leisure'], 'category': 'Travel'}, {'uncategorized': '1'},
                 {'q': 'bean voyage'}, {'q': '%'}, {'q': 'shared'}, {'tag': 'shared'},
-                {'bank': banks[0]}, {'q': 'rent', 'kind': 'spend'}]
+                {'bank': banks[0]}, {'q': 'rent', 'kind': 'spend'},
+                {'kind': 'income', 'source': 'paychecks'}, {'kind': 'income', 'source': 'other'}]
     for window in windows:
         for f in filters:
             out.append('/api/transactions?' + urlencode({**window, **f, 'facets': '1', 'limit': '17', 'offset': '1'}, doseq=True))

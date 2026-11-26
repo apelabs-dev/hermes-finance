@@ -685,14 +685,17 @@ def spending_report_text(p: dict[str, Any]) -> str:
 def cashflow_report_text(p: dict[str, Any]) -> str:
     q = lambda x: _m(x, p.get("currency"))
     lines = []
-    if p["income"]["sources"]:
-        lines.append(_table(["money in", "amount", "share", "count"],
-                            [[s["label"], q(s["amount"]), _pct(s["share"]), s["count"]] for s in p["income"]["sources"]]))
+    sources = [s for s in p["income"]["sources"] if s["amount"] > 0]
+    if sources:
+        lines.append(_table(["income", "amount", "share of net income", "count"],
+                            [[s["label"], q(s["amount"]), _pct(s["share"]), s["count"]] for s in sources]))
     if p["groups"]:
         lines.append(_table(["spending", "net", "share", "count"],
                             [[g["group"], q(g["net"]), _pct(g["share"]), g["count"]] for g in p["groups"]]))
     for r in p["refunds_over"]:
         lines.append(f"{r['label']}: {q(r['amount'])} (a source, not spending)")
+    for r in p.get("income_reversals", []):
+        lines.append(f"{r['label']}: {q(r['amount'])} ({_pct(r['share'])} of money out, not spending)")
     left = f"{q(p['remaining'])} remaining" + (f" · {p['remaining_share']:.1f}% of income"
                                                if p["remaining_share"] is not None else "")
     lines.append(f"Cash flow {_period_text(p['period'])}: money in {q(p['money_in'])}, money out {q(p['money_out'])}, "

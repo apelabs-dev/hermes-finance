@@ -8,12 +8,14 @@ remaining_after_spending, forecast), not a copy of it.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
 import pytest
 
-from hermes_finance import api, config, insights, reports, web
+from demo_data import build, extras
+from hermes_finance import api, config, insights, reads, reports, reports_page, web
 
 TODAY = date(2026, 11, 15)
 TS = "2026-11-15T20:00:00Z"
@@ -435,6 +437,13 @@ def test_the_script_never_writes_html():
     for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
         assert bad not in js, bad
     assert "HF_EXT" in js and "RENDER.reports" in js
+    # the Forecast chart's day card (forecasthover.js) builds its DOM the same way
+    hover = (Path(web.__file__).parent / "static" / "forecasthover.js").read_text()
+    for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
+        assert bad not in hover, bad
+    assert "HOOKS.forecastHover = " in hover and "HOOKS.forecastHover ?" in js
+    assert web.STATIC_FILES["forecasthover.js"] == "text/javascript; charset=utf-8"
+    assert web.STATIC_FILES["forecasthover.css"] == "text/css; charset=utf-8"
 
 
 # --- 0.5 UI fix: the Reports pages take the Transactions window (a range, 30d, all time) ----------------------
@@ -454,6 +463,156 @@ def test_a_last_n_days_window_ends_today_and_all_time_starts_at_the_first_transa
     assert status == 200 and d["period"]["end"] == d["today"] and d["window"]["days"] == 30
     status, d = _get(app, "/api/reports/cashflow?window=all")
     assert status == 200 and d["window"]["kind"] == "all" and d["period"]["start"] == "2025-09-01"
+
+
+def _demo_row(conn, label, amount, pfc, detail, *, day=TODAY.isoformat(), account="acc_nova_chk", currency="USD"):
+    item = conn.execute("SELECT item_id FROM accounts WHERE account_id = ?", (account,)).fetchone()[0]
+    conn.execute("""INSERT INTO transactions (transaction_id, account_id, item_id, date, name, amount, iso_currency,
+                       pfc_primary, pfc_detailed, first_seen_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 (label, account, item, day, label, amount, currency, pfc, detail, TS, TS))
+
+
+def test_all_time_with_only_future_dated_rows_is_empty(conn):
+    build(conn, TODAY)
+    conn.execute("UPDATE transactions SET date = '2026-11-16'")
+    d = reports_page.cashflow(conn, {"window": "all"}, TODAY)
+    assert d["period"] == {"start": "2026-11-15", "end": "2026-11-15"}
+    assert (d["money_in"], d["money_out"], d["remaining"], d["moves"]["count"]) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("kind", ["income", "spending"])
+def test_cashflow_and_overview_use_the_same_cent_amounts(conn, kind):
+    build(conn, TODAY)
+    prior = reports_page.cashflow(conn, {}, TODAY)
+    for i in range(4):
+        if kind == "income":
+            _demo_row(conn, f"fractional wage {i}", -0.016, "INCOME", "INCOME_WAGES")
+        else:
+            _demo_row(conn, f"fractional charge {i}", 0.016, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES")
+    d = reports_page.cashflow(conn, {}, TODAY)
+    summary = insights.month_summary(conn, d["month"], TODAY)
+    assert d["income"]["total"] == round(prior["income"]["total"] + (0.08 if kind == "income" else 0), 2)
+    assert d["spending"]["net"] == round(prior["spending"]["net"] + (0.08 if kind == "spending" else 0), 2)
+    assert (summary["income"], summary["mtd"], summary["cum"][-1]) == (
+        d["income"]["total"], d["spending"]["net"], d["spending"]["net"])
+    monthly = insights.cashflow(conn, 1, TODAY)["months"][0]
+    assert (monthly["income"], monthly["spending"], monthly["net"]) == (
+        d["income"]["total"], d["spending"]["net"], d["remaining"])
+
+
+def test_negative_income_source_is_money_out_not_negative_money_in(conn):
+    build(conn, TODAY)
+    _demo_row(conn, "Paycheck reversal", 70, "INCOME", "INCOME_WAGES", day="2026-11-16")
+    _demo_row(conn, "Interest deposit", -20, "INCOME", "INCOME_INTEREST_EARNED", day="2026-11-16")
+    _demo_row(conn, "Grocery charge", 10, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES", day="2026-11-16")
+    flow = reports.money_flow(conn, "2026-11-16", "2026-11-16")
+    assert (flow["money_in"], flow["money_out"], flow["remaining"]) == (20, 80, -60)
+    assert flow["income"]["total"] == -50 and flow["spending"]["net"] == 10
+    assert flow["income_reversals"] == [{"label": "Paychecks reversed", "amount": 70, "count": 1, "share": 87.5}]
+    assert flow["groups"][0]["share"] == 12.5
+    assert reports.remaining_after_spending(conn, "2026-11-16", "2026-11-16")["remaining"] == -60
+
+
+def test_cashflow_text_does_not_list_income_reversal_as_money_in(conn):
+    build(conn, TODAY)
+    day = "2026-11-16"
+    _demo_row(conn, "Paycheck reversal", 70, "INCOME", "INCOME_WAGES", day=day)
+    payload = reads.cashflow_report(conn, reads.Period("range", day, day), TODAY)
+    text = reads.cashflow_report_text(payload)
+    assert "Paychecks reversed: $70" in text and "money in $0, money out $70" in text
+
+
+@pytest.mark.parametrize("params,start,end", [
+    ({"since": "7d"}, "2026-11-09", "2026-11-15"),
+    ({"since": "30d"}, "2026-10-17", "2026-11-15"),
+    ({"since": "90d"}, "2026-08-18", "2026-11-15"),
+    ({"window": "all"}, None, "2026-11-15"),
+    ({}, "2026-11-01", "2026-11-30"),
+    ({"month": "2026-10"}, "2026-10-01", "2026-10-31"),
+    ({"since": "2026-11-10", "until": "2026-11-10"}, "2026-11-10", "2026-11-10"),
+    ({"month": "2022-01"}, "2022-01-01", "2022-01-31"),
+])
+def test_cashflow_reconciles_to_demo_transactions(conn, params, start, end):
+    build(conn, TODAY)
+    extras(conn, TODAY)
+    _demo_row(conn, "Purchase refund", -2, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES")
+    _demo_row(conn, "Refund without purchase", -700, "ENTERTAINMENT", "ENTERTAINMENT_MUSIC_AND_AUDIO")
+    _demo_row(conn, "Tax refund", -100, "INCOME", "INCOME_TAX_REFUND")
+    _demo_row(conn, "Foreign deposit", -2000, "INCOME", "INCOME_WAGES", currency="EUR")
+    _demo_row(conn, "Foreign charge", 200, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES", currency="EUR")
+    card_payment = conn.execute("SELECT amount FROM transactions WHERE date = '2026-10-20' "
+                                "AND pfc_detailed = 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT'").fetchone()[0]
+    _demo_row(conn, "Card payment receipt", -card_payment, "LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT",
+              day="2026-10-20", account="acc_chase_cc")
+    _demo_row(conn, "Brokerage funding", 300, "TRANSFER_OUT", "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS")
+    _demo_row(conn, "Brokerage deposit", -300, "TRANSFER_IN", "TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS",
+              account="acc_nova_inv")
+    hidden = "acc_usb_chk"
+    _demo_row(conn, "Hidden deposit", -600, "INCOME", "INCOME_WAGES", account=hidden)
+    _demo_row(conn, "Hidden charge", 100, "FOOD_AND_DRINK", "FOOD_AND_DRINK_GROCERIES", account=hidden)
+    insights.save_excluded_accounts(conn, [hidden])
+    # Read the original amounts. Use the effective category only as metadata, not an aggregate or a spend value.
+    rows = [r for r in conn.execute("""SELECT t.transaction_id, t.date, t.amount, t.name, t.iso_currency,
+                        t.account_id, t.pfc_detailed, v.is_income, v.is_transfer, v.category, g.name AS group_name
+                FROM transactions t LEFT JOIN v_transactions v USING (transaction_id)
+                LEFT JOIN categories c ON c.id = v.category_id
+                LEFT JOIN category_groups g ON g.id = c.group_id ORDER BY t.date, t.transaction_id""")
+            if r["account_id"] != hidden and r["iso_currency"] == "USD"]
+    start = start or rows[0]["date"]
+    rows = [r for r in rows if start <= r["date"] <= end]
+    income, categories, groups = Counter(), Counter(), Counter()
+    names, moves, spent = {}, [], []
+    for r in rows:
+        assert r["is_income"] is not None
+        cents = round(r["amount"] * 100)
+        if r["is_transfer"]:
+            if cents > 0:
+                moves.append(cents)
+        elif r["is_income"]:
+            source = {"INCOME_WAGES": "paychecks", "INCOME_TAX_REFUND": "interest_tax_refunds",
+                      "INCOME_INTEREST_EARNED": "interest_tax_refunds"}.get(r["pfc_detailed"], "other")
+            income[source] -= cents
+        else:
+            spent.append(cents)
+            categories[r["category"]] += cents
+            names[r["category"]] = r["group_name"] or "Other"
+    for name, cents in categories.items():
+        if cents > 0:
+            groups[names[name]] += cents
+    over = {name: -val / 100 for name, val in categories.items() if val < 0}
+    inc, out = income.total(), groups.total()
+    net = inc - sum(spent)
+    d = reports_page.cashflow(conn, params, TODAY)
+    assert d["period"] == {"start": start, "end": end}
+    assert d["window"]["days"] == (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+    assert d["income"]["total"] == inc / 100
+    assert {s["source"]: s["amount"] for s in d["income"]["sources"]} == {k: v / 100 for k, v in income.items()}
+    assert d["spending"] == {"gross": sum(n for n in spent if n > 0) / 100,
+                             "refunds": sum(n for n in spent if n < 0) / 100,
+                             "net": sum(spent) / 100, "count": len(spent)}
+    assert {g["group"]: g["net"] for g in d["groups"]} == {k: v / 100 for k, v in groups.items()}
+    assert {g["category"]: g["amount"] for g in d["refunds_over"]} == over
+    assert d["money_in"] == round(inc / 100 + sum(over.values()), 2)
+    assert (d["money_out"], d["remaining"], d["short"]) == (out / 100, net / 100, net < 0)
+    assert d["remaining_share"] == (round(net / inc * 100, 2) if inc else None)
+    assert all(g["share"] == round(groups[g["group"]] / out * 100, 2) for g in d["groups"])
+    assert (d["moves"]["count"], d["moves"]["total"]) == (len(moves), sum(moves) / 100)
+    assert [m["amount"] for m in d["moves"]["rows"]] == [n / 100 for n in moves[-reports.MOVES_LIST_LIMIT:]]
+    assert d["spending"]["net"] == reads.spend(conn, reads.Filters(reads.Period("range", start, end)), TODAY)["total"]
+    if d["month"]:
+        month = d["month"]
+        overview = api.overview(conn, {"month": month}, TODAY)
+        summary, bar = overview["summary"], overview["cashflow"]["months"][-1]
+        spending = reports_page.spending(conn, {"month": month}, TODAY)["year"]["months"][-1]
+        assert (summary["income"], summary["mtd"], bar["net"]) == (inc / 100, sum(spent) / 100, net / 100)
+        daily = Counter()
+        for r in rows:
+            if not r["is_income"] and not r["is_transfer"]:
+                daily[int(r["date"][-2:])] += round(r["amount"] * 100)
+        assert summary["cum"] == [sum(v for day, v in daily.items() if day <= i) / 100
+                                  for i in range(1, summary["day"] + 1)]
+        assert (spending["income"], spending["spending"], spending["remaining"]) == (inc / 100, sum(spent) / 100, net / 100)
 
 
 def test_spending_for_a_range_shows_the_whole_months_it_touches(app, books):
