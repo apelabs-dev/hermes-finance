@@ -69,7 +69,8 @@ def test_a_seed_builds_the_same_bytes_and_another_seed_the_same_structure(builds
     _, b = builds
     assert tree(b['s2']) == tree(b['s2again'])
     one, two = (json.loads((b[k] / 'demo/data/core.json').read_text()) for k in ('s0', 's2'))
-    assert set(one['core']) == set(two['core']) and one['meta']['months'] == two['meta']['months']
+    fixed = lambda core: {k for k in core if not k.startswith('/api/reports/activity?')}   # a drill exists only where that seed spent
+    assert fixed(one['core']) == fixed(two['core']) and one['meta']['months'] == two['meta']['months']
     assert (one['meta']['seed'], two['meta']['seed']) == (0, 2)
     rows = [json.loads((b[k] / 'demo/data/transactions.json').read_text())['rows'] for k in ('s0', 's2')]
     assert [r['amount'] for r in rows[0]] != [r['amount'] for r in rows[1]]   # the amounts and merchant mix vary

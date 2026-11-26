@@ -71,3 +71,43 @@ def test_a_source_never_lists_spending(conn):
 def test_an_unknown_source_is_refused(conn):
     with pytest.raises(api.ApiError, match="source must be one of paychecks, interest_tax_refunds, other"):
         api.transactions(conn, {"source": "salary"}, TODAY)
+
+
+def _add(conn, tid, day, amt, detailed, currency=None):
+    account_id, item_id, ccy = conn.execute(
+        "SELECT account_id, item_id, iso_currency FROM accounts WHERE type = 'depository' LIMIT 1").fetchone()
+    with conn:
+        conn.execute("INSERT INTO transactions (transaction_id, account_id, item_id, date, name, merchant_name, amount, "
+                     "iso_currency, pending, pfc_primary, pfc_detailed, removed, first_seen_at, updated_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'INCOME', ?, 0, '2026-11-15T20:00:00Z', '2026-11-15T20:00:00Z')",
+                     (tid, account_id, item_id, day, tid, tid, amt, currency or ccy, detailed))
+
+
+def test_sub_cent_income_rows_total_the_way_the_report_rounds_them(conn):
+    """Review round 1: two -10.006 interest rows were $20.02 on Cash flow (cents per line) and $20.01 on Transactions
+    (one rounding of the raw sum). The linked page now adds the same per-row cents."""
+    _add(conn, "sub1", "2026-11-08", -10.006, "INCOME_INTEREST_EARNED")
+    _add(conn, "sub2", "2026-11-09", -10.006, "INCOME_INTEREST_EARNED")
+    flow = {s["source"]: s for s in reports.income_sources(conn, "2026-11-01", "2026-11-30")["sources"]}["interest_tax_refunds"]
+    page = api.transactions(conn, {"month": "2026-11", "source": "interest_tax_refunds", "kind": "income", "limit": "500"}, TODAY)
+    assert page["total"] == flow["count"]
+    assert -page["sum"] == flow["amount"]
+
+
+def test_a_foreign_currency_income_row_is_not_in_the_linked_list(conn):
+    """Review round 1: one EUR interest row made Transactions count 2 against the report's 1, because the report
+    reads the display currency and the filter did not."""
+    _add(conn, "eur1", "2026-11-10", -12.00, "INCOME_INTEREST_EARNED", currency="EUR")
+    flow = {s["source"]: s for s in reports.income_sources(conn, "2026-11-01", "2026-11-30")["sources"]}["interest_tax_refunds"]
+    page = api.transactions(conn, {"month": "2026-11", "source": "interest_tax_refunds", "kind": "income", "limit": "500"}, TODAY)
+    assert "eur1" not in {r["transaction_id"] for r in page["rows"]}
+    assert page["total"] == flow["count"] and -page["sum"] == flow["amount"]
+
+
+def test_a_saved_search_keeps_the_income_source(conn):
+    """Review round 1: FILTER_KEYS had no `source`, so saving a search with the Paychecks chip on saved only
+    kind=income. It is kept now, and only a real income source is accepted."""
+    from hermes_finance import txmeta
+    assert txmeta.clean_filters(conn, {"kind": "income", "source": "paychecks"}) == {"kind": "income", "source": "paychecks"}
+    with pytest.raises(txmeta.TxMetaError):
+        txmeta.clean_filters(conn, {"source": "lottery"})

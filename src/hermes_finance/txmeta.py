@@ -28,7 +28,7 @@ MAX_TAG = 40
 MAX_TAGS = 20
 MAX_FILTER_NAME = 60
 MAX_FILTERS = 50
-FILTER_KEYS = ("q", "category", "group", "uncategorized", "bank", "kind", "tag")
+FILTER_KEYS = ("q", "category", "group", "uncategorized", "bank", "kind", "tag", "source")
 LIST_KEYS = ("category", "group", "tag")   # polish P1: one name, or a list of them (any matches)
 MAX_PICKS = 60
 KIND_VALUES = ("all", "review", "spend", "income", "transfers")
@@ -285,6 +285,10 @@ def clean_filters(conn: sqlite3.Connection, value: Any) -> dict[str, str | list[
                     continue
             if k == "uncategorized":
                 raise TxMetaError("uncategorized must be 1 or left out", field="filters")
+            if k == "source":
+                from . import reports
+                if v not in reports.INCOME_LABELS:
+                    raise TxMetaError(f"source must be one of {', '.join(reports.INCOME_LABELS)}", field="filters")
             if k == "category" and not conn.execute("SELECT 1 FROM categories WHERE name = ?", (v,)).fetchone():
                 raise TxMetaError(f"unknown category {v[:80]!r}", field="filters")
             if k == "group" and not conn.execute("SELECT 1 FROM category_groups WHERE name = ?", (v,)).fetchone():

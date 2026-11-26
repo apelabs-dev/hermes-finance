@@ -284,7 +284,7 @@ def transactions(conn: sqlite3.Connection, params: dict[str, Any], today: date |
             sql, sargs = reports.income_source_sql(source)
         except reports.ReportError as e:
             raise ApiError(str(e)) from None
-        where.append(sql)
+        where.append(f"{sql} AND {insights.currency_is_sql(insights._display(conn), 'v.iso_currency')}")   # the report reads the display currency only
         args += sargs
     cats, groups, tags = (list_param(params.get(k), k) for k in LIST_PARAMS)
     picked = category_filter(cats, groups, params.get("uncategorized") in ("1", "true"))
@@ -294,6 +294,8 @@ def transactions(conn: sqlite3.Connection, params: dict[str, Any], today: date |
     page = transaction_page(conn, full_where, full_args, kind, limit, offset, sort)
     bills.decorate(conn, page["rows"])  # TASK-21: "higher / lower than usual" on a tracked bill's charge (the page only)
     amount = _amount_sql(cats, groups)
+    if source:   # the report adds each row's cents, so the linked total does too (two -10.006 rows are 20.02, not 20.01)
+        amount = (f"ROUND({amount[0]}, 2)", amount[1])
     page.update(sort=sort, **_totals(conn, full_where, full_args, kind, amount, sorted({r["date"] for r in page["rows"]})))
     page.update(period=period.json(), coverage_month=transaction_coverage(conn))
     if params.get("facets") in ("1", "true"):

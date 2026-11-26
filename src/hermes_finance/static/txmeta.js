@@ -31,7 +31,7 @@
   const active = () => {
     const f = TX.filters || {};
     const out = {};
-    for (const k of ['q', 'bank']) if (f[k]) out[k] = f[k];
+    for (const k of ['q', 'bank', 'source']) if (f[k]) out[k] = f[k];
     for (const k of LISTS) if (many(f[k]).length) out[k] = many(f[k]);
     if (f.uncategorized) out.uncategorized = '1';
     if (f.kind && f.kind !== 'all') out.kind = f.kind;
