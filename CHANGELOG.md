@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.5.0...v0.6.0) (2026-11-26)
+
+
+### Features
+
+* the Transactions time window on the Reports pages, info icons, real checkboxes ([#30](https://github.com/apelabs-dev/hermes-finance/issues/30)) ([ba3d484](https://github.com/apelabs-dev/hermes-finance/commit/ba3d48458d0e7ceee9763d377e1e1020f0599217))
+
 ## [0.5.0](https://github.com/apelabs-dev/hermes-finance/compare/v0.4.0...v0.5.0) (2026-11-25)
 
 
