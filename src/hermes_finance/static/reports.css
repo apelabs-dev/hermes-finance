@@ -167,7 +167,7 @@ a.rp-fr:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; bord
   .rp-cat { padding: 12px 14px 14px; }
   .rp-cat-b { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0;
     background: none; border: 0; color: inherit; text-align: left; font-size: 15px; }
-  .rp-cat-b > b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rp-cat-b > b { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.25; }   /* a long name wraps to a second line; cents in the amount made it clip at 360 */
   .rp-cat-b .amt { font-size: 15px; }
   .rp-cat-b > svg.i { transition: transform var(--mo-hover) ease-out; }
   .rp-cat.open .rp-cat-b > svg.i { transform: rotate(180deg); }

@@ -73,7 +73,8 @@
   function describe(f) {
     const cats = [f.uncategorized ? 'Uncategorized' : null, ...many(f.group).map((g) => `${g} (all)`), ...many(f.category)].filter(Boolean);
     return [f.q ? `"${f.q}"` : null, cats.join(' or '), f.bank, many(f.tag).length ? `tagged ${many(f.tag).join(' or ')}` : null,
-      f.kind ? {review: 'needs review', spend: 'spending', income: 'income', transfers: 'transfers'}[f.kind] : null].filter(Boolean).join(' · ');
+      f.source ? ({paychecks: 'Paychecks', interest_tax_refunds: 'Interest and tax refunds', other: 'Other income'}[f.source] || f.source)
+        : f.kind ? {review: 'needs review', spend: 'spending', income: 'income', transfers: 'transfers'}[f.kind] : null].filter(Boolean).join(' · ');
   }
 
   function drawBar() {

@@ -253,10 +253,10 @@ def all_tags(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 # --- saved filters ---------------------------------------------------------------------------------------------------
 
 def clean_filters(conn: sqlite3.Connection, value: Any) -> dict[str, str | list[str]]:
-    """{q, category, group, uncategorized, bank, kind, tag}: each text; category, group and tag may be lists (polish
+    """{q, category, group, uncategorized, bank, kind, tag, source}: each text; category, group and tag may be lists (polish
     P1: any of them), kept as one name when there's one; uncategorized is "1" or left out."""
     if not isinstance(value, dict):
-        raise TxMetaError("filters must be an object {q, category, group, uncategorized, bank, kind, tag}", field="filters")
+        raise TxMetaError("filters must be an object {q, category, group, uncategorized, bank, kind, tag, source}", field="filters")
     unknown = sorted(set(value) - set(FILTER_KEYS))
     if unknown:
         raise TxMetaError(f"unknown filter {str(unknown[0])[:40]!r}", field="filters")

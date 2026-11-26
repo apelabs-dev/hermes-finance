@@ -1074,3 +1074,25 @@ def test_forecast_hover_on_a_phone_is_a_tap(tmp_path):
                 b.call("Emulation.setTouchEmulationEnabled", enabled=False)
     finally:
         server.close()
+
+
+def test_a_phone_category_name_wraps_instead_of_ending_in_an_ellipsis(tmp_path):
+    """Review round 2 (Nightly layout gate, 360 px): the amount next to a Spending card's category name shows cents, which
+    left \"Rent & Utilities\" and \"Other Transport\" an ellipsis at 360. The name now wraps; nothing on the row is cut."""
+    path = tmp_path / "synthetic.sqlite"
+    with db.connect(path) as conn:
+        demo_data.build(conn, today=TODAY)
+    conn.close()
+    server = Server(path, today=TODAY)
+    try:
+        with Chrome() as b:
+            b.pin_clock(TODAY)
+            b.size(360, 800)
+            b.goto(f"{server.url}/#/reports?view=spending")
+            b.settled()
+            clipped = b.js("""[...document.querySelectorAll('.rp-cat-b > b')].filter((e) => e.scrollWidth > e.clientWidth + 0.5
+                || getComputedStyle(e).textOverflow === 'ellipsis').map((e) => e.textContent)""")
+            seen = b.js("document.querySelectorAll('.rp-cat-b > b').length")
+            assert seen > 0 and clipped == []
+    finally:
+        server.close()
