@@ -145,7 +145,9 @@
       }
     }
     for (const o of [days, months]) for (const v of Object.values(o)) v.total /= 100;
-    const out = {total: counts[kind], counts, limit, offset, rows, sort, sum: selected.reduce((n, r) => n + amount(r), 0) / 100,
+    // `sums`: the one-currency map the real page adds beside `sum` (the demo data is single-currency; empty when nothing matches).
+    const sum = selected.reduce((n, r) => n + amount(r), 0) / 100;
+    const out = {total: counts[kind], counts, limit, offset, rows, sort, sum, sums: selected.length ? {[document.documentElement.dataset.currency || 'USD']: sum} : {},
       days: Object.fromEntries([...new Set(rows.map((r) => r.date))].sort().map((d) => [d, days[d]])), months,
       period: per, coverage_month: data.coverage_month};
     if (truth(p.get('facets'))) {

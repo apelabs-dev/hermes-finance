@@ -184,8 +184,8 @@ def test_reports_pages_and_capture(tmp_path, width):
             assert "Lower everyday spending" in page and "Higher everyday spending" in page
             assert "%" not in page and "confidence" not in page.lower()
             assert abs(amount(b.js("document.querySelector('.rp-ends .rp-er .v').textContent")) - chart["lines"]["lower"]["end"]) < 0.01
-            assert b.js("document.querySelectorAll('.rp-acc .rp-chip').length") >= 1
-            assert b.js("document.querySelector('.rp-acc .rp-chip[aria-pressed=true]') !== null")
+            assert b.js("document.querySelectorAll('.rp-acc .vx-row input[type=checkbox]').length") >= 1
+            assert b.js("document.querySelector('.rp-acc .vx-row input:checked') !== null")
             assert b.js("document.querySelectorAll('.rp-fsvg .rp-band').length") == 1
             # the band is the area between the two named cases: its first n points are the lower line, its last n the
             # higher line reversed (not the projected line: the round-1 defect)
@@ -371,5 +371,126 @@ def test_answering_a_paycheck_keeps_answers_for_sources_not_detected(tmp_path):
             assert saved.get(key) == "add", saved
             assert b.js(f"document.querySelector({json.dumps(sel)}) === null")   # answered: the card is gone
             assert b.problems() == [], b.problems()
+    finally:
+        server.close()
+
+
+# --- 0.5 UI fix: the Reports pages match the approved mocks (window pill, ⓘ helper text, centred heroes, checkboxes) ---
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_reports_pages_match_the_approved_mocks(tmp_path, width):
+    """The round-4 mock board is the source of truth: the Transactions pill sits right after the title, each card's
+    small text is behind an ⓘ (a bounded count of visible words), the hero cards are centred, and the account choices
+    are real checkboxes. The audits only measure overflow, so this one compares each page with what was approved."""
+    path = tmp_path / "mock.sqlite"
+    conn = db.connect(path)
+    demo_data.build(conn, today=TODAY)
+    conn.close()
+    server = Server(path, today=TODAY)
+    try:
+        with Chrome() as b:
+            b.size(width, 900, scale=1, mobile=width < 500)
+            for view, icons_min, words_max in (("spending", 5, 160), ("cashflow", 1, 190), ("forecast", 6, 230)):
+                b.goto(f"{server.url}/#/reports?view={view}")
+                b.settle()
+                pill = b.js("(() => { const m = document.getElementById('mon'), t = document.querySelector('#topbar h1, .top h1, h1');"
+                            "const a = m.getBoundingClientRect(), r = t.getBoundingClientRect();"
+                            "return {cls: m.className, h1: t.textContent, gap: a.left - r.right, dy: Math.abs((a.top + a.height / 2) - (r.top + r.height / 2)),"
+                            "below: a.top - r.bottom, label: document.getElementById('monl').textContent.trim()}; })()")
+                assert "txwindow" in pill["cls"] and pill["h1"].strip() == "Reports", (view, pill)
+                if width >= 1024:
+                    assert 0 <= pill["gap"] <= 40 and pill["dy"] < 24, (view, pill)       # directly after the title
+                else:
+                    assert pill["below"] >= -1, (view, pill)                              # full width under it
+                assert b.js("document.querySelectorAll('.rp-body .vx-i summary').length") >= icons_min, view
+                assert b.js("document.querySelector('.rp-body .rp-sub, .rp-body .rp-skn, .rp-body .rp-phonly') === null"), view
+                visible = b.js("(() => { const c = document.querySelector('.rp-body').cloneNode(true);"
+                               "c.querySelectorAll('.vx-pop, svg, script, style').forEach((e) => e.remove());"
+                               "return c.textContent.split(/\\s+/).filter(Boolean).length; })()")
+                assert visible <= words_max * 3, (view, visible)       # a budget, not an exact count: the page stays short
+            b.goto(f"{server.url}/#/reports?view=spending")
+            b.settle()
+            kp = b.js("[...document.querySelectorAll('.vx-kpi')].map((c) => getComputedStyle(c).textAlign)")
+            assert kp and set(kp) == {"center"}
+            b.goto(f"{server.url}/#/reports?view=forecast")
+            b.settle()
+            assert b.js("document.querySelectorAll('.rp-acc .rp-chip').length") == 0
+            assert b.js("document.querySelectorAll('.rp-acc input[type=checkbox]').length") >= 1
+    finally:
+        server.close()
+
+
+def test_the_reports_pill_opens_the_transactions_sheet_and_applies_a_window(tmp_path):
+    path = tmp_path / "win.sqlite"
+    conn = db.connect(path)
+    demo_data.build(conn, today=TODAY)
+    conn.close()
+    server = Server(path, today=TODAY)
+    try:
+        with Chrome() as b:
+            b.size(1440, 900, scale=1)
+            b.goto(f"{server.url}/#/reports?view=cashflow")
+            b.settle()
+            assert b.js("document.getElementById('monl').textContent.trim()") == "November 2026"
+            tap(b, "#monl")
+            assert b.js("document.querySelector('.rgpicker .rgmg') !== null && document.querySelector('.rgpicker #rgfrom') !== null")
+            b.js("[...document.querySelectorAll('.rgpicker .rgpills button')].find((x) => x.textContent === '30d').click()")
+            b.settle()
+            assert "since=30d" in b.js("location.hash")
+            assert b.js("document.getElementById('monl').textContent.trim()") == "Last 30 days"
+            assert b.js("document.getElementById('rgclear') !== null")
+            tap(b, "#rgclear")
+            b.settle()
+            assert b.js("document.getElementById('monl').textContent.trim()") == "November 2026"
+            b.goto(f"{server.url}/#/reports?view=forecast")
+            b.settle()
+            tap(b, "#monl")
+            assert b.js("document.querySelector('.rgpicker .rgmg') === null && document.querySelector('.rgpicker #rguntil') !== null")
+    finally:
+        server.close()
+
+
+def test_spending_for_a_range_sizes_its_heatmap_to_the_months_it_sends(tmp_path):
+    """Review round 1: the grid had 12 month tracks whatever the API sent, so a 2-month window put the first category's
+    name in the wrong column and a 24-month one wrapped. The grid, its total label and the pill follow the months."""
+    path = tmp_path / "range.sqlite"
+    conn = db.connect(path)
+    demo_data.build(conn, today=TODAY)
+    conn.close()
+    server = Server(path, today=TODAY)
+    try:
+        with Chrome() as b:
+            b.size(1440, 900, scale=1)
+            for query, months in (("since=7d", 2), ("window=all", None), ("", 12)):
+                b.goto(f"{server.url}/#/reports?view=spending&{query}")
+                b.settle()
+                got = b.js("""(() => { const g = document.querySelector('.rp-hm'); if (!g) return null;
+                  const first = [...g.children].filter((c) => c.classList.contains('rp-hh') && !c.classList.contains('rp-tot')).length;
+                  const rows = getComputedStyle(g).gridTemplateColumns.split(' ').length;
+                  const top = Math.round(g.children[1].getBoundingClientRect().top);
+                  const hd = [...g.children].filter((c) => c.classList.contains('rp-hh')).map((c) => c.getBoundingClientRect());
+                  const lab = g.querySelector('.rp-lab').getBoundingClientRect(), row = g.querySelector('.rp-rl').getBoundingClientRect();
+                  const tot = g.querySelector('.rp-tot').getBoundingClientRect(), cell = g.querySelector('.rp-c').getBoundingClientRect();
+                  // one header row (the cells differ in height, so their tops may differ a little), the first category under
+                  // its own column, and the total column to the right of every month
+                  const oneRow = Math.max(...hd.map((r) => r.top)) - Math.min(...hd.map((r) => r.top)) < 30 && row.top > lab.bottom - 1;
+                  return {n: Number(g.style.getPropertyValue('--n')), tracks: rows, hh: first, tot: g.querySelector('.rp-tot').textContent,
+                          oneRow: oneRow && Math.abs(row.left - lab.left) < 2 && tot.left > cell.left, pill: document.getElementById('monl').textContent}; })()""")
+                assert got and got["tracks"] == got["n"] + 2 and got["oneRow"], (query, got)
+                assert got["tot"] == f"{got['n']} mo" and (months is None or got["n"] == months), (query, got)
+                if query:
+                    assert "·" in got["pill"], got
+            # All time draws 24 columns, each narrower than a three-letter month: the labels must not run into each other
+            for width in (1440, 1024):
+                b.size(width, 900, scale=1)
+                b.goto(f"{server.url}/#/reports?view=spending&window=all")
+                b.settle()
+                boxes = b.js("""[...document.querySelectorAll('.rp-hm .rp-hh')].filter((c) => !c.classList.contains('rp-lab') &&
+                  !c.classList.contains('rp-tot') && c.textContent.trim()).map((c) => {
+                  const r = document.createRange(); r.selectNodeContents(c); const t = r.getBoundingClientRect(); return [t.left, t.right]; })""")
+                assert len(boxes) >= 12, (width, len(boxes))
+                for (a0, a1), (b0, b1) in zip(boxes, boxes[1:]):
+                    assert a1 <= b0 + 0.5, (width, (a0, a1), (b0, b1))
+            assert b.js("document.documentElement.scrollWidth <= innerWidth + 1")
     finally:
         server.close()

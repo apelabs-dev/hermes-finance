@@ -256,7 +256,7 @@
         all ? null : h('p', {class: 'pi-hint'},
           `Showing the first ${listed.length} of ${plural(p.preview_rows_total, 'row')}. All of them are checked.`),
         h('div', {class: 'gh'}, 'Where it goes', h('span', {class: 'ln'})),
-        h('div', {class: 'li mapacct'}, h('span', {class: 'grow'}, h('b', {}, acctName(g.label)),
+        h('div', {class: 'li mapacct pi-acct'}, h('span', {class: 'grow'}, h('b', {}, acctName(g.label)),
           h('span', {}, `${plural(g.rows, 'row')} · ${g.new} new${g.skipped ? ` · ${g.skipped} already here` : ''}`)), sel));
     };
     open([head('Check the statement', dropSheet), slot, err, rowOf(go, btn('Back', 'ghost', dropSheet))],

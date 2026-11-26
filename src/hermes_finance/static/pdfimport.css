@@ -105,3 +105,13 @@
   .pi-typed { grid-template-columns: 1fr; }
   .pi-rows { max-height: 220px; }
 }
+
+/* ---- "Check the statement": the account row stacks (the approved mock): the name and its counts, then the choice, full width ---- */
+.li.mapacct.pi-acct { flex-direction: column; align-items: stretch; gap: 10px; }
+.li.mapacct.pi-acct > .grow { flex: none; }
+.li.mapacct.pi-acct select.selv { width: 100%; flex: none; }
+.pi-rows table.map td.num, .pi-rows table.map th.num { padding-right: 14px; }
+@media (max-width: 600px) {
+  .sheet .pi-actions:has(.btn.ghost) { flex-direction: column-reverse; align-items: stretch; }
+  .sheet .pi-actions:has(.btn.ghost) .btn { width: 100%; justify-content: center; }
+}

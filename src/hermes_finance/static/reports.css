@@ -5,12 +5,6 @@
 
 .rp-bar { display: flex; align-items: center; gap: 12px 14px; margin-bottom: 18px; flex-wrap: wrap; }
 .rp-views button { min-height: 34px; }
-.rp-cycle { display: inline-flex; align-items: center; gap: 2px; background: var(--card2); border: 1px solid var(--line);
-  border-radius: 12px; padding: 3px; margin-left: auto; }
-.rp-range { font-size: 14px; font-weight: 600; padding: 0 10px; min-width: 9.5em; text-align: center; white-space: nowrap; }
-.rp-step { width: 32px; height: 30px; display: grid; place-items: center; background: none; border: 0;
-  color: var(--mut); border-radius: 8px; }
-.rp-step:hover:not(:disabled) { background: var(--card3); color: var(--fg); }
 .rp-body { display: grid; gap: 18px; min-width: 0; }
 
 /* --- Spending: the year heatmap + the KPI rail --------------------------------------------------------------- */
@@ -20,15 +14,12 @@
 .rp-head h2 { font-size: 18px; font-weight: 650; }
 .rp-note { font-size: 13px; color: var(--dim); }
 .rp-sub { font-size: 13px; color: var(--dim); }
-.rp-heat > .rp-sub { margin: -6px 0 14px; max-width: 68ch; }
 .rp-kpi { padding: 18px; }
-.rp-kpi h3 { font-size: 14px; margin-bottom: 8px; min-height: 32px; }
+.rp-kpi h3 { font-size: 14px; margin-bottom: 6px; }
 .rp-kpi .big { font-size: 34px; }
 .rp-kpi .rp-name { font-size: 27px; letter-spacing: -.02em; }
-.rp-kpi .rp-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
-.rp-kpi .rp-sub .pill { margin-left: 0; }
 
-.rp-hm { display: grid; grid-template-columns: minmax(192px, 1.15fr) repeat(12, minmax(0, 1fr)) 78px;
+.rp-hm { display: grid; grid-template-columns: minmax(192px, 1.15fr) repeat(var(--n, 12), minmax(0, 1fr)) 78px;
   gap: 4px 3px; align-items: center; min-width: 0; }
 .rp-hh { font-size: 13px; color: var(--dim); text-align: center; padding-bottom: 2px; white-space: nowrap; }
 .rp-hh.on { color: var(--fg); font-weight: 650; }
@@ -90,7 +81,6 @@ button.rp-c:hover { border-color: var(--line2); }
 .rp-sk-cap { fill: var(--dim); font-size: 13px; }
 .rp-sk-big { fill: var(--fg); font-size: 20px; font-weight: 700; }
 .rp-sk-short { fill: var(--bad); font-size: 13.5px; font-weight: 650; }
-.rp-skn { margin: 2px 0 4px; }
 .rp-bars { display: none; }
 .rp-fr { padding: 8px 0; border-top: 1px solid var(--line); }
 .rp-fl { display: flex; align-items: baseline; gap: 8px; font-size: 14.5px; }
@@ -117,15 +107,6 @@ button.rp-c:hover { border-color: var(--line2); }
 /* --- Forecast: accounts, KPIs, the ask card, the balance line -------------------------------------------------- */
 .rp-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .rp-acc { padding: 18px 20px; }
-.rp-chips2 { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-.rp-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--card2); border: 1px solid var(--line);
-  border-radius: 999px; padding: 7px 14px 7px 9px; font-size: 14px; color: var(--mut); min-height: 38px; }
-.rp-chip:hover { border-color: var(--line2); color: var(--fg); }
-.rp-chip.on { border-color: var(--acc); color: var(--fg); background: rgba(142, 168, 255, .12); }
-.rp-chip .bx { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--line2); display: grid;
-  place-items: center; flex: none; }
-.rp-chip.on .bx { background: var(--acc); border-color: var(--acc); color: #0c0e13; }
-.rp-chip .bx svg { width: 13px; height: 13px; stroke-width: 2.6; }
 .rp-askwrap { display: grid; gap: 12px; }
 .rp-ask { border-color: rgba(245, 180, 84, .42); }
 .rp-q { font-size: 15px; color: var(--mut); margin-bottom: 12px; max-width: 74ch; }
@@ -170,7 +151,7 @@ button.rp-c:hover { border-color: var(--line2); }
   .rp-rail .rp-kpi { flex: 1 1 calc(50% - 5px); }
   .rp-kpi .big { font-size: 28px; }
   .rp-kpi .rp-name { font-size: 23px; }
-  .rp-hm { grid-template-columns: minmax(170px, 1fr) repeat(12, minmax(0, 1fr)) 72px; }
+  .rp-hm { grid-template-columns: minmax(170px, 1fr) repeat(var(--n, 12), minmax(0, 1fr)) 72px; }
   .rp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rp-lists h3 small { display: none; }
 }
@@ -180,7 +161,6 @@ button.rp-c:hover { border-color: var(--line2); }
   .rp-rail .rp-kpi { flex: 1 1 calc(50% - 5px); min-width: 0; }
   .rp-hm { display: none; }
   .rp-cards { display: grid; gap: 12px; }
-  .rp-heat > .rp-sub { max-width: none; }
   .rp-cat { padding: 12px 14px 14px; }
   .rp-cat-b { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0;
     background: none; border: 0; color: inherit; text-align: left; font-size: 15px; }
@@ -188,7 +168,7 @@ button.rp-c:hover { border-color: var(--line2); }
   .rp-cat-b .amt { font-size: 15px; }
   .rp-cat-b > svg.i { transition: transform var(--mo-hover) ease-out; }
   .rp-cat.open .rp-cat-b > svg.i { transform: rotate(180deg); }
-  .rp-spark { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; margin-top: 8px; }
+  .rp-spark { display: grid; grid-template-columns: repeat(var(--n, 12), minmax(0, 1fr)); gap: 3px; margin-top: 8px; }
   .rp-spark i { height: 34px; border-radius: 4px; background: rgba(142, 168, 255, var(--a, .12));
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .035); }
   .rp-spark i.nd { background: repeating-linear-gradient(-45deg, var(--card2) 0 3px, var(--card3) 3px 6px); }
@@ -198,22 +178,15 @@ button.rp-c:hover { border-color: var(--line2); }
   .rp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rp-lists { grid-template-columns: minmax(0, 1fr); }
   .rp-month .rp-msvg { margin-top: 4px; }
-  .rp-chip { min-height: 44px; }
   .rp-ask .btn.sm, .rp-ask .btn { min-height: 44px; padding: 10px 16px; }
-  .rp-cycle { margin-left: 0; }
-  .rp-bar .sp { display: none; }
   .rp-views { flex: 1 1 100%; }
   .rp-views button { flex: 1; }
-  .rp-cycle { flex: 1; }
-  .rp-range { flex: 1; min-width: 0; }
-  .rp-step { width: 44px; height: 40px; }
 }
 @media (max-width: 460px) {
   .rp-rail .rp-kpi { flex: 1 1 calc(50% - 5px); padding: 13px 14px; }
   .rp-kpi .big { font-size: 24px; }
   .rp-kpi .rp-name { font-size: 19px; }
   .rp-kpi h3 { font-size: 13px; margin-bottom: 6px; min-height: 0; }
-  .rp-kpi h3 .hi { display: none; }   /* the title keeps one line in a 146px card */
   .rp-chips .pill { font-size: 13px; }
   .rp-gnr { gap: 6px 18px; }
   .rp-views button { padding: 8px 4px; font-size: 13.5px; }
@@ -224,4 +197,59 @@ button.rp-c:hover { border-color: var(--line2); }
 @media (min-width: 1024px) { .rp-phonly { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   .rp-cat-b > svg.i { transition: none; }
+}
+
+/* --- the ⓘ: a card's small text, behind an icon (round-4 mock board). A details popover that opens in place. ----- */
+.rp-body .card h3 { display: flex; align-items: center; gap: 8px; }   /* this page only: other pages' card titles are theirs */
+.vx-i { position: relative; margin-left: auto; display: inline-block; flex: none; }
+.vx-i summary { list-style: none; cursor: pointer; display: grid; place-items: center; width: 44px; height: 44px;
+  margin: -10px -10px -10px 0; color: var(--dim); border-radius: 50%; }
+.vx-i summary::-webkit-details-marker { display: none; }
+.vx-i summary svg { width: 18px; height: 18px; }
+.vx-i[open] summary, .vx-i summary:hover { color: var(--acc); }
+.vx-i summary:focus-visible { outline: 2px solid var(--acc); outline-offset: 0; }
+.vx-pop { position: absolute; right: 0; top: 40px; z-index: 30; width: min(268px, calc(100vw - 32px)); background: var(--card2);
+  border: 1px solid var(--line2); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.45; color: var(--fg);
+  font-weight: 400; text-align: left; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+.vx-pop p { margin: 0 0 8px; }
+.vx-pop p:last-child { margin: 0; }
+/* hero cards: centred, the icon in the right corner, the popover opening toward the screen */
+.vx-kpi { position: relative; overflow: visible; text-align: center; z-index: 1; }
+.vx-kpi:has(details[open]) { z-index: 40; }
+.vx-kpi h3 { justify-content: center; min-height: 32px; margin-bottom: 6px; font-size: 14px; }
+.vx-kpi > .vx-hi { display: grid; width: 32px; height: 32px; margin: 0 auto 8px; }
+.vx-kpi .big, .vx-kpi .pill { margin-left: auto; margin-right: auto; }
+.vx-kpi .rp-name { display: block; }
+.vx-corner { position: static; display: block; height: 0; margin: 0; }
+.vx-corner summary { position: absolute; top: 2px; right: 2px; z-index: 3; margin: 0; }
+.vx-corner .vx-pop { top: calc(100% + 6px); right: 0; left: auto; width: 232px; max-width: calc(100vw - 32px); }
+@media (max-width: 1180px) { .vx-kpi:nth-child(odd) .vx-corner .vx-pop { left: 0; right: auto; } }
+.vx-pop { max-width: calc(100vw - 32px); }
+/* Forecast accounts: a real checkbox in a row, never a coloured pill */
+.vx-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-bottom: 4px; }
+.vx-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 14px; border-top: 1px solid var(--line);
+  color: var(--dim); font-size: 15px; cursor: pointer; position: relative; }
+.vx-row:first-child { border-top: 0; }
+.vx-row:has(input:checked) { color: var(--fg); }
+.vx-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.vx-bx { width: 22px; height: 22px; border: 2px solid var(--line2); border-radius: 6px; display: grid; place-items: center;
+  background: transparent; flex: none; }
+.vx-bx svg { width: 14px; height: 14px; stroke: var(--acc); stroke-width: 3.2; opacity: 0; }
+.vx-row input:checked + .vx-bx { border-color: var(--acc); }
+.vx-row input:checked + .vx-bx svg { opacity: 1; }
+.vx-row input:focus-visible + .vx-bx { outline: 2px solid var(--acc); outline-offset: 2px; }
+.vx-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-body .card { position: relative; }
+.rp-chart:has(details[open]), .rp-flow:has(details[open]), .rp-heat:has(details[open]), .rp-acc:has(details[open]),
+.rp-ask:has(details[open]), .rp-lists .card:has(details[open]) { z-index: 40; }
+.rp-heat h3, .rp-flow h3, .rp-chart h3 { flex-wrap: nowrap; }
+.rp-heat h3 small, .rp-flow h3 small, .rp-chart h3 small { min-width: 0; margin-left: auto; text-align: right; }
+.rp-heat h3 small + .vx-i, .rp-flow h3 small + .vx-i, .rp-chart h3 small + .vx-i { margin-left: 0; }
+/* beside the heat card (wide), the icon sits in the corner so every card title starts at the same height */
+@media (min-width: 1181px) {
+  .vx-kpi > .vx-hi { position: absolute; left: 14px; top: 13px; margin: 0; }
+  .vx-kpi h3 { padding: 0 34px; }
+}
+@media (max-width: 600px) {   /* the period is already in the pill: a phone's card title keeps its whole name */
+  .rp-flow h3 small, .rp-chart h3 small { display: none; }
 }
